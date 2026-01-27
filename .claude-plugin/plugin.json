@@ -1,0 +1,20 @@
+{
+  "name": "context-engineering",
+  "version": "1.0.0",
+  "description": "Complete development workflow with specialized agents, research commands, and execution context. Provides 9 agents for code research and implementation, plus 12 commands for structured development workflows.",
+  "author": {
+    "name": "Dima Krest"
+  },
+  "keywords": [
+    "agents",
+    "workflow",
+    "research",
+    "backend",
+    "frontend",
+    "planning",
+    "code-review",
+    "context-engineering"
+  ],
+  "agents": "./agents/",
+  "commands": "./commands/"
+}

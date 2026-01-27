@@ -1,8 +1,5 @@
 ---
-name: codebase-analyzer
-description: Analyzes codebase implementation details. Call the codebase-analyzer agent when you need to find detailed information about specific components. As always, the more detailed your request prompt, the better! :)
-tools: Read, Grep, Glob, LS, LSP
-model: sonnet
+description: Analyzes codebase implementation details - finds detailed information about specific components with file:line references
 ---
 
 # Code Research Agent Instructions

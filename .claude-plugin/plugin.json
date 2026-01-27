@@ -14,7 +14,5 @@
     "planning",
     "code-review",
     "context-engineering"
-  ],
-  "agents": "./agents/",
-  "commands": "./commands/"
+  ]
 }

@@ -1,8 +1,5 @@
 ---
-name: thoughts-analyzer
-description: The research equivalent of codebase-analyzer. Use this subagent_type when wanting to deep dive on a research topic. Not commonly needed otherwise.
-tools: Read, Grep, Glob, LS
-model: sonnet
+description: Deep-dives on thoughts/ documents - extracts high-value insights from tickets, plans, and research files
 ---
 
 # Code Research Agent Instructions

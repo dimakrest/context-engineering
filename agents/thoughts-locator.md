@@ -1,8 +1,5 @@
 ---
-name: thoughts-locator
-description: Discovers relevant documents in thoughts/ directory (We use this for all sorts of metadata storage!). This is really only relevant/needed when you're in a reseaching mood and need to figure out if we have random thoughts written down that are relevant to your current research task. Based on the name, I imagine you can guess this is the `thoughts` equivilent of `codebase-locator`
-tools: Grep, Glob, LS
-model: sonnet
+description: Discovers relevant documents in thoughts/ directory - finds tickets, plans, research, and PR documentation
 ---
 
 # Code Research Agent Instructions

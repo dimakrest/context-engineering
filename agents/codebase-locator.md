@@ -1,5 +1,6 @@
 ---
 description: Locates files, directories, and components relevant to a feature or task - a super Grep/Glob/LS tool for finding code
+model: sonnet
 ---
 
 # Code Research Agent Instructions

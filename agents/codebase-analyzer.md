@@ -1,5 +1,6 @@
 ---
 description: Analyzes codebase implementation details - finds detailed information about specific components with file:line references
+model: sonnet
 ---
 
 # Code Research Agent Instructions

@@ -1,5 +1,6 @@
 ---
-description: Debug issues by investigating logs, database state, and git history
+description: Debug issues by investigating logs, database state, and git history. Use when the user is stuck on a bug, encounters an error, says "something is broken", or needs help diagnosing an issue during development or testing.
+allowed-tools: Bash(docker *), Bash(git *), Bash(curl *), Bash(pg_isready *), Bash(psql *), Bash(lsof *)
 ---
 
 # Debug

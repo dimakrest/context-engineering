@@ -1,5 +1,6 @@
 ---
-description: Generate comprehensive PR descriptions following repository templates
+description: Generate comprehensive PR descriptions following repository templates. Use when the user wants to describe a pull request, write a PR description, says "describe this PR", or needs to document their changes for review.
+allowed-tools: Bash(gh *), Bash(git *)
 ---
 
 # Generate PR Description

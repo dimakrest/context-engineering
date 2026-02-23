@@ -1,5 +1,6 @@
 ---
 description: Discovers relevant documents in thoughts/ directory - finds tickets, plans, research, and PR documentation
+model: sonnet
 ---
 
 # Code Research Agent Instructions

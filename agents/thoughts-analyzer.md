@@ -1,5 +1,6 @@
 ---
 description: Deep-dives on thoughts/ documents - extracts high-value insights from tickets, plans, and research files
+model: sonnet
 ---
 
 # Code Research Agent Instructions

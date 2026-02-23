@@ -1,5 +1,6 @@
 ---
 description: Finds similar implementations, usage examples, and existing patterns with concrete code examples to model after
+model: sonnet
 ---
 
 # Code Research Agent Instructions

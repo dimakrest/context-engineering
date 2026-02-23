@@ -38,7 +38,7 @@ This creates:
 - `.claude/context/` - Execution context files for specialized agents
 - `thoughts/shared/` - Directory structure for tickets, plans, research, and PRs
 
-## Available Agents (9)
+## Available Agents (10)
 
 | Agent | Purpose |
 |-------|---------|
@@ -50,9 +50,10 @@ This creates:
 | `thoughts-locator` | Discover documents in thoughts/ directory |
 | `thoughts-analyzer` | Extract insights from thoughts documents |
 | `code-cleanup` | Systematic code cleanup with multi-perspective analysis |
+| `security-auditor` | Security vulnerability assessment with OWASP Top 10 and CVSS scoring |
 | `web-search-researcher` | Research web sources for technical information |
 
-## Available Commands (12)
+## Available Commands (13)
 
 ### Planning & Research
 
@@ -78,6 +79,12 @@ This creates:
 | `/analyze_pr_feedback` | Analyze PR review feedback and prioritize fixes |
 | `/describe_pr` | Generate comprehensive PR descriptions |
 | `/commit` | Create commits with user approval |
+
+### Security
+
+| Command | Description |
+|---------|-------------|
+| `/security_audit` | Comprehensive security audit with multi-phase vulnerability assessment |
 
 ### Alternative AI Review
 

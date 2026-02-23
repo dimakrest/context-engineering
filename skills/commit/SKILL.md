@@ -1,5 +1,6 @@
 ---
-description: Create git commits with user approval and no Claude attribution
+description: Create git commits with user approval and no Claude attribution. Use when the user wants to commit changes, says "commit this", "save my changes", or asks to create a git commit.
+allowed-tools: Bash(git *)
 ---
 
 # Commit Changes

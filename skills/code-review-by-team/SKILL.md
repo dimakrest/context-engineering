@@ -1,5 +1,5 @@
 ---
-name: code-review
+name: code-review-by-team
 description: Code review a pull request
 user_invocable: true
 ---

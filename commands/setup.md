@@ -106,7 +106,6 @@ I've initialized your project with the context-engineering workflow.
 | `/implement-plan` | Execute plans with verification |
 | `/review-plan` | Review plans before implementation |
 | `/iterate_plan` | Update existing plans |
-| `/analyze-pr-feedback` | Analyze PR review feedback |
 | `/describe_pr` | Generate PR descriptions |
 | `/commit` | Create commits with approval |
 | `/debug` | Debug issues during testing |

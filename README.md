@@ -88,12 +88,6 @@ Commands are invoked as `/context-engineering:<name>`.
 |---------|-------------|
 | `/implement-plan` | Execute plans with agent delegation and verification |
 
-### PR & Feedback
-
-| Command | Description |
-|---------|-------------|
-| `/analyze-pr-feedback` | Analyze PR review feedback and prioritize fixes vs trade-offs |
-
 ### Audits
 
 | Command | Description |
@@ -201,14 +195,6 @@ This runs a multi-phase review:
 2. `code-cleanup` agent does a deeper pass
 3. Backend, frontend, QA, and security reviewers run in parallel
 4. Compiled report with Must Fix / Should Fix / Consider findings
-
-### 7. Handle PR Feedback
-
-```
-/context-engineering:analyze-pr-feedback 42 thoughts/shared/tickets/2025-01-15-add-auth.md thoughts/shared/plans/2025-01-15-add-auth.md
-```
-
-This analyzes reviewer feedback and categorizes issues by priority.
 
 ## Directory Structure Convention
 

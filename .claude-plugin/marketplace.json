@@ -13,7 +13,10 @@
       "author": {
         "name": "Dima Krest"
       },
-      "source": ".",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/dimakrest/context-engineering.git"
+      },
       "category": "development"
     }
   ]

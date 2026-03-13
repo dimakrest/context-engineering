@@ -25,20 +25,6 @@ Add the marketplace and install:
 /plugin install context-engineering@dimakrest-context-engineering
 ```
 
-### From Local Directory
-
-For development or testing:
-
-```bash
-claude --plugin-dir /path/to/context-engineering
-```
-
-Reload after making changes (no restart needed):
-
-```bash
-/reload-plugins
-```
-
 ### Installation Scopes
 
 ```bash

@@ -1,5 +1,5 @@
 ---
-name: agent-teams-plan-and-review
+name: plan-and-review-by-team
 description: Autonomous 8-agent team for creating detailed, well-reviewed implementation plans. Full-stack capable with cross-review debate, tiebreaker, and chief-reviewer sign-off.
 user_invocable: true
 ---

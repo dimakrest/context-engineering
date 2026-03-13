@@ -92,26 +92,26 @@ I've initialized your project with the context-engineering workflow.
    ```
 
 3. **Start using the workflow**:
-   - `/create_plan` - Create implementation plans
-   - `/research_codebase` - Research your codebase
-   - `/implement_plan` - Execute plans
+   - `/create-plan` - Create implementation plans
+   - `/research-codebase` - Research your codebase
+   - `/implement-plan` - Execute plans
    - `/commit` - Create commits
 
 ### Available Commands:
 
 | Command | Purpose |
 |---------|---------|
-| `/create_plan` | Create detailed implementation plans |
-| `/research_codebase` | Document codebase with agents |
-| `/implement_plan` | Execute plans with verification |
-| `/review_plan` | Review plans before implementation |
+| `/create-plan` | Create detailed implementation plans |
+| `/research-codebase` | Document codebase with agents |
+| `/implement-plan` | Execute plans with verification |
+| `/review-plan` | Review plans before implementation |
 | `/iterate_plan` | Update existing plans |
-| `/analyze_pr_feedback` | Analyze PR review feedback |
+| `/analyze-pr-feedback` | Analyze PR review feedback |
 | `/describe_pr` | Generate PR descriptions |
 | `/commit` | Create commits with approval |
 | `/debug` | Debug issues during testing |
-| `/gemini_review` | Get Gemini's PR review |
-| `/gemini_plan_review` | Get Gemini's plan review |
+| `/gemini-review` | Get Gemini's PR review |
+| `/gemini-plan-review` | Get Gemini's plan review |
 ```
 
 ## Important Notes

@@ -63,8 +63,8 @@ Use the Gemini CLI to review an implementation plan, ensuring it follows project
 ## Example Invocations
 
 ```
-/gemini_plan_review thoughts/shared/plans/2025-12-18-new-feature.md
-/gemini_plan_review    # Interactive - lists recent plans and asks user
+/gemini-plan-review thoughts/shared/plans/2025-12-18-new-feature.md
+/gemini-plan-review    # Interactive - lists recent plans and asks user
 ```
 
 ## Notes

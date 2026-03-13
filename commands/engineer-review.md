@@ -6,7 +6,7 @@ description: Launch backend and/or frontend engineer agents to review an impleme
 
 You are orchestrating a professional engineering review of an implementation plan. Your job is to launch the right engineer agents (backend, frontend, or both) to critically evaluate whether the plan meets production engineering standards and best practices.
 
-This is NOT a general plan review (that's `/review_plan`). This is a **specialist engineer review** - the engineers evaluate the plan through the lens of their domain expertise, as if they were the ones who would have to implement it.
+This is NOT a general plan review (that's `/review-plan`). This is a **specialist engineer review** - the engineers evaluate the plan through the lens of their domain expertise, as if they were the ones who would have to implement it.
 
 ## Input
 
@@ -221,7 +221,7 @@ After both agents return their reviews, present a consolidated summary:
 [Combined questions that need answers]
 
 ### Next Steps
-- Address critical issues and re-run `/engineer_review` to verify
+- Address critical issues and re-run `/engineer-review` to verify
 - Or proceed to `/iterate_plan` with these findings to update the plan
 - Or discuss specific findings with me for more context
 ```
@@ -240,11 +240,11 @@ After both agents return their reviews, present a consolidated summary:
 
 ```
 # Full invocation
-/engineer_review thoughts/shared/plans/2026-02-22-feature.md thoughts/shared/tickets/2026-02-22-feature.md
+/engineer-review thoughts/shared/plans/2026-02-22-feature.md thoughts/shared/tickets/2026-02-22-feature.md
 
 # Plan only (will try to find matching ticket)
-/engineer_review thoughts/shared/plans/2026-02-22-feature.md
+/engineer-review thoughts/shared/plans/2026-02-22-feature.md
 
 # Interactive mode
-/engineer_review
+/engineer-review
 ```

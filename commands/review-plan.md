@@ -30,7 +30,7 @@ When this command is invoked:
    2. The plan file path (e.g., `thoughts/shared/plans/2025-01-15-feature.md`)
 
    Tip: You can invoke this command with both files directly:
-   `/review_plan thoughts/shared/tickets/2025-01-15-task.md thoughts/shared/plans/2025-01-15-task.md`
+   `/review-plan thoughts/shared/tickets/2025-01-15-task.md thoughts/shared/plans/2025-01-15-task.md`
    ```
    Wait for user input.
 
@@ -265,11 +265,11 @@ After presenting deep dives or when user wants to discuss:
 
 ```
 # Full invocation with both files
-/review_plan thoughts/shared/tickets/2025-01-15-feature.md thoughts/shared/plans/2025-01-15-feature.md
+/review-plan thoughts/shared/tickets/2025-01-15-feature.md thoughts/shared/plans/2025-01-15-feature.md
 
 # With just the plan (will infer or ask for ticket)
-/review_plan thoughts/shared/plans/2025-01-15-feature.md
+/review-plan thoughts/shared/plans/2025-01-15-feature.md
 
 # Interactive mode
-/review_plan
+/review-plan
 ```

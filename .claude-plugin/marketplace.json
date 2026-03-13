@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "dimakrest-context-engineering",
+  "description": "Context Engineering plugin - complete development workflow with specialized agents, commands, and skills",
+  "owner": {
+    "name": "Dima Krest"
+  },
+  "plugins": [
+    {
+      "name": "context-engineering",
+      "description": "Complete development workflow with specialized agents, commands, skills, and execution context. Provides 11 agents for code research and implementation, 11 commands for structured development workflows, 5 skills (commit, debug, describe-pr, code-review, plan-and-review).",
+      "version": "1.0.0",
+      "author": {
+        "name": "Dima Krest"
+      },
+      "source": ".",
+      "category": "development"
+    }
+  ]
+}

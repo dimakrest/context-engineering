@@ -66,7 +66,7 @@ Skills are triggered by user actions or slash commands.
 | `/debug` | Debug issues by investigating logs, database state, and git history |
 | `/describe-pr` | Generate comprehensive PR descriptions following repo templates |
 | `/code-review` | Multi-phase PR review: sequential cleanup (simplify, code-cleanup) then parallel reviewers (backend, frontend, QA, security) |
-| `/plan-and-review` | Autonomous 8-agent team for creating detailed, well-reviewed implementation plans with cross-review debate and chief-reviewer sign-off |
+| `/agent-teams-plan-and-review` | Autonomous 8-agent team for creating detailed, well-reviewed implementation plans with cross-review debate and chief-reviewer sign-off |
 
 ## Available Commands (11)
 
@@ -77,36 +77,36 @@ Commands are invoked as `/context-engineering:<name>`.
 | Command | Description |
 |---------|-------------|
 | `/setup` | Initialize project with context files and directory structure |
-| `/create_plan` | Create detailed implementation plans through interactive research |
-| `/research_codebase` | Document codebase as-is with parallel research agents |
-| `/review_plan` | Review plans against tickets with multi-perspective analysis |
-| `/engineer_review` | Launch backend/frontend engineer agents to review a plan for standards compliance |
+| `/create-plan` | Create detailed implementation plans through interactive research |
+| `/research-codebase` | Document codebase as-is with parallel research agents |
+| `/review-plan` | Review plans against tickets with multi-perspective analysis |
+| `/engineer-review` | Launch backend/frontend engineer agents to review a plan for standards compliance |
 
 ### Implementation
 
 | Command | Description |
 |---------|-------------|
-| `/implement_plan` | Execute plans with agent delegation and verification |
+| `/implement-plan` | Execute plans with agent delegation and verification |
 
 ### PR & Feedback
 
 | Command | Description |
 |---------|-------------|
-| `/analyze_pr_feedback` | Analyze PR review feedback and prioritize fixes vs trade-offs |
+| `/analyze-pr-feedback` | Analyze PR review feedback and prioritize fixes vs trade-offs |
 
 ### Audits
 
 | Command | Description |
 |---------|-------------|
-| `/security_audit` | Comprehensive security audit with OWASP Top 10, CWE, and CVSS scoring |
-| `/scalability_audit` | Scalability assessment with load translation and bottleneck analysis |
+| `/security-audit` | Comprehensive security audit with OWASP Top 10, CWE, and CVSS scoring |
+| `/scalability-audit` | Scalability assessment with load translation and bottleneck analysis |
 
 ### Alternative AI Review
 
 | Command | Description |
 |---------|-------------|
-| `/gemini_review` | Review PR using Gemini CLI for alternative perspective |
-| `/gemini_plan_review` | Review plan using Gemini CLI |
+| `/gemini-review` | Review PR using Gemini CLI for alternative perspective |
+| `/gemini-plan-review` | Review plan using Gemini CLI |
 
 ## Available Agents (11)
 
@@ -143,7 +143,7 @@ Document the task in `thoughts/shared/tickets/YYYY-MM-DD-description.md`:
 ### 2. Research the Codebase
 
 ```
-/context-engineering:research_codebase How does the authentication system work?
+/context-engineering:research-codebase How does the authentication system work?
 ```
 
 This spawns parallel research agents to document the current implementation.
@@ -151,7 +151,7 @@ This spawns parallel research agents to document the current implementation.
 ### 3. Create a Plan
 
 ```
-/context-engineering:create_plan thoughts/shared/tickets/2025-01-15-add-auth.md
+/context-engineering:create-plan thoughts/shared/tickets/2025-01-15-add-auth.md
 ```
 
 This creates an interactive planning session that:
@@ -170,19 +170,19 @@ This launches 8 agents that research, write, debate, and sign off on the plan wi
 ### 4. Review the Plan
 
 ```
-/context-engineering:review_plan thoughts/shared/plans/2025-01-15-add-auth.md
+/context-engineering:review-plan thoughts/shared/plans/2025-01-15-add-auth.md
 ```
 
 Or get an engineering standards review:
 
 ```
-/context-engineering:engineer_review thoughts/shared/plans/2025-01-15-add-auth.md
+/context-engineering:engineer-review thoughts/shared/plans/2025-01-15-add-auth.md
 ```
 
 ### 5. Implement the Plan
 
 ```
-/context-engineering:implement_plan thoughts/shared/plans/2025-01-15-add-auth.md
+/context-engineering:implement-plan thoughts/shared/plans/2025-01-15-add-auth.md
 ```
 
 This autonomously:
@@ -205,7 +205,7 @@ This runs a multi-phase review:
 ### 7. Handle PR Feedback
 
 ```
-/context-engineering:analyze_pr_feedback 42 thoughts/shared/tickets/2025-01-15-add-auth.md thoughts/shared/plans/2025-01-15-add-auth.md
+/context-engineering:analyze-pr-feedback 42 thoughts/shared/tickets/2025-01-15-add-auth.md thoughts/shared/plans/2025-01-15-add-auth.md
 ```
 
 This analyzes reviewer feedback and categorizes issues by priority.

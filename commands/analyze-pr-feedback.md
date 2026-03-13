@@ -51,7 +51,7 @@ When this command is invoked:
    2. The ticket file path (e.g., `thoughts/shared/tickets/2025-01-15-feature.md`)
    3. The plan file path (e.g., `thoughts/shared/plans/2025-01-15-feature.md`)
 
-   Example: `/analyze_pr_feedback 38 thoughts/shared/tickets/2025-11-28-feature.md thoughts/shared/plans/2025-11-28-feature.md`
+   Example: `/analyze-pr-feedback 38 thoughts/shared/tickets/2025-11-28-feature.md thoughts/shared/plans/2025-11-28-feature.md`
    ```
    Wait for user input.
 
@@ -461,11 +461,11 @@ How would you like to proceed?
 
 ```
 # With PR number and file paths
-/analyze_pr_feedback 38 thoughts/shared/tickets/2025-11-28-feature.md thoughts/shared/plans/2025-11-28-feature.md
+/analyze-pr-feedback 38 thoughts/shared/tickets/2025-11-28-feature.md thoughts/shared/plans/2025-11-28-feature.md
 
 # With just PR number (will ask for files)
-/analyze_pr_feedback 38
+/analyze-pr-feedback 38
 
 # Interactive mode
-/analyze_pr_feedback
+/analyze-pr-feedback
 ```

@@ -16,7 +16,7 @@ Ticket -> Research -> Plan -> Implement -> Test -> Commit -> PR -> Merge
 
 ## Stage 2: Research
 
-**Command**: `/research_codebase [question]`
+**Command**: `/research-codebase [question]`
 
 **Agents**: codebase-locator, codebase-analyzer, codebase-pattern-finder
 
@@ -28,7 +28,7 @@ Ticket -> Research -> Plan -> Implement -> Test -> Commit -> PR -> Merge
 
 ## Stage 3: Plan
 
-**Command**: `/create_plan [ticket_path]`
+**Command**: `/create-plan [ticket_path]`
 
 **Process**:
 1. Read ticket + research fully
@@ -44,7 +44,7 @@ Ticket -> Research -> Plan -> Implement -> Test -> Commit -> PR -> Merge
 
 ## Stage 4: Implement
 
-**Command**: `/implement_plan [plan_path]`
+**Command**: `/implement-plan [plan_path]`
 
 **Process**:
 1. Create feature branch
@@ -106,9 +106,9 @@ Ticket -> Research -> Plan -> Implement -> Test -> Commit -> PR -> Merge
 
 | Command | Purpose |
 |---------|---------|
-| `/research_codebase` | Codebase research |
-| `/create_plan` | Interactive planning |
-| `/implement_plan` | Execute plans |
+| `/research-codebase` | Codebase research |
+| `/create-plan` | Interactive planning |
+| `/implement-plan` | Execute plans |
 | `/commit` | Smart commits |
 | `/describe_pr` | PR descriptions |
 | `/debug` | Issue investigation |

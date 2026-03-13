@@ -28,7 +28,7 @@ Please provide:
 
 I'll analyze this information and work with you to create a comprehensive plan.
 
-Tip: You can also invoke this command with a ticket file directly: `/create_plan thoughts/shared/tickets/2025-01-15-task-name.md`
+Tip: You can also invoke this command with a ticket file directly: `/create-plan thoughts/shared/tickets/2025-01-15-task-name.md`
 ```
 
 Then wait for the user's input.
@@ -219,7 +219,7 @@ After user approves the plan structure:
 
 ### 5.1 Invoke Gemini Review
 
-Use the `/gemini_plan_review` command on the plan file (if available).
+Use the `/gemini-plan-review` command on the plan file (if available).
 
 ### 5.2 Incorporate Feedback
 

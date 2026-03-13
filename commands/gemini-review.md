@@ -50,9 +50,9 @@ Use the Gemini CLI to review a pull request, providing an alternative AI perspec
 ## Example Invocations
 
 ```
-/gemini_review 66        # Review PR #66
-/gemini_review PR 66     # Also works with "PR" prefix
-/gemini_review           # Interactive - lists open PRs and asks user
+/gemini-review 66        # Review PR #66
+/gemini-review PR 66     # Also works with "PR" prefix
+/gemini-review           # Interactive - lists open PRs and asks user
 ```
 
 ## Notes

@@ -79,8 +79,6 @@ Commands are invoked as `/context-engineering:<name>`.
 | `/setup` | Initialize project with context files and directory structure |
 | `/create-plan` | Create detailed implementation plans through interactive research |
 | `/research-codebase` | Document codebase as-is with parallel research agents |
-| `/review-plan` | Review plans against tickets with multi-perspective analysis |
-| `/engineer-review` | Launch backend/frontend engineer agents to review a plan for standards compliance |
 
 ### Implementation
 
@@ -161,17 +159,13 @@ Or use the autonomous team:
 
 This launches 8 agents that research, write, debate, and sign off on the plan without user intervention.
 
-### 4. Review the Plan
+### 4. Review an Existing Plan
 
 ```
-/context-engineering:review-plan thoughts/shared/plans/2025-01-15-add-auth.md
+/context-engineering:plan-and-review-by-team thoughts/shared/plans/2025-01-15-add-auth.md
 ```
 
-Or get an engineering standards review:
-
-```
-/context-engineering:engineer-review thoughts/shared/plans/2025-01-15-add-auth.md
-```
+Pass an existing plan path to run in review-only mode (skips research and writing, goes straight to team review).
 
 ### 5. Implement the Plan
 

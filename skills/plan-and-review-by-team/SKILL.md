@@ -1,12 +1,21 @@
 ---
 name: plan-and-review-by-team
-description: Autonomous 8-agent team for creating detailed, well-reviewed implementation plans. Full-stack capable with cross-review debate, tiebreaker, and chief-reviewer sign-off.
+description: Autonomous 8-agent team for creating or reviewing implementation plans. Full-stack capable with cross-review debate, tiebreaker, and chief-reviewer sign-off. Can also review existing plans.
 user_invocable: true
 ---
 
-# /plan-and-review -- Autonomous Plan Creation with Team Review
+# /plan-and-review -- Autonomous Plan Creation & Review with Team
 
-Create a detailed implementation plan using an 8-agent team that researches, writes, debates, and signs off autonomously. The user only sees the final reviewed plan.
+Create or review an implementation plan using an 8-agent team that researches, writes, debates, and signs off autonomously. The user only sees the final reviewed plan.
+
+## Mode Detection
+
+Parse the user's input to determine the mode:
+
+- **Create mode** (default): No existing plan provided. Run all phases (research, write, review, revise, sign-off).
+- **Review mode**: User provides a path to an existing plan (e.g., `thoughts/shared/plans/2025-01-15-feature.md`). Skip phases 1-2 (research + writing), start directly at phase 3 (reviews). The plan-writer only participates in revision (phase 5+).
+
+Optionally, the user may also provide a **ticket path** (e.g., `thoughts/shared/tickets/2025-01-15-feature.md`). If provided, pass it to the chief-reviewer for ticket alignment validation.
 
 ## Step 1: Create the Team
 
@@ -14,7 +23,11 @@ Use `TeamCreate` to create a team named `plan-and-review`.
 
 ## Step 2: Create Tasks for All Phases
 
-Use `TaskCreate` to create tasks for each phase. Use `blockedBy` to enforce ordering:
+Use `TaskCreate` to create tasks for each phase. Use `blockedBy` to enforce ordering.
+
+**In review mode** (existing plan provided): skip tasks 1-3. Create tasks 4+ with no initial blockedBy on tasks 4, 5, 6.
+
+**In create mode** (default): create all tasks as shown below.
 
 ```
 Task 1: "Research: Map all relevant code, components, services, APIs, DB models, state, routing"
@@ -27,13 +40,13 @@ Task 3: "Write initial plan draft based on research findings"
   - blockedBy: [1, 2]
 
 Task 4: "Frontend review: Review frontend aspects of the plan"
-  - blockedBy: [3]
+  - blockedBy: [3]  (no blockedBy in review mode)
 
 Task 5: "Backend review: Review backend aspects of the plan"
-  - blockedBy: [3]
+  - blockedBy: [3]  (no blockedBy in review mode)
 
 Task 6: "QA review: Challenge the plan, demand concrete test scenarios"
-  - blockedBy: [3]
+  - blockedBy: [3]  (no blockedBy in review mode)
 
 Task 7: "Cross-review discussion: Reviewers debate and reach consensus"
   - blockedBy: [4, 5, 6]
@@ -146,15 +159,16 @@ prompt: |
   1. Check TaskList for your tasks
   2. When task 4 is unblocked, read the plan from thoughts/shared/plans/
   3. Read development-context/FRONTEND_RULES.md for standards
-  4. Write your independent review focusing on: component architecture, shared component usage, design tokens, state management, TypeScript strictness
-  5. Send your review to "backend-reviewer" and "qa-engineer" via SendMessage
-  6. Mark task 4 completed
-  7. For task 7 (cross-review): read other reviewers' feedback and debate
+  4. Write your independent review focusing on: component architecture, shared component usage, design tokens, state management, TypeScript strictness, accessibility (keyboard nav, screen readers, ARIA), responsive design, bundle size/lazy loading, loading/error/empty states
+  5. Include a risk table: | Risk | Likelihood | Impact | Mitigation |
+  6. Send your review to "backend-reviewer" and "qa-engineer" via SendMessage
+  7. Mark task 4 completed
+  8. For task 7 (cross-review): read other reviewers' feedback and debate
      - Challenge backend-reviewer on API contracts and data flow
      - Respond to qa-engineer's challenges with concrete test plans
      - Goal: reach consensus on what the plan MUST change
-  8. Send consensus summary to "plan-writer"
-  9. For task 10 (sign-off): confirm your concerns are addressed OR raise remaining objections
+  9. Send consensus summary to "plan-writer"
+  10. For task 10 (sign-off): confirm your concerns are addressed OR raise remaining objections
 ```
 
 **backend-reviewer** (Phase 3, 4, 6):
@@ -172,16 +186,17 @@ prompt: |
   1. Check TaskList for your tasks
   2. When task 5 is unblocked, read the plan from thoughts/shared/plans/
   3. Read development-context/ENGINEERING_STANDARDS.md for standards
-  4. Write your independent review focusing on: API design, service patterns, data access, type hints, error handling, security
-  5. Send your review to "frontend-reviewer" and "qa-engineer" via SendMessage
-  6. Mark task 5 completed
-  7. For task 7 (cross-review): read other reviewers' feedback and debate
+  4. Write your independent review focusing on: API design, service patterns, data access, type hints, error handling, security, DB design (safe migrations, efficient queries), RESTful consistency, concurrency/race conditions, data validation
+  5. Include a risk table: | Risk | Likelihood | Impact | Mitigation |
+  6. Send your review to "frontend-reviewer" and "qa-engineer" via SendMessage
+  7. Mark task 5 completed
+  8. For task 7 (cross-review): read other reviewers' feedback and debate
      - Challenge frontend-reviewer on component boundaries and data flow
      - Respond to qa-engineer's challenges with concrete test plans
      - Goal: reach consensus on what the plan MUST change
-  8. Send consensus summary to "plan-writer"
-  9. For task 10 (sign-off): confirm your concerns are addressed OR raise remaining objections
-  10. If no backend concerns exist, confirm "no backend concerns" and defer
+  9. Send consensus summary to "plan-writer"
+  10. For task 10 (sign-off): confirm your concerns are addressed OR raise remaining objections
+  11. If no backend concerns exist, confirm "no backend concerns" and defer
 ```
 
 **qa-engineer** (Phase 3, 4, 6):
@@ -198,17 +213,18 @@ prompt: |
   Instructions:
   1. Check TaskList for your tasks
   2. When task 6 is unblocked, read the plan from thoughts/shared/plans/
-  3. Write your independent review focusing on: test coverage gaps, regression risks, edge cases, missing error scenarios, integration test needs
+  3. Write your independent review focusing on: test coverage gaps, regression risks, edge cases, missing error scenarios, integration test needs, regression risk assessment, migration/deployment risks
   4. Demand concrete test scenarios for every change
-  5. Send your review to "frontend-reviewer" and "backend-reviewer" via SendMessage
-  6. Mark task 6 completed
-  7. For task 7 (cross-review): challenge BOTH engineers
+  5. Include a risk table: | Risk | Likelihood | Impact | Mitigation |
+  6. Send your review to "frontend-reviewer" and "backend-reviewer" via SendMessage
+  7. Mark task 6 completed
+  8. For task 7 (cross-review): challenge BOTH engineers
      - "Your suggestion lacks test coverage"
      - "This refactor introduces regression risk"
      - Engineers must respond with concrete test plans or adjust their recommendations
      - Push back until satisfied
-  8. Send consensus summary to "plan-writer"
-  9. For task 10 (sign-off): confirm your concerns are addressed OR raise remaining objections
+  9. Send consensus summary to "plan-writer"
+  10. For task 10 (sign-off): confirm your concerns are addressed OR raise remaining objections
 ```
 
 **tiebreaker** (Phase 4b, conditional):
@@ -246,32 +262,35 @@ prompt: |
   Instructions:
   1. Check TaskList for your tasks
   2. When task 11 is unblocked, read the final plan from thoughts/shared/plans/
-  3. Perform a holistic critical review evaluating:
+  3. If a ticket path was provided, read the ticket file to understand original requirements
+  4. Perform a holistic critical review evaluating:
      - Completeness: does the plan cover all aspects of the task?
+     - Ticket alignment (if ticket provided): are ALL ticket requirements addressed? Is there scope creep?
      - Feasibility: can this realistically be implemented as described?
      - Risk: are there unaddressed risks or failure modes?
      - Test coverage: is the testing strategy adequate?
      - Standards alignment: does it follow ENGINEERING_STANDARDS.md and FRONTEND_RULES.md?
-  4. You may message ANY teammate for clarifications or deeper details
-  5. Either sign off (mark task 11 completed) OR send the plan back to "plan-writer" with required changes
-  6. If sent back: wait for revision, then re-review
-  7. Only sign off when you are genuinely satisfied with the plan quality
+     - YAGNI: does the plan avoid unnecessary complexity?
+  5. You may message ANY teammate for clarifications or deeper details
+  6. Either sign off (mark task 11 completed) OR send the plan back to "plan-writer" with required changes
+  7. If sent back: wait for revision, then re-review
+  8. Only sign off when you are genuinely satisfied with the plan quality
 ```
 
 ## Step 4: Assign Initial Tasks
 
-Use `TaskUpdate` to assign:
-- Task 1 to `researcher`
-- Task 2 to `pattern-finder`
+**Create mode**: Use `TaskUpdate` to assign Task 1 to `researcher` and Task 2 to `pattern-finder`. Send messages to both to start working.
 
-Then send messages to both to start working.
+**Review mode**: Skip to Step 5 phase 3 — assign tasks 4, 5, 6 to the reviewers immediately, pointing them to the existing plan path.
 
 ## Step 5: Orchestrate Phases
 
-As team lead, monitor progress and facilitate transitions:
+As team lead, monitor progress and facilitate transitions.
 
-1. **Phase 1** (parallel): Wait for researcher + pattern-finder to complete tasks 1 and 2
-2. **Phase 2**: Assign task 3 to plan-writer, forward research findings if needed
+**In review mode**: skip phases 1-2, do not spawn researcher or pattern-finder. Start at phase 3. Only spawn reviewers, tiebreaker, plan-writer, and chief-reviewer (6 agents).
+
+1. **Phase 1** (parallel, create mode only): Wait for researcher + pattern-finder to complete tasks 1 and 2
+2. **Phase 2** (create mode only): Assign task 3 to plan-writer, forward research findings if needed
 3. **Phase 3** (parallel): Assign tasks 4, 5, 6 to frontend-reviewer, backend-reviewer, qa-engineer
 4. **Phase 4**: Facilitate cross-review discussion (task 7) -- reviewers message each other directly
 5. **Phase 4b** (conditional): If dispute is reported, assign task 8 to tiebreaker

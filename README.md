@@ -65,8 +65,8 @@ Skills are triggered by user actions or slash commands.
 | `/commit` | Create git commits with user approval |
 | `/debug` | Debug issues by investigating logs, database state, and git history |
 | `/describe-pr` | Generate comprehensive PR descriptions following repo templates |
-| `/code-review-by-team-by-team` | Multi-phase PR review: sequential cleanup (simplify, code-cleanup) then parallel reviewers (backend, frontend, QA, security) |
-| `/plan-and-review-by-team-by-team` | Autonomous 8-agent team for creating detailed, well-reviewed implementation plans with cross-review debate and chief-reviewer sign-off |
+| `/code-review-by-team` | Multi-phase PR review: sequential cleanup (simplify, code-cleanup) then parallel reviewers (backend, frontend, QA, security) |
+| `/plan-and-review-by-team` | Autonomous 8-agent team for creating detailed, well-reviewed implementation plans with cross-review debate and chief-reviewer sign-off |
 
 ## Available Commands (11)
 

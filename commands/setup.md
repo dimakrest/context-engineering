@@ -104,7 +104,6 @@ I've initialized your project with the context-engineering workflow.
 | `/create-plan` | Create detailed implementation plans |
 | `/research-codebase` | Document codebase with agents |
 | `/implement-plan` | Execute plans with verification |
-| `/review-plan` | Review plans before implementation |
 | `/iterate_plan` | Update existing plans |
 | `/describe_pr` | Generate PR descriptions |
 | `/commit` | Create commits with approval |

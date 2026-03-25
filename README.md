@@ -67,7 +67,11 @@ Skills are triggered by user actions or slash commands.
 | `/describe-pr` | Generate comprehensive PR descriptions following repo templates |
 | `/code-review-by-team` | Multi-phase PR review: sequential cleanup (simplify, code-cleanup) then parallel reviewers (backend, frontend, QA, security) |
 | `/plan-and-review-by-team` | Autonomous 8-agent team for creating detailed, well-reviewed implementation plans with cross-review debate and chief-reviewer sign-off |
-| `/setup-statusline` | Install a two-line status bar showing model, effort level, directory, git status, context usage, cost, and duration |
+| `/setup-statusline` | Install a two-line status bar (see below) |
+
+### Status Line
+
+Run `/setup-statusline` to install a two-line status bar showing model, effort level, directory, git status, context window usage, cost, and duration.
 
 ![Status line preview](assets/statusline-preview.png)
 

@@ -1,6 +1,6 @@
 ---
 name: code-review-by-team
-description: Code review a pull request
+description: Multi-agent PR code review pipeline with cleanup, specialized reviewers, adversarial analysis, and feature alignment checking. Use when the user wants a thorough code review, says "review this PR", "review my changes", asks for feedback on their branch, or wants to know if their code is ready to merge.
 user_invocable: true
 ---
 
@@ -10,26 +10,28 @@ Coordinates a multi-phase review pipeline: first cleans up the code, then dispat
 
 ## Step 1: Gather PR Changes
 
-Run these commands to understand what changed:
+Detect the base branch first, then use it consistently for all diffs:
 
 ```bash
-# Get the base branch (usually main or master)
-git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main"
+# Detect the base branch (usually main or master)
+BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
 
-# IMPORTANT: Ensure main is up to date before diffing
-git fetch origin main
+# Ensure base branch is up to date before diffing
+git fetch origin "$BASE"
 
 # Get list of changed files (three-dot diff shows only changes introduced by the branch)
-git diff origin/main...HEAD --name-only
+git diff "origin/$BASE...HEAD" --name-only
 
 # Get the full diff
-git diff origin/main...HEAD
+git diff "origin/$BASE...HEAD"
 
 # Get commit messages for intent context
-git log origin/main..HEAD --oneline
+git log "origin/$BASE..HEAD" --oneline
 ```
 
-**CRITICAL**: Always use `git diff origin/main...HEAD` (three dots), NOT `git diff origin/main HEAD` (two dots). Three-dot diffs show only changes introduced by the branch (from the merge-base to HEAD). Two-dot diffs compare branch tips directly, which inflates the review scope when the branch has merged main into it.
+Use `origin/$BASE` (the detected base branch) in all subsequent git diff and git log commands throughout this skill — not a hardcoded branch name.
+
+**CRITICAL**: Always use three-dot diffs (`origin/$BASE...HEAD`), NOT two-dot (`origin/$BASE HEAD`). Three-dot diffs show only changes introduced by the branch (from the merge-base to HEAD). Two-dot diffs compare branch tips directly, which inflates the review scope when the branch has merged the base into it.
 
 ## Step 2: Understand Project Context
 
@@ -95,7 +97,7 @@ Agent call:
   ## Changed Files
   {list of ALL changed files}
 
-  Run `git diff origin/main...HEAD -- <file>` for each file to see the current state of changes.
+  Run `git diff origin/$BASE...HEAD -- <file>` for each file to see the current state of changes.
 
   ## Instructions
 
@@ -127,69 +129,27 @@ Launch ALL relevant review agents simultaneously. Each reviewer works independen
 Agent call:
 - subagent_type: "context-engineering:backend-engineer"
 - prompt:
-  "You are a senior backend code reviewer.
+  "Review this PR's backend changes. Scope your review to changes introduced by this PR only.
 
-  First, check for project-specific guidelines:
-  - Read `.claude/CLAUDE.md` if it exists for project rules
-  - Read any engineering standards docs referenced in CLAUDE.md
-  - Read `.claude/agents/backend-engineer.md` if it exists for agent-specific instructions
-
-  ## Your Review Mindset
-
-  Think like a senior engineer reviewing a teammate's PR:
-  - What was the author trying to accomplish? (read commit messages)
-  - Is this the right approach for the problem?
-  - Does the implementation follow our established patterns?
-  - Will this be maintainable 6 months from now?
-
-  ## Changed Files to Review
+  ## Changed Files
   {list of changed backend files}
 
-  Run `git diff origin/main...HEAD -- <file>` for each file to see the exact changes. Read full files when needed for context.
-
-  ## Review Checklist
-
-  For each changed file, evaluate:
-
-  **Architecture & Design**:
-  - Does it follow the project's established patterns?
-  - Is the responsibility correctly placed (not leaking between layers)?
-  - Are dependencies injected properly?
-
-  **Code Quality**:
-  - Proper imports organization
-  - Functions have type hints/annotations where the language supports them
-  - No dead code or unused imports
-  - DRY -- no unnecessary duplication
-
-  **API Standards** (if applicable):
-  - Consistent URL naming conventions
-  - Proper HTTP status codes
-  - Auth/authz on endpoints
-
-  **Data Access** (if applicable):
-  - Proper query patterns (no N+1, no SQL injection)
-  - Multi-tenancy respected if applicable
-
-  **Error Handling**:
-  - Appropriate but not over-engineered
-  - Meaningful error messages
+  Run `git diff origin/$BASE...HEAD -- <file>` for each file to see the exact changes. Read full files when needed for context.
+  Read commit messages (`git log origin/$BASE..HEAD --oneline`) to understand intent.
 
   ## Output Format
 
-  Report ONLY substantive findings. Skip anything that passes.
+  Report ONLY substantive findings. Skip anything that passes. Do not invent issues.
 
   For each finding:
   - **[file:line]** -- Description of the issue
   - **Why it matters** -- One sentence on impact
   - **Suggested fix** -- Brief code suggestion if helpful
 
-  Categorize findings as:
+  Categorize as:
   - **Must Fix**: Bugs, security issues, pattern violations that will cause problems
-  - **Should Fix**: Code quality issues, missing type hints, maintainability concerns
-  - **Consider**: Optional improvements worth discussing
-
-  If everything looks good, say so briefly. Do not invent issues."
+  - **Should Fix**: Code quality issues, maintainability concerns
+  - **Consider**: Optional improvements worth discussing"
 ```
 
 ### Frontend Reviewer (if frontend files changed)
@@ -198,70 +158,27 @@ Agent call:
 Agent call:
 - subagent_type: "context-engineering:frontend-engineer"
 - prompt:
-  "You are a senior frontend code reviewer.
+  "Review this PR's frontend changes. Scope your review to changes introduced by this PR only.
 
-  First, check for project-specific guidelines:
-  - Read `.claude/CLAUDE.md` if it exists for project rules
-  - Read any frontend rules docs referenced in CLAUDE.md
-  - Read `.claude/agents/frontend-engineer.md` if it exists for agent-specific instructions
-
-  ## Your Review Mindset
-
-  Think like a senior frontend engineer reviewing a teammate's PR:
-  - What was the author trying to build? (read commit messages)
-  - Does the component architecture make sense?
-  - Is this consistent with the rest of the UI?
-  - Will this be maintainable and performant?
-
-  ## Changed Files to Review
+  ## Changed Files
   {list of changed frontend files}
 
-  Run `git diff origin/main...HEAD -- <file>` for each file to see the exact changes. Read full files when needed for context.
-
-  ## Review Checklist
-
-  For each changed file, evaluate:
-
-  **Component Architecture**:
-  - Proper component composition and separation of concerns
-  - State management is appropriate (not over-complex)
-  - Follows project conventions (named vs default exports, etc.)
-
-  **Design System**:
-  - Uses shared/design-system components when available
-  - Uses design tokens (no hardcoded colors, spacing, sizing)
-  - Consistent with existing UI patterns
-
-  **TypeScript** (if applicable):
-  - Strict types (no `any` unless justified)
-  - Proper interfaces for props and data
-  - API response types match backend
-
-  **Code Quality**:
-  - No unused imports or dead code
-  - No console.log statements in production code
-  - DRY -- no unnecessary duplication
-
-  **UX**:
-  - Loading states handled
-  - Error states handled
-  - Empty states handled
+  Run `git diff origin/$BASE...HEAD -- <file>` for each file to see the exact changes. Read full files when needed for context.
+  Read commit messages (`git log origin/$BASE..HEAD --oneline`) to understand intent.
 
   ## Output Format
 
-  Report ONLY substantive findings. Skip anything that passes.
+  Report ONLY substantive findings. Skip anything that passes. Do not invent issues.
 
   For each finding:
   - **[file:line]** -- Description of the issue
   - **Why it matters** -- One sentence on impact
   - **Suggested fix** -- Brief code suggestion if helpful
 
-  Categorize findings as:
+  Categorize as:
   - **Must Fix**: Bugs, accessibility issues, design system violations
   - **Should Fix**: Code quality, missing shared component usage, type issues
-  - **Consider**: Optional improvements worth discussing
-
-  If everything looks good, say so briefly. Do not invent issues."
+  - **Consider**: Optional improvements worth discussing"
 ```
 
 ### QA Reviewer (if any test files changed OR if non-test code changed without corresponding tests)
@@ -283,7 +200,7 @@ Agent call:
   ## Changed Files
   {list of ALL changed files, both test and non-test}
 
-  Run `git diff origin/main...HEAD -- <file>` for each file to see the exact changes.
+  Run `git diff origin/$BASE...HEAD -- <file>` for each file to see the exact changes.
 
   ## Review Focus
 
@@ -324,31 +241,15 @@ Agent call:
 Agent call:
 - subagent_type: "context-engineering:security-auditor"
 - prompt:
-  "You are reviewing a PR diff for security issues. This is a focused PR review, NOT a full security audit.
-
-  Read `.claude/agents/security-auditor.md` if it exists for your assessment methodology.
+  "Review this PR's diff for security issues. This is a PR-scoped review, NOT a full security audit — only report issues INTRODUCED or AFFECTED by this PR.
 
   ## Changed Files
   {full list of changed files}
 
-  Run `git diff origin/main...HEAD` to see the full diff.
+  Run `git diff origin/$BASE...HEAD` to see the full diff.
+  Read commit messages (`git log origin/$BASE..HEAD --oneline`) to understand intent.
 
-  ## Focus Areas (PR-scoped)
-
-  Only review for security issues INTRODUCED or AFFECTED by this PR:
-
-  - **Auth/AuthZ**: Missing auth checks on new endpoints, privilege escalation
-  - **Injection**: SQL injection, command injection, XSS in new code
-  - **Input Validation**: Unvalidated user input in new endpoints
-  - **Data Exposure**: Sensitive data in responses, logs, or error messages
-  - **SSRF**: External URL fetching without validation
-  - **Secrets**: Hardcoded credentials, API keys in code
-
-  ## What NOT to Report
-
-  - Pre-existing issues not related to this PR
-  - Theoretical vulnerabilities with no evidence in the diff
-  - General security recommendations not tied to specific changes
+  Do NOT report pre-existing issues, theoretical vulnerabilities without evidence in the diff, or general recommendations not tied to specific changes.
 
   ## Output Format
 
@@ -358,7 +259,117 @@ Agent call:
   - **Attack scenario** -- One sentence on how this could be exploited
   - **Fix** -- Brief remediation
 
+  Categorize as:
+  - **Must Fix**: CRITICAL/HIGH severity
+  - **Should Fix**: MEDIUM severity
+  - **Consider**: LOW severity
+
   If no security issues found, say 'No security issues identified in this PR' and briefly note what you checked."
+```
+
+### Devil's Advocate Reviewer (always runs)
+
+```
+Agent call:
+- subagent_type: "general-purpose"
+- prompt:
+  "You hate this implementation. Your job is to find real, verified problems — not style preferences.
+
+  ## Changed Files
+  {list of ALL changed files}
+
+  Run `git diff origin/$BASE...HEAD` to see the full diff.
+  Read commit messages (`git log origin/$BASE..HEAD --oneline`) to understand intent.
+
+  ## Process
+
+  1. Read the diff and form your harshest critique — what could break, what's fragile, what's wrong
+  2. For EACH issue you find, spawn a subagent to verify it before reporting:
+     - Edge case? Have the subagent trace the code path and confirm it's actually reachable
+     - Race condition? Have the subagent check if concurrency is actually possible in this context
+     - Missing validation? Have the subagent check if it's handled upstream
+     - Wrong approach? Have the subagent find how similar problems are solved in this codebase
+  3. Drop anything the subagent disproves. Only report verified issues.
+
+  ## What to look for
+
+  - Assumptions that break under load, concurrency, or unexpected input
+  - Edge cases in the changed logic (nulls, empty collections, boundary values, unicode, timezone)
+  - Error paths that silently swallow failures or leave state inconsistent
+  - Coupling or design choices that will make the next change painful
+  - Things that work now but will break when requirements inevitably shift
+
+  ## What to skip
+
+  - Style, naming, formatting — not your problem
+  - Theoretical issues you can't verify from the code
+  - Anything already covered by type system or framework guarantees
+
+  ## Output Format
+
+  For each VERIFIED finding:
+  - **[file:line]** -- What's wrong
+  - **Verification** -- What the subagent checked and confirmed
+  - **Impact** -- What breaks and when
+  - **Suggested fix** -- Brief, if you have one
+
+  Categorize as:
+  - **Must Fix**: Will cause bugs, data loss, or security issues
+  - **Should Fix**: Fragile code that will bite someone soon
+  - **Consider**: Design concerns worth discussing
+
+  If the implementation is actually solid, say so. Don't manufacture problems."
+```
+
+### Feature Alignment Reviewer (always runs)
+
+```
+Agent call:
+- subagent_type: "general-purpose"
+- prompt:
+  "Review every change in this PR for feature alignment and intent clarity.
+
+  ## Changed Files
+  {list of ALL changed files}
+
+  Run `git diff origin/$BASE...HEAD` to see the full diff.
+  Read commit messages (`git log origin/$BASE..HEAD --oneline`) to understand the feature intent.
+
+  ## Process
+
+  1. Determine what feature/goal this PR is trying to accomplish from commit messages and the diff
+  2. For EACH meaningful change (not trivial reformats), spawn a subagent to:
+     - Read the surrounding code and understand the before/after context
+     - Check how similar things are done elsewhere in the codebase
+     - Determine if there's an existing pattern or utility that could be used instead
+  3. Annotate every change with your assessment
+
+  ## For each change, answer:
+
+  - **What it does** -- One sentence explaining the change in plain language
+  - **Why it's needed** -- How it serves the feature goal (or doesn't)
+  - **Alignment** -- Does this change directly serve the feature, or is it tangential/unnecessary?
+  - **Could it be done better?** -- Based on what the subagent found about existing codebase patterns
+
+  ## Output Format
+
+  ### Feature Intent
+  One paragraph summarizing what this PR is trying to accomplish.
+
+  ### Change-by-Change Review
+
+  For each file (or logical group of changes):
+
+  **[file:lines]** -- {what changed}
+  - **Purpose**: Why this change exists
+  - **Alignment**: Direct / Supportive / Tangential / Unnecessary
+  - **Alternative**: {better approach if one exists, with codebase evidence from subagent}
+
+  ### Summary
+  - Changes that directly serve the feature: {count}
+  - Changes that could be done better: {list}
+  - Changes that seem unnecessary for this feature: {list, if any}
+  - Overall assessment: is the PR focused and well-scoped?"
 ```
 
 ## Step 6: Compile Review Report
@@ -366,6 +377,8 @@ Agent call:
 After ALL reviewers complete, compile a unified report. Do NOT just concatenate agent outputs -- synthesize them.
 
 ### Report Format
+
+All reviewer findings flow into a single prioritized list — don't silo findings by reviewer. The source tag shows where each finding came from.
 
 ```
 ## PR Review Report
@@ -379,19 +392,20 @@ Summary of changes made by /simplify and code-cleanup agents before review:
 - Code cleanup: {changes or "no changes needed"}
 
 ### Must Fix (blocking merge)
-- [file:line] -- Issue description (Source: Backend/Frontend/Security/QA reviewer)
+- [file:line] -- Issue description (Source: Backend/Frontend/Security/QA/Devil's Advocate)
 
 ### Should Fix (strongly recommended)
-- [file:line] -- Issue description (Source: reviewer)
+- [file:line] -- Issue description (Source: reviewer name)
 
 ### Consider (optional, non-blocking)
-- [file:line] -- Suggestion (Source: reviewer)
+- [file:line] -- Suggestion (Source: reviewer name)
 
-### Test Coverage
-Brief QA summary -- coverage gaps and suggested additions.
-
-### Security
-Brief security summary -- issues found or clean bill of health.
+### Feature Alignment
+The Feature Alignment reviewer produces a narrative, not a findings list. Summarize it here:
+- Feature intent (one sentence)
+- Changes that are tangential or unnecessary for this feature
+- Better alternatives found via codebase pattern search
+- Overall: is the PR focused and well-scoped?
 
 ### Verdict
 - [ ] Ready to merge (no Must Fix items)

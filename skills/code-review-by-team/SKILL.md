@@ -284,7 +284,7 @@ Agent call:
   ## Process
 
   1. Read the diff and form your harshest critique — what could break, what's fragile, what's wrong
-  2. For EACH issue you find, spawn a subagent to verify it before reporting:
+  2. Batch your findings and verify them using up to 5 subagents (group related issues per subagent, use model: "sonnet" for each):
      - Edge case? Have the subagent trace the code path and confirm it's actually reachable
      - Race condition? Have the subagent check if concurrency is actually possible in this context
      - Missing validation? Have the subagent check if it's handled upstream
@@ -338,7 +338,7 @@ Agent call:
   ## Process
 
   1. Determine what feature/goal this PR is trying to accomplish from commit messages and the diff
-  2. For EACH meaningful change (not trivial reformats), spawn a subagent to:
+  2. Group meaningful changes (not trivial reformats) and spawn up to 5 subagents (use model: "sonnet" for each) to verify them in batches. Each subagent should:
      - Read the surrounding code and understand the before/after context
      - Check how similar things are done elsewhere in the codebase
      - Determine if there's an existing pattern or utility that could be used instead
@@ -399,6 +399,12 @@ Summary of changes made by /simplify and code-cleanup agents before review:
 
 ### Consider (optional, non-blocking)
 - [file:line] -- Suggestion (Source: reviewer name)
+
+### Test Coverage
+Brief QA summary — coverage gaps and suggested additions.
+
+### Security
+Brief security summary — issues found or clean bill of health.
 
 ### Feature Alignment
 The Feature Alignment reviewer produces a narrative, not a findings list. Summarize it here:

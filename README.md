@@ -65,7 +65,7 @@ Skills are triggered by user actions or slash commands.
 | `/commit` | Create git commits with user approval |
 | `/debug` | Debug issues by investigating logs, database state, and git history |
 | `/describe-pr` | Generate comprehensive PR descriptions following repo templates |
-| `/code-review-by-team` | Multi-phase PR review: sequential cleanup (simplify, code-cleanup) then parallel reviewers (backend, frontend, QA, security) |
+| `/code-review-by-team` | Multi-phase PR review: sequential cleanup (simplify, code-cleanup) then parallel reviewers (backend, frontend, QA, security, devil's advocate, feature alignment) |
 | `/plan-and-review-by-team` | Autonomous 8-agent team for creating detailed, well-reviewed implementation plans with cross-review debate and chief-reviewer sign-off |
 | `/setup-statusline` | Install a two-line status bar (see below) |
 
@@ -194,8 +194,8 @@ This autonomously:
 This runs a multi-phase review:
 1. `/simplify` cleans up code (light pass)
 2. `code-cleanup` agent does a deeper pass
-3. Backend, frontend, QA, and security reviewers run in parallel
-4. Compiled report with Must Fix / Should Fix / Consider findings
+3. Backend, frontend, QA, security, devil's advocate, and feature alignment reviewers run in parallel
+4. Unified report with Must Fix / Should Fix / Consider findings and feature alignment narrative
 
 ## Directory Structure Convention
 

@@ -1,6 +1,6 @@
 ---
 name: code-review-by-team
-description: Multi-agent PR code review pipeline with cleanup, specialized reviewers, adversarial analysis, and feature alignment checking. Use when the user wants a thorough code review, says "review this PR", "review my changes", asks for feedback on their branch, or wants to know if their code is ready to merge.
+description: Multi-agent PR code review pipeline with cleanup, specialized reviewers, adversarial analysis (including optional Codex adversarial review), and feature alignment checking. Use when the user wants a thorough code review, says "review this PR", "review my changes", asks for feedback on their branch, or wants to know if their code is ready to merge.
 user_invocable: true
 ---
 
@@ -122,6 +122,26 @@ Wait for this agent to complete before proceeding.
 ## Step 5: Dispatch Review Agents (in parallel)
 
 Launch ALL relevant review agents simultaneously. Each reviewer works independently on the cleaned-up code.
+
+### Step 5 preamble: Detect Codex plugin (run once)
+
+Before launching reviewers, check whether the Codex plugin (`codex@openai-codex`) is installed. If it is, the Codex Adversarial Reviewer below will be dispatched alongside the others; if not, it is skipped silently and Step 7 will surface a one-line install recommendation.
+
+```bash
+CODEX_PLUGIN_DIR=$(find ~/.claude/plugins -type f -path "*/codex/scripts/codex-companion.mjs" 2>/dev/null \
+  | head -1 | xargs -I {} dirname {} | xargs -I {} dirname {})
+
+if [ -n "$CODEX_PLUGIN_DIR" ] \
+   && [ -f "$CODEX_PLUGIN_DIR/scripts/codex-companion.mjs" ] \
+   && [ -f "$CODEX_PLUGIN_DIR/commands/adversarial-review.md" ]; then
+  CODEX_AVAILABLE=1
+else
+  CODEX_AVAILABLE=0
+  CODEX_PLUGIN_DIR=""
+fi
+```
+
+Remember `CODEX_AVAILABLE` and `CODEX_PLUGIN_DIR` for Steps 5, 6, and 7.
 
 ### Backend Reviewer (if backend files changed)
 
@@ -372,6 +392,44 @@ Agent call:
   - Overall assessment: is the PR focused and well-scoped?"
 ```
 
+### Codex Adversarial Reviewer (only if Codex plugin installed)
+
+Dispatch this in the SAME parallel batch as the other Step 5 reviewers (single message, multiple Agent tool calls). Skip entirely when `CODEX_AVAILABLE=0`.
+
+Substitute the resolved absolute `$CODEX_PLUGIN_DIR` into the prompt before sending it.
+
+```
+Agent call:
+- subagent_type: "general-purpose"
+- prompt:
+  "You are dispatching the external Codex adversarial review for a PR review pipeline.
+  Codex is an out-of-process reviewer that focuses on breaking confidence in the
+  change (auth, data loss, race conditions, schema drift, observability gaps).
+
+  ## Task
+
+  1. Run this exact bash command and wait for it to complete (it may take several minutes):
+
+     node \"$CODEX_PLUGIN_DIR/scripts/codex-companion.mjs\" adversarial-review --wait
+
+     The `--wait` flag forces foreground execution and skips Codex's interactive
+     'wait or run in background' prompt. Do not change the flag, do not switch
+     to `--background`, do not call `/codex:status` or `/codex:result` — just
+     block on this single command.
+
+  2. Capture the full stdout verbatim. Do NOT paraphrase, summarize, reformat,
+     or trim it. Codex returns structured findings; the deep-analyzer needs the
+     raw output.
+
+  3. If the command exits non-zero or returns no findings, report:
+     'Codex adversarial review failed' followed by the captured stderr (last
+     ~50 lines). Do not retry — the orchestrator will treat this as a missing
+     reviewer.
+
+  4. Return ONLY the verbatim Codex stdout (or the failure note above). No
+     preamble, no commentary."
+```
+
 ## Step 6: Deep Analysis & Artifact Generation
 
 Do NOT compile the report yourself. After ALL Step 5 reviewers complete, collect every reviewer's full output verbatim and dispatch a single **deep-analyzer** agent. It verifies each finding is real, assesses impact, deduplicates, and writes two persistent artifacts (Markdown + HTML).
@@ -394,6 +452,7 @@ Agent call:
   {Security reviewer output}
   {Devil's Advocate reviewer output}
   {Feature Alignment reviewer output}
+  {Codex Adversarial reviewer output, or "(Codex plugin not installed — skipped)" when CODEX_AVAILABLE=0}
 
   ### PR metadata
   - Base branch: origin/$BASE
@@ -499,3 +558,14 @@ Print a short chat summary using the deep-analyzer's return values. Do NOT re-li
 To open the HTML report:
 `open thoughts/shared/reviews/{date}-{branch}-review.html`
 ```
+
+When `CODEX_AVAILABLE=0`, append this blockquote to the summary so the user knows an extra reviewer is available:
+
+```
+> **Tip:** Install the Codex plugin to add an out-of-process adversarial reviewer to this pipeline. Once installed, `/code-review` will automatically include it.
+> - `/plugin marketplace add openai/codex`
+> - `/plugin install codex@openai-codex`
+> Requires the `codex` CLI on PATH (`brew install codex` or see openai/codex).
+```
+
+Do not add this tip when Codex was used in this run.

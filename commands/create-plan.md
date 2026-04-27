@@ -213,33 +213,6 @@ Iterate based on feedback until user is satisfied.
 
 ---
 
-## Step 5: Gemini Final Review (Optional)
-
-After user approves the plan structure:
-
-### 5.1 Invoke Gemini Review
-
-Use the `/gemini-plan-review` command on the plan file (if available).
-
-### 5.2 Incorporate Feedback
-
-- Apply CRITICAL and IMPORTANT feedback to the plan
-- Document what was/wasn't applied with reasoning
-
-### 5.3 Present Summary
-
-```
-Gemini review complete. Changes incorporated:
-
-**Applied:**
-- [Change description]
-
-**Not Applied (with reasoning):**
-- [Feedback]: [Reason]
-```
-
----
-
 ## Important Guidelines
 
 ### Bug Fixes Require Regression Tests First
@@ -280,5 +253,4 @@ For bug fix tickets, ALWAYS start with tests that reproduce the bug:
 
 - [ ] Context gathering completed with thorough research
 - [ ] User has reviewed and approved structure
-- [ ] Gemini review completed and feedback incorporated (if available)
 - [ ] No open questions remain

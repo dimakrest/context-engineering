@@ -108,8 +108,6 @@ I've initialized your project with the context-engineering workflow.
 | `/describe_pr` | Generate PR descriptions |
 | `/commit` | Create commits with approval |
 | `/debug` | Debug issues during testing |
-| `/gemini-review` | Get Gemini's PR review |
-| `/gemini-plan-review` | Get Gemini's plan review |
 ```
 
 ## Important Notes

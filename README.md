@@ -75,7 +75,7 @@ Run `/setup-statusline` to install a two-line status bar showing model, effort l
 
 ![Status line preview](assets/statusline-preview.png)
 
-## Available Commands (11)
+## Available Commands (6)
 
 Commands are invoked as `/context-engineering:<name>`.
 
@@ -100,12 +100,16 @@ Commands are invoked as `/context-engineering:<name>`.
 | `/security-audit` | Comprehensive security audit with OWASP Top 10, CWE, and CVSS scoring |
 | `/scalability-audit` | Scalability assessment with load translation and bottleneck analysis |
 
-### Alternative AI Review
+## Recommended Companion Plugin
 
-| Command | Description |
-|---------|-------------|
-| `/gemini-review` | Review PR using Gemini CLI for alternative perspective |
-| `/gemini-plan-review` | Review plan using Gemini CLI |
+For an out-of-process adversarial second opinion during code review, install the official [Codex plugin](https://github.com/openai/codex) for Claude Code. When present, the `code-review-by-team` skill automatically dispatches `/codex:adversarial-review` as another parallel reviewer and folds its findings into the consolidated report.
+
+```bash
+/plugin marketplace add openai/codex
+/plugin install codex@openai-codex
+```
+
+Requires the `codex` CLI on your `PATH` (`brew install codex` or see [openai/codex](https://github.com/openai/codex)).
 
 ## Available Agents (11)
 
@@ -271,7 +275,7 @@ Every significant change follows the workflow:
 
 - Claude Code CLI (v1.0.33+)
 - Git and GitHub CLI (`gh`)
-- For Gemini commands: Gemini CLI installed and configured
+- Optional: [Codex plugin](https://github.com/openai/codex) for adversarial code review (see [Recommended Companion Plugin](#recommended-companion-plugin))
 
 ## License
 

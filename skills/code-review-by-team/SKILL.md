@@ -372,60 +372,130 @@ Agent call:
   - Overall assessment: is the PR focused and well-scoped?"
 ```
 
-## Step 6: Compile Review Report
+## Step 6: Deep Analysis & Artifact Generation
 
-After ALL reviewers complete, compile a unified report. Do NOT just concatenate agent outputs -- synthesize them.
-
-### Report Format
-
-All reviewer findings flow into a single prioritized list — don't silo findings by reviewer. The source tag shows where each finding came from.
+Do NOT compile the report yourself. After ALL Step 5 reviewers complete, collect every reviewer's full output verbatim and dispatch a single **deep-analyzer** agent. It verifies each finding is real, assesses impact, deduplicates, and writes two persistent artifacts (Markdown + HTML).
 
 ```
-## PR Review Report
+Agent call:
+- subagent_type: "general-purpose"
+- model: "opus"
+- prompt:
+  "You are the deep-analysis agent for a multi-reviewer PR review pipeline.
+  Your job: take raw reviewer findings, verify each one is real, assess impact,
+  deduplicate aggressively, and produce two artifacts (Markdown + HTML).
 
-### Summary
-One paragraph: what the PR does, overall quality assessment, and whether it's ready to merge.
+  ## Inputs
 
-### Code Cleanup Applied
-Summary of changes made by /simplify and code-cleanup agents before review:
-- /simplify: {changes or "no changes needed"}
-- Code cleanup: {changes or "no changes needed"}
+  ### Raw reviewer outputs (verbatim, do not paraphrase before analysis)
+  {Backend reviewer output}
+  {Frontend reviewer output}
+  {QA reviewer output}
+  {Security reviewer output}
+  {Devil's Advocate reviewer output}
+  {Feature Alignment reviewer output}
 
-### Must Fix (blocking merge)
-- [file:line] -- Issue description (Source: Backend/Frontend/Security/QA/Devil's Advocate)
+  ### PR metadata
+  - Base branch: origin/$BASE
+  - Changed files: {list from Step 1}
+  - Commit messages: output of `git log origin/$BASE..HEAD --oneline`
+  - Cleanup applied: {/simplify summary} / {code-cleanup summary}
 
-### Should Fix (strongly recommended)
-- [file:line] -- Issue description (Source: reviewer name)
+  ## Process
 
-### Consider (optional, non-blocking)
-- [file:line] -- Suggestion (Source: reviewer name)
+  1. **Parse** every finding from every reviewer into a structured list:
+     (source_reviewer, file, line, severity, description, suggested_fix).
 
-### Test Coverage
-Brief QA summary — coverage gaps and suggested additions.
+  2. **Deduplicate** — group findings by (file, line-range, root-cause).
+     Merge duplicates into a single entry; record ALL reviewers that flagged it.
 
-### Security
-Brief security summary — issues found or clean bill of health.
+  3. **Verify** — batch related findings and spawn up to 5 sub-subagents in
+     parallel (one Agent call per batch, each with subagent_type: 'general-purpose'
+     and model: 'sonnet'). Each sub-subagent must:
+       - Read the cited file(s) at the cited lines
+       - Trace the code path / call sites with grep
+       - Confirm the issue is real and reachable from actual entry points
+       - Return one of: VERIFIED | DISPUTED | NOT_REPRODUCIBLE, with a one-line reason
 
-### Feature Alignment
-The Feature Alignment reviewer produces a narrative, not a findings list. Summarize it here:
-- Feature intent (one sentence)
-- Changes that are tangential or unnecessary for this feature
-- Better alternatives found via codebase pattern search
-- Overall: is the PR focused and well-scoped?
+     Drop NOT_REPRODUCIBLE findings (record them in 'Dropped Findings' with the
+     sub-subagent's reason). Mark DISPUTED findings and include the dispute reason
+     in the report so the human reviewer can adjudicate.
 
-### Verdict
-- [ ] Ready to merge (no Must Fix items)
-- [ ] Needs changes (Must Fix items listed above)
+  4. **Assess impact** — for each VERIFIED finding, write 1-2 sentences on:
+       - What breaks (data loss, wrong output, crash, security exposure, etc.)
+       - When it triggers (always, under load, on edge input, etc.)
+       - Blast radius (single user, all users, downstream services)
+
+  5. **Re-categorize** by impact, not by reviewer's original label:
+       - Must Fix: real bugs, security issues, data loss risks
+       - Should Fix: maintainability/quality issues with clear cost
+       - Consider: optional, low-impact suggestions
+
+     Drop pure style nits and over-engineering suggestions (extra abstraction
+     layers, premature optimization).
+
+  6. **Generate artifacts** — write BOTH files using the Write tool. Create the
+     `thoughts/shared/reviews/` directory first if it does not exist (use Bash:
+     `mkdir -p thoughts/shared/reviews`). Filename uses today's date and the
+     branch name: `{YYYY-MM-DD}-{branch-slug}-review.{md,html}`.
+
+     a) Markdown: `thoughts/shared/reviews/{YYYY-MM-DD}-{branch-slug}-review.md`
+        Sections, in order:
+          - Summary (one paragraph: PR intent + overall quality)
+          - Verdict (Ready to merge | Needs changes, with counts)
+          - Must Fix
+          - Should Fix
+          - Consider
+          - Test Coverage (QA narrative)
+          - Security (security summary)
+          - Feature Alignment (intent, tangential changes, better alternatives)
+          - Cleanup Applied (/simplify + code-cleanup summaries)
+          - Disputed Findings (with dispute reason)
+          - Dropped Findings (with NOT_REPRODUCIBLE reason)
+
+        Each finding entry must include: **[file:line]**, description, **Impact:**,
+        **Suggested fix:**, **Verification:** (what the sub-subagent checked),
+        **Source reviewers:** (chips of reviewer names).
+
+     b) HTML: `thoughts/shared/reviews/{YYYY-MM-DD}-{branch-slug}-review.html`
+        Self-contained single file. Constraints:
+          - Inline CSS, no external stylesheets, no JS frameworks
+          - System font stack (-apple-system, Segoe UI, Roboto, sans-serif)
+          - Dark-mode-friendly palette (use `prefers-color-scheme: dark` media query)
+          - Sticky header showing verdict + counts (Must / Should / Consider)
+          - One collapsible <details> block per category and per narrative section
+          - Each finding rendered as a card: monospace file:line, severity badge
+            (color-coded), impact paragraph, suggested fix (in <pre> if code),
+            verification line, source-reviewer chips
+          - Vanilla <details>/<summary> for collapsibles — no JavaScript required
+
+  7. **Return** to the orchestrator:
+       - The two absolute file paths
+       - Counts: must_fix / should_fix / consider / disputed / dropped
+       - A one-paragraph executive summary of the PR's quality and verdict
+
+  Do NOT print the full findings list in your return — the artifacts are the
+  source of truth. The orchestrator only needs the summary and paths."
 ```
 
-### Deduplication Rules
+Wait for the deep-analyzer to complete before proceeding.
 
-- If multiple reviewers flag the same issue, report it once and note which reviewers caught it
-- Merge related findings into a single item when they share the same root cause
-- Drop findings that contradict each other after analyzing which reviewer is correct
+## Step 7: Present to User
 
-### Filtering Rules
+Print a short chat summary using the deep-analyzer's return values. Do NOT re-list every finding inline — the artifacts are the source of truth.
 
-- Remove nit-picks (pure style preferences with no functional impact)
-- Remove over-engineering suggestions (adding abstraction layers, premature optimization)
-- Keep the report focused and actionable
+```
+## PR Review Complete
+
+{one-paragraph executive summary from deep-analyzer}
+
+**Verdict:** {Ready to merge | Needs changes}
+**Findings:** {N must-fix} / {M should-fix} / {K consider}  ({D disputed}, {X dropped})
+
+**Reports:**
+- Markdown: `thoughts/shared/reviews/{date}-{branch}-review.md`
+- HTML:     `thoughts/shared/reviews/{date}-{branch}-review.html`
+
+To open the HTML report:
+`open thoughts/shared/reviews/{date}-{branch}-review.html`
+```

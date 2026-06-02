@@ -1,7 +1,7 @@
 {
   "name": "context-engineering",
-  "version": "1.0.4",
-  "description": "Complete development workflow with specialized agents, commands, skills, teams, and execution context. Provides 11 agents for code research and implementation, 6 commands for structured development workflows, 5 skills (commit, debug, describe-pr, code-review-by-team, plan-and-review-by-team).",
+  "version": "1.0.5",
+  "description": "Complete development workflow with specialized agents, commands, skills, teams, and execution context. Provides 10 agents for code research and implementation, 6 commands for structured development workflows, 4 skills (commit, debug, describe-pr, code-review-by-team).",
   "author": {
     "name": "Dima Krest"
   },

@@ -12,7 +12,6 @@ The `context-engineering` plugin establishes a comprehensive development methodo
 4. **Agent Delegation**: Clear separation between research, planning, and execution agents
 5. **Quality Gates**: Verification checkpoints at each implementation phase
 6. **Multi-Agent Code Review**: Sequential cleanup followed by parallel specialized reviewers
-7. **Autonomous Plan Creation**: 8-agent team that researches, writes, debates, and signs off on plans
 
 ## Installation
 
@@ -56,7 +55,7 @@ This creates:
 - `.claude/context/` - Execution context files for specialized agents
 - `thoughts/shared/` - Directory structure for tickets, plans, research, and PRs
 
-## Available Skills (6)
+## Available Skills (5)
 
 Skills are triggered by user actions or slash commands.
 
@@ -65,8 +64,7 @@ Skills are triggered by user actions or slash commands.
 | `/commit` | Create git commits with user approval |
 | `/debug` | Debug issues by investigating logs, database state, and git history |
 | `/describe-pr` | Generate comprehensive PR descriptions following repo templates |
-| `/code-review-by-team` | Multi-phase PR review: sequential cleanup (simplify, code-cleanup) then parallel reviewers (backend, frontend, QA, security, devil's advocate, feature alignment) |
-| `/plan-and-review-by-team` | Autonomous 8-agent team for creating detailed, well-reviewed implementation plans with cross-review debate and chief-reviewer sign-off |
+| `/code-review-by-team` | Multi-phase PR review: sequential cleanup (simplify) then parallel reviewers (backend, frontend, QA, security, devil's advocate, feature alignment) |
 | `/setup-statusline` | Install a two-line status bar (see below) |
 
 ### Status Line
@@ -111,7 +109,7 @@ For an out-of-process adversarial second opinion during code review, install the
 
 Requires the `codex` CLI on your `PATH` (`brew install codex` or see [openai/codex](https://github.com/openai/codex)).
 
-## Available Agents (11)
+## Available Agents (10)
 
 Specialized subagents spawned by commands and skills.
 
@@ -125,7 +123,6 @@ Specialized subagents spawned by commands and skills.
 | `web-search-researcher` | sonnet | Research web sources for technical information |
 | `frontend-engineer` | sonnet | React/TypeScript frontend development |
 | `backend-engineer` | sonnet | Python/FastAPI backend development |
-| `code-cleanup` | opus | Systematic code cleanup with multi-perspective analysis |
 | `security-auditor` | opus | Security vulnerability assessment with OWASP Top 10 and CVSS scoring |
 | `scalability-auditor` | opus | Scalability bottleneck assessment with SIS scoring |
 
@@ -162,23 +159,7 @@ This creates an interactive planning session that:
 - Researches existing patterns
 - Creates a phased implementation plan
 
-Or use the autonomous team:
-
-```
-/plan-and-review-by-team
-```
-
-This launches 8 agents that research, write, debate, and sign off on the plan without user intervention.
-
-### 4. Review an Existing Plan
-
-```
-/context-engineering:plan-and-review-by-team thoughts/shared/plans/2025-01-15-add-auth.md
-```
-
-Pass an existing plan path to run in review-only mode (skips research and writing, goes straight to team review).
-
-### 5. Implement the Plan
+### 4. Implement the Plan
 
 ```
 /context-engineering:implement-plan thoughts/shared/plans/2025-01-15-add-auth.md
@@ -189,17 +170,16 @@ This autonomously:
 - Runs tests after each phase
 - Updates plan progress
 
-### 6. Code Review
+### 5. Code Review
 
 ```
 /code-review-by-team
 ```
 
 This runs a multi-phase review:
-1. `/simplify` cleans up code (light pass)
-2. `code-cleanup` agent does a deeper pass
-3. Backend, frontend, QA, security, devil's advocate, and feature alignment reviewers run in parallel
-4. Unified report with Must Fix / Should Fix / Consider findings and feature alignment narrative
+1. `/simplify` cleans up code
+2. Backend, frontend, QA, security, devil's advocate, and feature alignment reviewers run in parallel
+3. Unified report with Must Fix / Should Fix / Consider findings and feature alignment narrative
 
 ## Directory Structure Convention
 

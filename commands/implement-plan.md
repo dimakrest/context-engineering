@@ -131,55 +131,9 @@ For each phase, complete ALL of these:
 - [ ] Update plan checkboxes
 - [ ] Proceed to next phase
 
-## Post-Implementation Cleanup
+## Post-Implementation Verification
 
-After ALL phases are complete but BEFORE committing:
-
-### Step 1: Code Cleanup (Parallel)
-
-Run TWO code-cleanup agents in parallel using the Task tool:
-
-**Backend Code Cleanup:**
-```
-subagent_type: "code-cleanup"
-
-Prompt:
-"Clean up all backend code changes from this implementation.
-
-Plan implemented: [plan_path]
-
-Focus on:
-- Python/FastAPI code quality and consistency
-- Removing any debugging artifacts
-- Ensuring proper error handling
-- Matching existing backend patterns
-- No functional changes - cleanup only
-
-Review all Python files modified during this implementation."
-```
-
-**Frontend Code Cleanup:**
-```
-subagent_type: "code-cleanup"
-
-Prompt:
-"Clean up all frontend code changes from this implementation.
-
-Plan implemented: [plan_path]
-
-Focus on:
-- React/TypeScript code quality and consistency
-- Removing any debugging artifacts
-- Ensuring proper error handling
-- Matching existing frontend patterns
-- No functional changes - cleanup only
-
-Review all TypeScript/React files modified during this implementation."
-```
-
-### Step 2: Test Verification (Post-Cleanup)
-
-Run ALL relevant tests after cleanup.
+After ALL phases are complete but BEFORE committing, run ALL relevant tests one final time.
 
 **If ANY test fails:**
 1. Delegate the fix to the appropriate agent (backend-engineer or frontend-engineer)
@@ -189,12 +143,11 @@ Run ALL relevant tests after cleanup.
 ### Post-Implementation Checklist
 
 Before proceeding to commit:
-- [ ] Code-cleanup agents completed (backend + frontend)
-- [ ] ALL tests pass after cleanup
+- [ ] ALL tests pass
 
 ## Final Phase: Commit and Open PR
 
-After ALL phases are complete, post-implementation cleanup is done, and ALL tests pass, create a PR:
+After ALL phases are complete and ALL tests pass, create a PR:
 
 ### Step 1: Prepare the Branch
 ```bash

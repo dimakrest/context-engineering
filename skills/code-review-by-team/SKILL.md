@@ -52,13 +52,11 @@ Sort changed files into review domains:
 
 Skip domains with no changed files.
 
-## Step 4: Code Cleanup Phase (sequential)
+## Step 4: Code Cleanup Phase
 
-Before reviewers look at the code, run cleanup agents to improve code quality. These agents make actual changes to the code.
+Before reviewers look at the code, run a cleanup pass to improve code quality. This makes actual changes to the code.
 
-### Step 4a: Run /simplify
-
-Launch a dedicated agent to run the built-in `/simplify` skill. This is the lighter, first pass.
+Launch a dedicated agent to run the built-in `/simplify` skill.
 
 ```
 Agent call:
@@ -76,45 +74,6 @@ Agent call:
   3. Report back what changes were made (if any)
 
   If /simplify makes no changes, report 'No simplification changes needed.'"
-```
-
-Wait for this agent to complete before proceeding.
-
-### Step 4b: Run Code Cleanup
-
-After /simplify finishes, launch the code-cleanup agent for a deeper pass.
-
-```
-Agent call:
-- subagent_type: "context-engineering:code-cleanup"
-- prompt:
-  "You are running a code cleanup pass on PR changes as part of a code review pipeline. The /simplify skill has already made a first pass on this code.
-
-  First, check for project-specific guidelines:
-  - Read `.claude/CLAUDE.md` if it exists for project rules
-  - Read any engineering standards docs referenced in CLAUDE.md
-
-  ## Changed Files
-  {list of ALL changed files}
-
-  Run `git diff origin/$BASE...HEAD -- <file>` for each file to see the current state of changes.
-
-  ## Instructions
-
-  Focus your cleanup on the changed files only. Apply your full five-phase workflow (Analyze, Plan, Execute, Validate, Report) but scoped to these files.
-
-  Priorities:
-  1. Security issues (hardcoded secrets, injection risks)
-  2. Dead code and unused imports introduced by the PR
-  3. Structural improvements within the changed code
-  4. Code duplication within the PR
-
-  Do NOT:
-  - Touch files outside the PR diff
-  - Make large-scale refactors beyond the PR scope
-  - Break existing tests
-
-  After making changes, run existing tests to validate. Report what you changed and why."
 ```
 
 Wait for this agent to complete before proceeding.
@@ -458,7 +417,7 @@ Agent call:
   - Base branch: origin/$BASE
   - Changed files: {list from Step 1}
   - Commit messages: output of `git log origin/$BASE..HEAD --oneline`
-  - Cleanup applied: {/simplify summary} / {code-cleanup summary}
+  - Cleanup applied: {/simplify summary}
 
   ## Process
 
@@ -508,7 +467,7 @@ Agent call:
           - Test Coverage (QA narrative)
           - Security (security summary)
           - Feature Alignment (intent, tangential changes, better alternatives)
-          - Cleanup Applied (/simplify + code-cleanup summaries)
+          - Cleanup Applied (/simplify summary)
           - Disputed Findings (with dispute reason)
           - Dropped Findings (with NOT_REPRODUCIBLE reason)
 

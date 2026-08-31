@@ -57,6 +57,19 @@ def amendments_text(text):
 # there silently broke routing. Rows whose class cell is not a proof class
 # (retired ~~A005~~ rows, separators) are skipped.
 CLASSES = ("structural", "interface", "conversational")
+# What the Agent call's `model:` accepts. `inherit` is frontmatter-only vocabulary and
+# would be rejected on the call -- after the lock was taken.
+SEATS = ("sonnet", "opus", "haiku", "fable")
+
+def seat_problem(text, where):
+    """Validates the seat named at the head of a line (a rationale may follow an em dash,
+    a paren or a # comment, as on Depends-on). None when the seat is fine or absent."""
+    seat = re.split(r'[—(#]', text, maxsplit=1)[0].strip().strip("`* ")
+    if seat in ("", "-", "none"):            # the Depends-on "none" convention: same as omitting the line
+        return None
+    if seat in SEATS or re.fullmatch(r'claude-[a-z0-9.-]+', seat):
+        return None
+    return f"{where} names seat '{seat}'; a seat is one of {', '.join(SEATS)} or a full claude-… model id"
 ct, ct_class, ct_budget, cols = {}, {}, {}, {}
 for line in contract.splitlines():
     if not line.lstrip().startswith("|"):
@@ -101,6 +114,13 @@ for line in features.splitlines():
         m = re.match(r'-\s*\*\*Files:\*\*\s*(.+)', line)
         if m:
             files[cur] = [x.strip("` ") for x in re.split(r'[,\s]+', m.group(1)) if x.strip("` ") and "/" in x or x.strip("` ").endswith((".py", ".ts", ".tsx", ".md", ".sh", ".json"))]
+        m = re.match(r'-\s*\*\*Seat:\*\*\s*(.+)', line)
+        if m:
+            # A seat is passed verbatim as `model:` on the Agent call, so it must
+            # be something the harness accepts -- a typo here is a dispatch that
+            # silently runs on the wrong model, or fails after the lock was taken.
+            p = seat_problem(m.group(1), cur)
+            if p: errs.append(p)
         m = re.match(r'-\s*\*\*Depends on:\*\*\s*(.+)', line)
         if m:
             # Ids only from the head of the line. A Depends-on may carry its
@@ -176,6 +196,14 @@ for f, ds in deps.items():
             errs.append(f"{f} depends on {d}, which has no feature section")
         if d == f:
             errs.append(f"{f} depends on itself")
+
+# 5b — the reviewer seat in mission.md, if one is named, is a real seat
+mission_md = read("mission.md")
+if mission_md:
+    m = re.search(r'(?im)^-?\s*\**Reviewer seat:\**\s*(.+)$', mission_md)
+    if m:
+        p = seat_problem(m.group(1), "mission.md's reviewer seat")
+        if p: errs.append(p)
 
 # 6 — dangling ids.
 #

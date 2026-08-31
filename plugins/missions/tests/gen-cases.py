@@ -10,7 +10,7 @@ ROOT = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(__file__
 if ROOT.exists(): shutil.rmtree(ROOT)
 
 # ---------------------------------------------------------------- fixtures
-def state_block(phase="implementing", cap=200, extra="", resume="dispatch F002 (M1 feature 2 of 3)"):
+def state_block(phase="implementing", cap=200, extra="", resume="dispatch F002 (M1 feature 2 of 3)", constraints_extra=""):
     return f"""# Mission demo — state
 
 ```mission-state
@@ -30,7 +30,7 @@ state_cap_lines: {cap}
 - Never push, merge, `--no-verify`, `--admin`
 - Tests: `make test-unit` (mocked layer) — never `pytest tests/`
 - DB: ports 5435/5436 are read-only
-
+{constraints_extra}
 ## Key facts established during planning (do not re-research)
 - The aggregation lives in `analytics/service.py:40`
 {extra}
@@ -94,13 +94,14 @@ CONTRACT_MIDCOL = CONTRACT_V2.replace("| Proof class | Feature(s) | Status | Evi
     .replace("| interface | F003 | unproven | — | min: playwright; max: 1 run |", "| interface | min: playwright; max: 1 run | F003 | unproven | — |")
 CONTRACT_NOBUDGET_CELL = CONTRACT_V2.replace("| min: playwright; max: 1 run |", "|  |")
 
-def features_md(files=True, n_extra=0):
-    def feat(fid, asserts, fl):
+def features_md(files=True, n_extra=0, seat=None):
+    def feat(fid, asserts, fl, seat=None):
         s = f"### {fid} — feature {fid}\n- **Assertions:** {asserts}\n"
         if files: s += f"- **Files:** {fl}\n"
+        if seat: s += f"- **Seat:** {seat}\n"
         s += "- **Procedures:** make test-unit\n- **Depends on:** —\n- **Status:** pending\n\n"
         return s
-    body = "# Features — demo\n\n## M1 — first\n\n" + feat("F001", "A001, A002", "`analytics/service.py`, `tests/unit/test_a.py`") \
+    body = "# Features — demo\n\n## M1 — first\n\n" + feat("F001", "A001, A002", "`analytics/service.py`, `tests/unit/test_a.py`", seat) \
          + feat("F002", "A002", "`analytics/service.py`") + feat("F003", "A003", "`ui/src/Filters.tsx`")
     for i in range(n_extra):
         body += feat(f"F{4+i:03d}", "A002", "`analytics/service.py`")
@@ -116,12 +117,16 @@ def followups_md(entries):
         out += "\n"
     return out
 
-def agent_payload(agent, prompt, tool_use_id="toolu_1", session="s1", transcript="transcript.jsonl", event="PreToolUse", response=None):
+def agent_payload(agent, prompt, tool_use_id="toolu_1", session="s1", transcript="transcript.jsonl", event="PreToolUse", response=None, model=None):
     d = {"session_id": session, "transcript_path": transcript, "hook_event_name": event, "tool_name": "Agent",
          "tool_use_id": tool_use_id, "tool_input": {"subagent_type": agent, "prompt": prompt, "description": "x"}}
+    if model is not None: d["tool_input"]["model"] = model
     if response is not None: d["tool_response"] = response
     return d
-def bash_payload(cmd): return {"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": cmd}}
+def bash_payload(cmd, agent=None):
+    d = {"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": cmd}}
+    if agent is not None: d["agent_id"] = "ag1"; d["agent_type"] = agent   # the harness adds these inside a subagent
+    return d
 def write_payload(path): return {"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Write", "tool_input": {"file_path": path, "content": "x"}}
 
 WORKER_PROMPT = "Mission: demo. Feature: F002 — tenant scoping.\n\nMission state (digest):\nresume_next: dispatch F002\n\nAssertions: A002"
@@ -157,7 +162,8 @@ OLD = {"state.md": state_legacy(), "mission.md": mission_md(legacy_tokens=True),
 
 # ================================================================ inertness
 for hook in ["mission-serial-guard", "mission-blind-review", "mission-commit-discipline", "mission-crosscheck-seal",
-             "mission-contract-first", "mission-handoff-schema", "mission-journal", "mission-release", "mission-rehydrate"]:
+             "mission-contract-first", "mission-handoff-schema", "mission-journal", "mission-release", "mission-rehydrate",
+             "mission-shell-guard"]:
     for pname, payload in [("agent", agent_payload("mission-worker", WORKER_PROMPT)), ("bash", bash_payload("git push origin main")),
                            ("write", write_payload("/x/app/service.py")), ("empty", {})]:
         case("inertness", f"{hook}--no-missions--{pname}", f"script=hooks/{hook}.sh\nrc=0\nstderr_empty=1", stdin=payload)
@@ -204,6 +210,26 @@ case(G, "legacy-unknown-phase-warns-but-active", "rc=2\nstderr~=not one of \\[|l
 case(G, "researcher-never-blocked", "rc=0\npostcheck=test ! -f .missions/demo/.lease.new; grep -q '\"class\":\"static\"' .missions/demo/journal.jsonl",
      stdin=agent_payload("mission-researcher", "Mission: demo. Question: where is X?"), missions={"demo": demo(**{".writer": lock("mission-worker", "F001"), ".lease": lock("mission-worker", "F001")})})
 case(G, "explore-builtin-static", "rc=0", stdin=agent_payload("Explore", "find things"), missions={"demo": demo(**{".writer": lock("mission-worker", "F001"), ".lease": lock("mission-worker", "F001")})})
+# v0.2 — the researcher's definition lists mcp__graphify__* / mcp__repowise__*; MCP tools must not change its class.
+# Locks held by another agent, and the researcher must neither be blocked nor take one.
+case(G, "researcher-with-mcp-tools-static", """
+    rc=0
+    postcheck=grep -q 'mcp__graphify__' "$plugin/agents/mission-researcher.md"
+    postcheck=grep -q 'feature=F001' .missions/demo/.lease && grep -q 'feature=F001' .missions/demo/.writer
+    postcheck=grep '"event":"dispatch"' .missions/demo/journal.jsonl | grep -q '"class":"static"'
+    """, stdin=agent_payload("mission-researcher", "Mission: demo. Question: where is X?", tool_use_id="toolu_5"),
+     missions={"demo": demo(**{".writer": lock("mission-worker", "F001"), ".lease": lock("mission-worker", "F001")})})
+# The reviewer's definition lists named MCP tools too; it still holds Bash, so it is still an executor.
+case(G, "reviewer-with-mcp-tools-executor", "rc=2\nstderr~=execution lease held\npostcheck=grep -q 'mcp__repowise__get_callers_callees' \"$plugin/agents/mission-reviewer.md\"",
+     stdin=agent_payload("mission-reviewer", REVIEWER_OK, tool_use_id="toolu_9"), missions={"demo": demo(**{".lease": lock("mission-validator-scrutiny", "")})})
+# Blindness: the reviewer's allowlist names no tool that returns commit messages or PR bodies, and no wildcard.
+case(G, "reviewer-allowlist-no-leaks", "rc=0\npostcheck=! grep -qE 'get_why|list_prs|get_pr_impact|triage_prs|get_answer|mcp__[a-z_]+__\\*' \"$plugin/agents/mission-reviewer.md\"",
+     stdin=agent_payload("mission-reviewer", REVIEWER_OK, tool_use_id="toolu_9"), missions={"demo": demo()})
+# Seats: the model that ran is journaled -- the Agent call's override first, else the definition's default.
+case(G, "journal-model-from-override", "rc=0\npostcheck=grep '\"event\":\"dispatch\"' .missions/demo/journal.jsonl | grep -q '\"model\":\"opus\"'",
+     stdin=agent_payload("mission-worker", WORKER_PROMPT, model="opus"), missions={"demo": demo()})
+case(G, "journal-model-from-frontmatter", "rc=0\npostcheck=grep '\"event\":\"dispatch\"' .missions/demo/journal.jsonl | grep -q '\"model\":\"sonnet\"'",
+     stdin=agent_payload("mission-worker", WORKER_PROMPT), missions={"demo": demo()})
 case(G, "unknown-agent-is-writer-default-deny", "rc=2\nstderr~=writing agent is already active",
      stdin=agent_payload("some-new-agent", "Mission: demo. Feature: F003 — x."), missions={"demo": demo(**{".writer": lock("mission-worker", "F001")})})
 case(G, "namespaced-agent-type", "rc=0\npostcheck=grep -q 'agent=mission-worker' .missions/demo/.writer",
@@ -240,6 +266,9 @@ fu_two = followups_md([("FU001", "a (from M1-review-F001)", "A002", "C01", "repa
 case(G, "repair-rounds-within", "rc=0", stdin=agent_payload("mission-worker", "Mission: demo. Feature: F005 — second repair."),
      missions={"demo": demo(**{"mission.md": mission_md(repair=2), "followups.md": fu_two})})
 case(G, "dollar-cap-reached", "rc=2\nstderr~=dollar cap -- spent \\$197.20 of \\$200", stdin=agent_payload("mission-worker", WORKER_PROMPT),
+     missions={"demo": demo(**{"mission.md": mission_md(dollar=200, reserve=15)})}, files={"transcript.jsonl": TRANSCRIPT})
+# v0.2 — the dollar cap binds static agents too: the researcher fans out unbounded and its spend is real.
+case(G, "dollar-cap-blocks-static-too", "rc=2\nstderr~=dollar cap", stdin=agent_payload("mission-researcher", "Mission: demo. Q"),
      missions={"demo": demo(**{"mission.md": mission_md(dollar=200, reserve=15)})}, files={"transcript.jsonl": TRANSCRIPT})
 case(G, "dollar-cap-under", "rc=0", stdin=agent_payload("mission-worker", WORKER_PROMPT),
      missions={"demo": demo(**{"mission.md": mission_md(dollar=300, reserve=15)})}, files={"transcript.jsonl": TRANSCRIPT})
@@ -280,6 +309,10 @@ J = "mission-journal"
 DISPATCH_LINE = json.dumps({"ts": "2026-08-31T10:00:00Z", "event": "dispatch", "agent": "mission-worker", "feature": "F002", "dispatch_id": "toolu_1"}) + "\n"
 case(J, "waited-return-uses-harness-duration", "rc=0\npostcheck=grep '\"event\":\"agent_return\"' .missions/demo/journal.jsonl | grep -q '\"duration_s\":12' \npostcheck=grep -q '\"agent_id\":\"ag1\"' .missions/demo/journal.jsonl",
      stdin={**agent_payload("mission-worker", WORKER_PROMPT, tool_use_id="toolu_1", event="PostToolUse", response=POST_DONE), "duration_ms": 12345}, missions={"demo": demo(**{"journal.jsonl": DISPATCH_LINE})})
+case(J, "journal-model-from-override-return", "rc=0\npostcheck=grep '\"event\":\"agent_return\"' .missions/demo/journal.jsonl | grep -q '\"model\":\"opus\"'",
+     stdin=agent_payload("mission-worker", WORKER_PROMPT, tool_use_id="toolu_1", event="PostToolUse", response=POST_DONE, model="opus"), missions={"demo": demo(**{"journal.jsonl": DISPATCH_LINE})})
+case(J, "journal-model-from-frontmatter-return", "rc=0\npostcheck=grep '\"event\":\"agent_return\"' .missions/demo/journal.jsonl | grep -q '\"model\":\"sonnet\"'",
+     stdin=agent_payload("mission-worker", WORKER_PROMPT, tool_use_id="toolu_1", event="PostToolUse", response=POST_DONE), missions={"demo": demo(**{"journal.jsonl": DISPATCH_LINE})})
 case(J, "waited-return-no-duration-null", "rc=0\npostcheck=grep -q '\"duration_s\":null' .missions/demo/journal.jsonl",
      stdin=agent_payload("mission-worker", WORKER_PROMPT, tool_use_id="toolu_7", event="PostToolUse", response=POST_DONE), missions={"demo": demo()})
 case(J, "async-launch-journals-agent-launched", "rc=0\npostcheck=grep -q '\"event\":\"agent_launched\"' .missions/demo/journal.jsonl && ! grep -q '\"event\":\"agent_return\"' .missions/demo/journal.jsonl",
@@ -287,8 +320,14 @@ case(J, "async-launch-journals-agent-launched", "rc=0\npostcheck=grep -q '\"even
 LAUNCHED = DISPATCH_LINE + json.dumps({"ts": "2026-08-31T10:00:01Z", "event": "agent_launched", "agent": "mission-worker", "dispatch_id": "toolu_1", "agent_id": "ag1"}) + "\n"
 case(J, "subagentstop-after-launch-joins-duration", "rc=0\npostcheck=grep '\"event\":\"agent_stopped\"' .missions/demo/journal.jsonl | grep -q '\"duration_s\":[0-9]' \npostcheck=grep '\"event\":\"agent_stopped\"' .missions/demo/journal.jsonl | grep -q '\"feature\":\"F002\"'",
      stdin=stop_payload("mission-worker", "ag1"), missions={"demo": demo(**{"journal.jsonl": LAUNCHED})})
-case(J, "subagentstop-unjoined-null-duration", "rc=0\npostcheck=grep '\"event\":\"agent_stopped\"' .missions/demo/journal.jsonl | grep -q '\"duration_s\":null'",
+case(J, "subagentstop-unjoined-null-duration", "rc=0\npostcheck=grep '\"event\":\"agent_stopped\"' .missions/demo/journal.jsonl | grep -q '\"duration_s\":null'\npostcheck=! grep '\"event\":\"agent_stopped\"' .missions/demo/journal.jsonl | grep -q '\"model\"'",
      stdin=stop_payload("mission-researcher", "agX"), missions={"demo": demo()})
+# A SubagentStop has no tool_input: the model is joined from the dispatch (a seat override survives),
+# never taken from the definition -- that misattributed every background dispatch's agent-hours.
+LAUNCHED_OPUS = json.dumps({"ts": "2026-08-31T10:00:00Z", "event": "dispatch", "agent": "mission-worker", "model": "opus", "feature": "F002", "dispatch_id": "toolu_1"}) + "\n" \
+    + json.dumps({"ts": "2026-08-31T10:00:01Z", "event": "agent_launched", "agent": "mission-worker", "dispatch_id": "toolu_1", "agent_id": "ag1"}) + "\n"
+case(J, "subagentstop-joins-model-from-dispatch", "rc=0\npostcheck=grep '\"event\":\"agent_stopped\"' .missions/demo/journal.jsonl | grep -q '\"model\":\"opus\"'",
+     stdin=stop_payload("mission-worker", "ag1"), missions={"demo": demo(**{"journal.jsonl": LAUNCHED_OPUS})})
 case(J, "non-mission-agent-ignored", "rc=0\npostcheck=test ! -s .missions/demo/journal.jsonl", stdin=agent_payload("Explore", "x", event="PostToolUse", response={"agentType": "Explore", "status": "completed"}), missions={"demo": demo()})
 case(J, "unwritable-journal-still-rc0", "rc=0\nsetup=chmod 000 .missions/demo/journal.jsonl", stdin=agent_payload("mission-worker", WORKER_PROMPT, event="PostToolUse", response=POST_DONE), missions={"demo": demo()})
 
@@ -301,6 +340,19 @@ case(B, "reviewer-with-patch-ok", "rc=0", stdin=agent_payload("mission-reviewer"
 case(B, "reviewer-handoff-leak-blocked", "rc=2\nstderr~=handoff content", stdin=agent_payload("mission-reviewer", REVIEWER_OK + "\nSee handoffs/F001.md"), missions={"demo": demo()})
 case(B, "behavior-diff-blocked", "rc=2\nstderr~=contains a diff", stdin=agent_payload("mission-validator-behavior", "Prove A003.\n```diff\n+x\n```"), missions={"demo": demo()})
 case(B, "namespaced-reviewer-still-checked", "rc=2\nstderr~=names no patch file", stdin=agent_payload("missions:mission-reviewer", "Mission: demo. Feature: F001. Review A001."), missions={"demo": demo()})
+# The loop's own reviewer template, verbatim from skills/mission-run/SKILL.md -- an earlier wording
+# ("do not run git log, git show or git diff yourself") was blocked by this very hook.
+REVIEWER_TEMPLATE = ("Mission: demo. Feature: F001 — x.\nReview the patch for F001 against these assertions. You have not seen how or why it was\n"
+                     "written and you should not go looking.\n  A001 — text  proof budget: min named test; max 1\n"
+                     "Design guidelines this feature was bound to (pre-code, from design.md):\n  D001 — text — exemplar `a.py:4`\n"
+                     "Patch: .missions/demo/patches/F001.patch (base abc, head def)  — read this file;\nit is your only diff, and you do not run git yourself.\n"
+                     "Codebase intelligence: graphify=cli+mcp (graphify-out/, 2026-08-31) · repowise=none — for every public symbol the patch\n"
+                     "changes, find its callers (graphify affected \"<symbol>\" when graphify is named; grep\notherwise) and grade them in your Impact table.\n"
+                     "Return a per-assertion verdict (satisfied / not satisfied / cannot tell from the diff),\na per-guideline conformance verdict, the impact table, plus defects with file:line and a\n"
+                     "root-cause cluster hint. \"cannot tell\" is a legitimate and useful answer.")
+case(B, "run-skill-reviewer-template-passes", "rc=0", stdin=agent_payload("mission-reviewer", REVIEWER_TEMPLATE), missions={"demo": demo()})
+case(B, "run-skill-reviewer-template-is-current", "rc=0\npostcheck=grep -qF 'it is your only diff, and you do not run git yourself.' \"$plugin/skills/mission-run/SKILL.md\"",
+     stdin=agent_payload("mission-reviewer", REVIEWER_TEMPLATE), missions={"demo": demo()})
 
 # ================================================================ commit discipline
 C = "mission-commit-discipline"
@@ -317,6 +369,34 @@ case(C, "push-in-other-repo-via-cd-allowed", "rc=0\nsetup=" + OTHER, stdin=bash_
 case(C, "push-in-mission-repo-via-cd-still-blocked", "rc=2\nstderr~=no pushing\nsetup=git init -q . && git commit -q --allow-empty -m init", stdin=bash_payload("cd $TMP && git push origin main"), missions={"demo": demo()})
 case(C, "merge-in-other-repo-allowed", "rc=0\nsetup=" + OTHER, stdin=bash_payload("git -C $TMP/other merge feature"), missions={"demo": demo()})
 case(C, "heredoc-mentioning-push-ok", "rc=0", stdin=bash_payload("cat > notes.md <<'EOF'\nnever git push here\nEOF"), missions={"demo": demo()})
+
+# ================================================================ shell guard (v0.2)
+SG = "mission-shell-guard"
+# blindness: only the reviewer's own shell is policed, by agent_type
+case(SG, "reviewer-git-log-blocked", "rc=2\nstderr~=blind reviewer does not run git", stdin=bash_payload("git log --oneline -20", agent="mission-reviewer"), missions={"demo": demo()})
+case(SG, "reviewer-git-show-body-blocked", "rc=2\nstderr~=blind reviewer does not run git", stdin=bash_payload("git show -s --format=%B HEAD", agent="mission-reviewer"), missions={"demo": demo()})
+case(SG, "reviewer-namespaced-git-diff-blocked", "rc=2\nstderr~=blind reviewer", stdin=bash_payload("cd /x && git diff origin/main...HEAD", agent="missions:mission-reviewer"), missions={"demo": demo()})
+case(SG, "reviewer-gh-pr-blocked", "rc=2\nstderr~=does not read PRs", stdin=bash_payload("gh pr view 123 --json body", agent="mission-reviewer"), missions={"demo": demo()})
+case(SG, "reviewer-graphify-prs-blocked", "rc=2\nstderr~=does not read PRs", stdin=bash_payload("graphify prs --triage", agent="mission-reviewer"), missions={"demo": demo()})
+case(SG, "reviewer-handoff-cat-blocked", "rc=2\nstderr~=does not read handoffs", stdin=bash_payload("cat .missions/demo/handoffs/F001.md", agent="mission-reviewer"), missions={"demo": demo()})
+case(SG, "reviewer-graphify-affected-ok", "rc=0", stdin=bash_payload('graphify affected "reset_streak" --depth 2', agent="mission-reviewer"), missions={"demo": demo()})
+case(SG, "reviewer-tests-and-git-status-ok", "rc=0", stdin=bash_payload("git status --short && make test-unit", agent="mission-reviewer"), missions={"demo": demo()})
+case(SG, "worker-git-log-ok", "rc=0", stdin=bash_payload("git log -1 --oneline", agent="mission-worker"), missions={"demo": demo()})
+case(SG, "orchestrator-git-log-ok", "rc=0", stdin=bash_payload("git log --oneline -5"), missions={"demo": demo()})
+# No agent_type in the payload: fall back to the execution lease -- a reviewer's lease makes the call the reviewer's.
+case(SG, "no-agent-type-reviewer-lease-blocks", "rc=2\nstderr~=via execution lease", stdin=bash_payload("git log -1 --format=%B"), missions={"demo": demo(**{".lease": lock("mission-reviewer", "F001")})})
+case(SG, "no-agent-type-worker-lease-allows", "rc=0", stdin=bash_payload("git log -1 --format=%B"), missions={"demo": demo(**{".lease": lock("mission-worker", "F001")})})
+case(SG, "agent-type-worker-beats-reviewer-lease", "rc=0", stdin=bash_payload("git log -1", agent="mission-worker"), missions={"demo": demo(**{".lease": lock("mission-reviewer", "F001")})})
+# spend: LLM-backed index commands are blocked for every caller; index-only forms pass
+case(SG, "repowise-update-blocked", "rc=2\nstderr~=through an LLM", stdin=bash_payload("repowise update"), missions={"demo": demo()})
+case(SG, "repowise-init-full-blocked", "rc=2\nstderr~=through an LLM", stdin=bash_payload("repowise init .", agent="mission-worker"), missions={"demo": demo()})
+case(SG, "repowise-init-index-only-ok", "rc=0", stdin=bash_payload("repowise init --index-only -y ."), missions={"demo": demo()})
+case(SG, "repowise-health-ok", "rc=0", stdin=bash_payload("repowise health --format json --module hooks", agent="mission-validator-scrutiny"), missions={"demo": demo()})
+case(SG, "graphify-label-blocked", "rc=2\nstderr~=call an LLM", stdin=bash_payload("graphify label ."), missions={"demo": demo()})
+case(SG, "graphify-cluster-only-blocked", "rc=2\nstderr~=call an LLM", stdin=bash_payload("graphify cluster-only ."), missions={"demo": demo()})
+case(SG, "graphify-cluster-only-no-label-ok", "rc=0", stdin=bash_payload("graphify cluster-only . --no-label"), missions={"demo": demo()})
+case(SG, "graphify-update-ok", "rc=0", stdin=bash_payload("graphify update . 2>&1 | tail -3"), missions={"demo": demo()})
+case(SG, "heredoc-mentioning-repowise-update-ok", "rc=0", stdin=bash_payload("cat > notes.md <<'EOF'\nnever run repowise update mid-mission\nEOF"), missions={"demo": demo()})
 
 # ================================================================ contract first
 F = "mission-contract-first"
@@ -339,7 +419,14 @@ case("mission-rehydrate", "legacy-warns-still-prints", "rc=0\nstdout~=MISSION AC
 
 # ================================================================ scripts: state digest
 S = "mission-state"
-case(S, "block-digest-under-cap", "rc=0\nargs=.missions/demo\nstdout~=phase: implementing\nstdout~=writer: none\nstdout~=lease: free\nstdout~=Never push\npostcheck=test $(bash \"$CLAUDE_PLUGIN_ROOT/scripts/mission-state.sh\" .missions/demo | wc -c) -le 2048", missions={"demo": demo()})
+# postcheck runs in run.sh's own subshell: $plugin is visible there, $CLAUDE_PLUGIN_ROOT is not (it is
+# injected only into the script under test). The old form passed vacuously on an empty digest.
+case(S, "block-digest-under-cap", "rc=0\nargs=.missions/demo\nstdout~=phase: implementing\nstdout~=writer: none\nstdout~=lease: free\nstdout~=Never push\npostcheck=d=$(bash \"$plugin/scripts/mission-state.sh\" .missions/demo) && test -n \"$d\" && test $(printf '%s' \"$d\" | wc -c) -le 2048", missions={"demo": demo()})
+# v0.2 — the planner's codebase-intelligence line sits under Standing constraints so the digest carries it.
+INTEL = "- Codebase intelligence: graphify=cli+mcp (graphify-out/, 2026-08-31) · repowise=none\n"
+case(S, "digest-includes-intelligence-line", "rc=0\nargs=.missions/demo\nstdout~=Codebase intelligence: graphify=cli\\+mcp", missions={"demo": demo(**{"state.md": state_block(constraints_extra=INTEL)})})
+case(S, "digest-intelligence-line-cap-still-enforced", "rc=2\nargs=.missions/demo\nstderr~=digest cannot fit",
+     missions={"demo": demo(**{"state.md": state_block(constraints_extra=INTEL + "- " + "x" * 2100 + "\n")})})
 case(S, "shows-locks", "rc=0\nargs=.missions/demo\nstdout~=writer: mission-worker F002\nstdout~=lease: agent=mission-worker", missions={"demo": demo(**{".writer": lock("mission-worker", "F002"), ".lease": lock("mission-worker", "F002")})})
 case(S, "legacy-warns", "rc=0\nargs=.missions/old\nstderr~=legacy state header\nstdout~=phase: implementing", missions={"old": OLD})
 case(S, "too-big-rc2", "rc=2\nargs=.missions/demo\nstderr~=digest cannot fit", missions={"demo": demo(**{"state.md": state_block().replace("- Never push, merge", "- " + "x" * 2100 + "\n- Never push, merge")})})
@@ -376,6 +463,12 @@ FEAT_3MS = features_md().replace("## M1 — first\n\n### F001", "## M1 — first
 FU_RISING = followups_md([("FU001", "a (from M2-review-F002)", "A002", "C01", "accept"), ("FU002", "b (from M3-review-F003)", "A003", "C02", "accept"), ("FU003", "c (from M3-review-F003)", "A003", "C02", "accept")])
 case("mission-converge", "ratio-rising-two-milestones", "rc=2\nargs=.missions/demo\nstdout~=ratio rising", missions={"demo": demo(**{"features.md": FEAT_3MS, "followups.md": FU_RISING})})
 
+# ================================================================ scripts: lint-agents
+BAD_AGENT = "---\nname: bad-agent\ndescription: x\nmodel: gpt\ntools:\neffort: xhigh\n  - Read\n  - Bash\n---\n\n# bad\n"
+case("lint-agents", "shipped-agents-pass", "rc=0\nstdout~=LINT PASS\nstdout~=mission-researcher.md .*class=static\nstdout~=mission-reviewer.md .*class=executor\nstdout~=mission-worker.md .*class=writer")
+case("lint-agents", "key-inside-tools-list-fails", "rc=1\nargs=agents\nstdout~=reads as EMPTY to the hooks\nstdout~=model `gpt`\nstdout~=class=writer", files={"agents/bad-agent.md": BAD_AGENT})
+case("lint-agents", "name-mismatch-fails", "rc=1\nargs=agents\nstdout~=does not match the file name", files={"agents/other.md": "---\nname: bad-agent\ndescription: x\ntools:\n  - Read\n---\n"})
+
 # ================================================================ scripts: check
 K = "check"
 case(K, "v2-mission-passes", "rc=0\nargs=.missions/demo\nstdout~=CHECK PASS", missions={"demo": demo()})
@@ -386,6 +479,15 @@ case(K, "feature-count-exceeds-files", "rc=1\nargs=.missions/demo\nstdout~=featu
 case(K, "no-files-lines-note", "rc=0\nargs=.missions/demo\nstdout~=feature/file gate not applied", missions={"demo": demo(**{"features.md": features_md(files=False)})})
 case(K, "unclustered-followup-fails", "rc=1\nargs=.missions/demo\nstdout~=FU002 unclustered", missions={"demo": demo(**{"followups.md": followups_md([("FU001", "a", "A002", "C01", "accept"), ("FU002", "b", "A002", None, "accept")])})})
 case(K, "cluster-split-fails", "rc=1\nargs=.missions/demo\nstdout~=cluster split across features: C01", missions={"demo": demo(**{"followups.md": followups_md([("FU001", "a", "A002", "C01", "repair as F004"), ("FU002", "b", "A002", "C01", "repair as F005")])})})
+# v0.2 — seats are passed verbatim as `model:` on the Agent call, so check.sh validates them.
+case(K, "check-seat-line-present-ok", "rc=0\nargs=.missions/demo\nstdout~=CHECK PASS", missions={"demo": demo(**{"features.md": features_md(seat="opus")})})
+case(K, "check-seat-line-invalid", "rc=1\nargs=.missions/demo\nstdout~=F001 names seat 'gpt'", missions={"demo": demo(**{"features.md": features_md(seat="gpt")})})
+# The template's own example carries a rationale after an em dash, and a full model id is a legal seat.
+case(K, "check-seat-line-with-rationale-ok", "rc=0\nargs=.missions/demo\nstdout~=CHECK PASS", missions={"demo": demo(**{"features.md": features_md(seat="opus — binary XLSX output, unfamiliar library")})})
+case(K, "check-seat-full-model-id-ok", "rc=0\nargs=.missions/demo\nstdout~=CHECK PASS", missions={"demo": demo(**{"features.md": features_md(seat="claude-opus-5")})})
+case(K, "check-reviewer-seat-ok", "rc=0\nargs=.missions/demo\nstdout~=CHECK PASS", missions={"demo": demo(**{"mission.md": mission_md() + "\n## Model seats\n- Reviewer seat: fable\n"})})
+case(K, "check-reviewer-seat-invalid", "rc=1\nargs=.missions/demo\nstdout~=reviewer seat names seat 'gpt-5'", missions={"demo": demo(**{"mission.md": mission_md() + "\n## Model seats\n- Reviewer seat: gpt-5\n"})})
+case(K, "check-reviewer-seat-with-comment-ok", "rc=0\nargs=.missions/demo\nstdout~=CHECK PASS", missions={"demo": demo(**{"mission.md": mission_md() + "\n## Model seats\n- Reviewer seat: fable   # optional — auth boundary\n"})})
 case(K, "archive-scanned-for-ids", "rc=0\nargs=.missions/demo\nstdout~=archive/M1.md: A005 — retired", missions={"demo": demo(**{"archive/M1.md": "## M1 closed\n- A005 was retired\n", "contract.md": CONTRACT_V2 + "\n## Amendments after `/missions:mission-plan`\n\n| When | What | Why |\n|---|---|---|\n| now | A005 retired | dup |\n"})})
 
 n = sum(1 for _ in ROOT.glob("*/*/expect"))

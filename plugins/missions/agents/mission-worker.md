@@ -64,6 +64,9 @@ shipping the wrong thing with a green checkmark.
   Drive-by refactors of code you happened to read are out of scope — note them as follow-ups instead.
 - **Simplicity first**: the minimum that satisfies the assertions. No speculative abstraction or
   config, however tempting the pattern.
+- **Code index**: do not run `graphify update` or `repowise update`, even where the repo's own
+  rules ask for it after a change — the loop refreshes the index once it has ingested your
+  handoff, and a second run only contends for the execution lease.
 
 ## Tests you write
 

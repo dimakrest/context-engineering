@@ -77,6 +77,13 @@ written down is a finding that never happened.
   contract fixed the design before any code existed. If the project defines none, skip it and say so
   in the report: the design pass did not run.
 
+- **Whole-branch impact**, when `state.md`'s `Codebase intelligence:` line names graphify or
+  repowise: `graphify affected "<symbol>"` for each public symbol the branch changed (the
+  three-dot diff is allowed here — this pass is not blind), `mcp__graphify__get_pr_impact` once
+  the draft PR exists, and `mcp__repowise__get_risk` on the changed files. The per-feature
+  reviewers could not see across features; this is where a cross-feature caller gets graded.
+  Its findings enter step 4 like any other.
+
 If a review tool refuses to run on a draft, flip the PR ready-for-review, run it, and flip it back
 to draft when done. That is a visible state change on a PR your team can see — say so, and confirm
 before doing it if the repo is one where a review request pages someone.

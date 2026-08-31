@@ -82,9 +82,11 @@ the ids, assertions, dependencies and scope boundaries, so the decomposition can
 
 ```python
 re.sub(r'- \*\*Procedures:\*\*\n(?:(?:  - |    ).*\n|\n(?=  ))*?(?=- \*\*Depends on:\*\*)', '', s)
+re.sub(r'- \*\*Seat:\*\*.*\n', '', s)          # our judgment of which features are hard
 ```
 
-Also drop any Amendments section. Then leak-check the package and **report hits rather than editing
+Strip the `Reviewer seat:` line from `mission.md` for the same reason. Also drop any Amendments
+section. Then leak-check the package and **report hits rather than editing
 them**:
 
 ```bash

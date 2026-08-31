@@ -12,7 +12,7 @@ Contract-first, multi-feature agent runs whose definition of done is written bef
   `/missions:mission-crosscheck` · `/missions:mission-pr-review`.
 
 Five agents (`mission-worker`, `mission-reviewer`, `mission-researcher`,
-`mission-validator-scrutiny`, `mission-validator-behavior`), nine hooks, seven scripts.
+`mission-validator-scrutiny`, `mission-validator-behavior`), ten hooks, eight scripts.
 Everything is a file under `.missions/<slug>/` in the project you run it in; the plugin is
 project-agnostic and learns the repo's rules from the mission's `state.md`.
 
@@ -34,7 +34,8 @@ The hooks are inert in any project without an active `.missions/*/state.md`.
 |---|---|
 | One writer at a time | `.missions/<slug>/.writer`, taken and released by the hooks |
 | One executor (test runner) at a time | `.missions/<slug>/.lease` — anything with Bash |
-| Reviewers stay blind | reviewer prompts must name a patch file and may not run git |
+| Reviewers stay blind | reviewer prompts must name a patch file and may not run git; the reviewer's own shell is refused `git log/show/diff`, `gh`, `graphify prs` and handoff paths |
+| Index spend stays visible | `repowise update` / `init` without `--index-only`, `graphify label/extract`, `cluster-only` without `--no-label` are blocked for every caller — they bill an LLM outside the caps |
 | Spend is measured | dollar cap from the harness's cost-state; dispatch, wall-clock and repair-round caps from the journal |
 | State stays small | `state.md` capped at 200 lines; agents are briefed with a ≤ 2 KB digest |
 | No push outside phase `pr`, no merge, no `--no-verify` | commit-discipline |

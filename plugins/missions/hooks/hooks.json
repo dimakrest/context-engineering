@@ -29,6 +29,11 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/mission-crosscheck-seal.sh\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/mission-shell-guard.sh\"",
+            "timeout": 10
           }
         ]
       },

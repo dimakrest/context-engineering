@@ -80,9 +80,14 @@ mistakes. Its feature's package includes the design guidelines that apply — co
 from design.md's per-feature section**, exemplars included; a paraphrased guideline is a different
 guideline.
 
+**Seat.** If the feature's section in `features.md` carries `- **Seat:** <model>`, pass it as
+`model:` on the Agent call; otherwise omit `model:` and the definition's default runs. Never widen
+an agent's `tools:` on the call. The hooks journal whichever model actually ran.
+
 ```
 Agent tool:
   subagent_type: "mission-worker"
+  model: <the feature's Seat — omit the line when features.md names none>
   prompt: |
     Mission: <slug>. Feature: F00n — <title>.
 
@@ -130,13 +135,19 @@ Then:
 - Update `features.md`: status, and `- **Range:** <base>..<head>`.
 - Update `contract.md` assertions to `claimed` — **never** `proven`.
 - Copy every issue from the handoff into `state.md` under open issues; rewrite `resume_next`.
+- Refresh the code index when the digest's `Codebase intelligence:` line names graphify:
+  `graphify update . 2>&1 | tail -3` — AST-only, seconds, no LLM, and it is what the next
+  reviewer's impact step and the next researcher will read. Not `repowise update`: it can generate
+  wiki pages through an LLM, outside the caps.
 
 ## VALIDATE — at every milestone
 
 Run in this order. Cheap and deterministic first; expensive and real last.
 
 **1. Scrutiny** (`mission-validator-scrutiny`, one agent) — the repo's test layers, linters and type
-checkers. Raw output and exit codes only; it makes no repairs.
+checkers, plus the health delta against `baseline/health.json` when repowise is indexed. Raw output
+and exit codes only; it makes no repairs. A worsened health score is negotiated like any other
+finding — never a gate.
 
 **2. Blind review** (`mission-reviewer`, **one per feature**) — each gets its feature's
 **materialised patch file**, that feature's assertions, and that feature's design guidelines. It must
@@ -156,6 +167,7 @@ host; dispatch the next when the previous returns. Static research may fan out m
 ```
 Agent tool (one call per feature):
   subagent_type: "mission-reviewer"
+  model: <mission.md's "Reviewer seat" — omit the line when it names none>
   prompt: |
     Mission: <slug>. Feature: F00n — <title>.
     Review the patch for F00n against these assertions. You have not seen how or why it was
@@ -165,11 +177,17 @@ Agent tool (one call per feature):
     Design guidelines this feature was bound to (pre-code, from design.md):
       D001 — <text> — exemplar `path/file.py:40`
     Patch: .missions/<slug>/patches/F00n.patch (base <sha>, head <sha>)  — read this file;
-    do not run git log, git show or git diff yourself.
+    it is your only diff, and you do not run git yourself.
+    Codebase intelligence: <the state.md line verbatim> — for every public symbol the patch
+    changes, find its callers (graphify affected "<symbol>" when graphify is named; grep
+    otherwise) and grade them in your Impact table.
     Return a per-assertion verdict (satisfied / not satisfied / cannot tell from the diff),
-    a per-guideline conformance verdict, plus defects with file:line and a root-cause
-    cluster hint. "cannot tell" is a legitimate and useful answer.
+    a per-guideline conformance verdict, the impact table, plus defects with file:line and a
+    root-cause cluster hint. "cannot tell" is a legitimate and useful answer.
 ```
+
+The reviewer's tool list is fixed by its definition — read-only graph and call-graph tools, and
+none that return commit messages or PR bodies. Do not widen it on the call.
 
 A design-conformance failure is a defect like any other: it becomes a follow-up feature, never a
 patch — and never a silent rewrite of the guideline to match the code.

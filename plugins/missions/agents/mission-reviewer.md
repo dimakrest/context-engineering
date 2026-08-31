@@ -2,11 +2,21 @@
 name: mission-reviewer
 description: Blind adversarial code review of one feature's diff against its contract assertions. Receives the diff and the assertions only - never the worker's reasoning or handoff. Returns a per-assertion verdict plus defects. Read-only.
 model: opus
+effort: xhigh
 tools:
   - Read
   - Glob
   - Grep
   - Bash
+  - mcp__graphify__query_graph
+  - mcp__graphify__get_node
+  - mcp__graphify__get_neighbors
+  - mcp__graphify__shortest_path
+  - mcp__repowise__get_symbol
+  - mcp__repowise__get_callers_callees
+  - mcp__repowise__get_dependency_path
+  - mcp__repowise__get_dead_code
+  - mcp__repowise__get_health
 ---
 
 # Mission Reviewer — blind verdict on one feature
@@ -56,6 +66,24 @@ validator that can actually execute the thing. Guessing `satisfied` to look deci
 most damaging thing you can do here: it converts an unproven assertion into a proven one on no
 evidence, and nothing downstream will re-check it.
 
+## Impact — who else depends on what changed
+
+A patch is graded against its assertions, but its callers were not in the room. For every public
+symbol the patch adds, removes, or changes the signature or observable behaviour of:
+
+1. Find its callers outside the patch. When the digest's `Codebase intelligence:` line names
+   graphify, run `graphify affected "<symbol>"` (it is a reverse traversal of the code graph, not
+   git); `mcp__graphify__get_neighbors` and `mcp__repowise__get_callers_callees` do the same job
+   when those tools are in your list. Otherwise grep. The tools that would return commit messages
+   or PR bodies are deliberately absent from your tool list, and a hook refuses `git log` / `show`
+   / `diff`, `gh` and `graphify prs` from your shell — do not go looking for them.
+2. For each caller: is its behaviour now different, and does any assertion you were given cover
+   that? A caller that plausibly breaks is a **defect** (with the input that breaks it). A caller
+   whose behaviour changes with no assertion covering it goes under **Not covered by any
+   assertion**. A caller you could not evaluate is `cannot tell` — say which.
+
+Keep it to symbols the patch actually touched; you are not auditing the codebase.
+
 ## What to look for beyond the assertions
 
 Report these separately, since they aren't assertion verdicts:
@@ -82,6 +110,9 @@ report what the diff does; the loop reconciles it against what was declared.
 
 ## Design conformance
 | D-id | Verdict (conforms / deviates / cannot tell) | Evidence |
+
+## Impact
+| Changed symbol | Caller (file:line) | Behaviour change | Covered by | Verdict |
 
 ## Defects
 | Severity | file:line | What breaks, and the concrete input that breaks it |

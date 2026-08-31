@@ -23,7 +23,9 @@ human reviewer can see what "done" was defined as without reading the run state.
   crosscheck/          progress.md · pass1-report.md · report.html  (external review; raw
                        transcript and sealed package live OUTSIDE the mission dir)
   followups.md        the finding registry — clustered, dispositioned; repairs become features
-  journal.jsonl       append-only event log (hooks write dispatch / agent_return / locks / spend)
+  journal.jsonl       append-only event log (hooks write dispatch / agent_return / locks / spend / model)
+  baseline/health.json  `repowise health` at plan time, when the repo is indexed — the scrutiny
+                       validator reports the delta against it
 ```
 
 ---
@@ -45,12 +47,12 @@ human reviewer can see what "done" was defined as without reading the run state.
   (never "halt on validation failure": first-pass failure is the normal case, and wiring it as a halt pages the human at every milestone by design)
 
 ## Model seats
-| Seat | Agent | Model |
-|---|---|---|
-| Orchestrator | main session | Opus 5, high effort |
-| Worker | mission-worker | Sonnet 5 (Opus for gnarly features) |
-| Researcher | mission-researcher | Haiku 4.5 |
-| Reviewer / validators | mission-reviewer, mission-validator-* | Opus 5, high effort |
+Defaults live in the agent definitions and need no line here: worker Sonnet 5 · reviewer Opus 5 at
+`xhigh` · researcher and scrutiny Sonnet 5 · behavior Opus 5 · orchestrator = the session's model.
+Record deviations only — `check.sh` validates them, the loop passes them as `model:` on the Agent
+call, and the journal records what actually ran (`journal-metrics.sh` sums it per model).
+- Reviewer seat: fable   # optional — when the blast radius includes auth, money or tenancy
+- Per-feature seats go in features.md (`- **Seat:** opus`), not here
 
 ## Budget
 - Dollar cap: $<n> — measured from the harness (scripts/mission-spend.sh), enforced by the serial guard
@@ -146,6 +148,7 @@ rejects a feature list whose count exceeds the distinct files it touches.
 ### F001 — <title>
 - **Assertions:** A001, A002
 - **Files:** `alerting/service.py`, `alerting/repository.py`, `tests/unit/alerting/test_streak.py`
+- **Seat:** opus — optional; only when the feature warrants a model above the worker's default (sonnet, opus, haiku, fable, or a full claude-… id; omit the line for the default)
 - **Procedures:** tests at the repo's mocked layer under `alerting/`; no migration; update the docs page for this area
 - **Depends on:** —
 - **Out of scope:** the dashboard query (F005)
@@ -200,6 +203,7 @@ state_cap_lines: 200
 - <docs this repo expects updated, and where plans live>
 - <the repo's PR-creation and adversarial-review skills, if it has them — /missions:mission-pr-review uses both>
 - <anything with a real-world side effect that needs human confirmation>
+- Codebase intelligence: graphify=cli+mcp (graphify-out/, <date>) · repowise=index (.repowise/) — or `none`; the planner's probe writes it, every agent branches on it
 
 ## Key facts established during planning (do not re-research)
 - <seams, file:line citations, decisions already settled — saves every worker the lookup>
@@ -320,11 +324,11 @@ Append-only, one JSON object per line. Feeds `/missions:mission-status`, the cap
 Hook-written (measured, not remembered):
 
 ```jsonl
-{"ts":"2026-08-18T14:02:11Z","event":"dispatch","agent":"mission-worker","class":"writer","feature":"F003","dispatch_id":"toolu_01…","session_id":"…"}
+{"ts":"2026-08-18T14:02:11Z","event":"dispatch","agent":"mission-worker","class":"writer","model":"sonnet","feature":"F003","dispatch_id":"toolu_01…","session_id":"…"}
 {"ts":"2026-08-18T14:02:11Z","event":"session_cost","session_id":"…","usd":41.20}
-{"ts":"2026-08-18T14:02:12Z","event":"agent_launched","agent":"mission-worker","via":"PostToolUse","feature":"F003","dispatch_id":"toolu_01…","agent_id":"a318…","status":"async_launched"}
-{"ts":"2026-08-18T14:41:52Z","event":"agent_stopped","agent":"mission-worker","via":"SubagentStop","feature":"F003","dispatch_id":"toolu_01…","agent_id":"a318…","duration_s":2381}
-{"ts":"2026-08-18T14:41:52Z","event":"agent_return","agent":"mission-worker","via":"PostToolUse","feature":"F003","dispatch_id":"toolu_01…","agent_id":"a318…","duration_s":2381,"status":"completed"}
+{"ts":"2026-08-18T14:02:12Z","event":"agent_launched","agent":"mission-worker","via":"PostToolUse","model":"sonnet","feature":"F003","dispatch_id":"toolu_01…","agent_id":"a318…","status":"async_launched"}
+{"ts":"2026-08-18T14:41:52Z","event":"agent_stopped","agent":"mission-worker","via":"SubagentStop","model":"sonnet","feature":"F003","dispatch_id":"toolu_01…","agent_id":"a318…","duration_s":2381}
+{"ts":"2026-08-18T14:41:52Z","event":"agent_return","agent":"mission-worker","via":"PostToolUse","model":"sonnet","feature":"F003","dispatch_id":"toolu_01…","agent_id":"a318…","duration_s":2381,"status":"completed"}
 {"ts":"2026-08-18T14:41:52Z","event":"writer_lock_cleared","reason":"returned","via":"PostToolUse","lock":"agent=mission-worker feature=F003 …"}
 {"ts":"2026-08-18T14:41:52Z","event":"lease_released","reason":"returned","via":"PostToolUse","lock":"…"}
 {"ts":"2026-08-18T15:02:00Z","event":"lease_wait","agent":"mission-reviewer","feature":"F004","holder":"agent=mission-validator-scrutiny …"}

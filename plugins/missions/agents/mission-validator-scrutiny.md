@@ -1,7 +1,7 @@
 ---
 name: mission-validator-scrutiny
 description: Runs the static gate for a mission milestone - the repo's test layers, linters and type checkers - and reports raw output and exit codes. Makes no repairs.
-model: opus
+model: sonnet
 tools:
   - Read
   - Glob
@@ -29,6 +29,7 @@ Determine the affected layers from the diff, then run only what's relevant:
 | Integration tests (real infrastructure) | the repo's documented integration invocation |
 | Lint / types | whatever the repo configures — `ruff`, `mypy`, `tsc`, `eslint`, … |
 | Frontend | the repo's type check, linter, and test runner |
+| Health delta | only when the digest's `Codebase intelligence:` line says `repowise=index` **and** `.missions/<slug>/baseline/health.json` exists: `repowise health --format json --module <dir> 2>/dev/null \| sed -n '/^[{[]/,$p'` for each top-level directory the milestone touched (the `sed` drops the log lines repowise prints ahead of the JSON), compared per file against the baseline's `metrics` |
 
 **Use the repo's documented invocation.** Where a project separates test layers, running the whole
 suite at once is usually wrong — the layers have different infrastructure. Read the project's own
@@ -51,7 +52,13 @@ not the whole log>
 | Assertion | Test that exercises it | Result |
 | A003 | tests/unit/test_streak.py::test_reset_on_success | pass |
 | A007 | — | NO TEST FOUND |
+
+## Health delta   (only when it ran — otherwise the one line "not available: <why>")
+| File | Baseline | Now | Change |
 ```
+
+A worsened health score is a finding for the loop to negotiate, like a lint failure — reported,
+never repaired here, and never a gate on its own.
 
 That last row type is the most useful thing you produce. **A `structural` assertion with no test
 exercising it is unproven, no matter how green the suite is** — say so loudly. A passing suite that

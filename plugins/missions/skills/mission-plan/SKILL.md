@@ -39,6 +39,26 @@ Dispatch `mission-researcher` agents (Agent tool, `subagent_type: mission-resear
 lookups; they are read-only and cheap, and you may run several at once. Do not read the whole codebase
 yourself.
 
+**Probe the codebase intelligence once, here — the agents never guess at it.**
+
+```bash
+test -f graphify-out/graph.json && echo "graphify=cli$(claude mcp get graphify >/dev/null 2>&1 && echo +mcp)"
+test -d .repowise && echo "repowise=index$(claude mcp get repowise >/dev/null 2>&1 && echo +mcp)"
+true   # a missing index is an answer, not a failed step
+```
+
+Write the result as one line under *Standing constraints* in `state.md`, where the digest carries
+it to every agent: `- Codebase intelligence: graphify=cli+mcp (graphify-out/, <date>) ·
+repowise=index (.repowise/)` — or `none`. When graphify exists, start your own lookups with
+`graphify query "<term>"` and `graphify god-nodes` (seconds, no LLM): a community listing is the
+fastest honest way to size a feature to the files it touches. When repowise is indexed, capture the
+baseline the scrutiny validator diffs against: `mkdir -p .missions/<slug>/baseline && repowise
+health --format json 2>/dev/null | sed -n '/^[{[]/,$p' > .missions/<slug>/baseline/health.json`
+(repowise prints its log lines on stdout ahead of the JSON; the `sed` keeps only the document —
+verify the file parses). Never run `repowise init` without
+`--index-only`, and never `repowise update`, from a mission — both can spend LLM money outside the
+caps.
+
 ## Step 1 — interview the user, and argue
 
 You are a sounding board, not a stenographer. Before writing anything, resolve:
@@ -59,6 +79,13 @@ You are a sounding board, not a stenographer. Before writing anything, resolve:
   **repair rounds per assertion** (default 2). Plus the behaviour-validation live-run cap and a
   terminal-review reserve. Tokens are informational. Missions without numbers get "informational
   only" warnings and no enforcement.
+
+- **Seats** — the defaults live in the agent definitions (worker Sonnet; reviewer Opus at `xhigh`;
+  researcher and scrutiny Sonnet; behavior Opus) and need no line. Record only deviations, and
+  they are executable: a per-feature `- **Seat:** opus` in `features.md` for a genuinely gnarly
+  feature (an unfamiliar library, binary output, a security boundary), and `- Reviewer seat: fable`
+  in `mission.md` when the blast radius includes auth, money or tenancy. `check.sh` validates both;
+  the loop passes them as `model:` on the Agent call; the journal records what actually ran.
 
 Push back on scope. A mission that is 12 features long is usually two missions.
 
@@ -129,6 +156,7 @@ For each feature record:
   which docs get updated. Be concrete; the worker knows nothing about this project except what you
   write down here and in `state.md`.
 - Dependencies on other features (the loop runs them in order)
+- A **seat** (`- **Seat:** opus`) only when the feature warrants a model above the worker's default
 
 Milestones group features into something a validator can exercise as a coherent whole. Two to five
 features per milestone is the useful range.

@@ -311,6 +311,11 @@ case(C, "no-verify-blocked", "rc=2\nstderr~=never allowed", stdin=bash_payload("
 case(C, "commit-without-id-blocked", "rc=2\nstderr~=must start with the feature id", stdin=bash_payload("git commit -m 'fix stuff'"), missions={"demo": demo()})
 case(C, "commit-with-id-ok", "rc=0", stdin=bash_payload("git commit -m 'F002: scope by tenant'"), missions={"demo": demo()})
 case(C, "legacy-implementation-phase-now-enforced", "rc=2\nstderr~=must start with the feature id", stdin=bash_payload("git commit -m 'fix stuff'"), missions={"old": OLD})
+OTHER = "mkdir -p other && git -C other init -q && git -C other commit -q --allow-empty -m init"
+case(C, "push-in-other-repo-via-C-allowed", "rc=0\nsetup=" + OTHER, stdin=bash_payload("git -C $TMP/other push -u origin main"), missions={"demo": demo()})
+case(C, "push-in-other-repo-via-cd-allowed", "rc=0\nsetup=" + OTHER, stdin=bash_payload("cd $TMP/other && git push origin main"), missions={"demo": demo()})
+case(C, "push-in-mission-repo-via-cd-still-blocked", "rc=2\nstderr~=no pushing\nsetup=git init -q . && git commit -q --allow-empty -m init", stdin=bash_payload("cd $TMP && git push origin main"), missions={"demo": demo()})
+case(C, "merge-in-other-repo-allowed", "rc=0\nsetup=" + OTHER, stdin=bash_payload("git -C $TMP/other merge feature"), missions={"demo": demo()})
 case(C, "heredoc-mentioning-push-ok", "rc=0", stdin=bash_payload("cat > notes.md <<'EOF'\nnever git push here\nEOF"), missions={"demo": demo()})
 
 # ================================================================ contract first

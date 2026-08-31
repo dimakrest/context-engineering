@@ -18,6 +18,23 @@ raw=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 # Writing documentation that mentions `git push` is not running it.
 cmd=$(printf '%s\n' "$raw" | mission_strip_heredocs)
 
+# A push or merge in ANOTHER repository is not this mission's push. The command
+# names its target through `git -C <dir>` or a leading `cd <dir> &&`; when every
+# such dir resolves to a git toplevel other than the mission's, stay out of it.
+# (Measured: the old user-level hook blocked pushing an unrelated plugin repo
+# because a halted mission was still active in the session's project.)
+mission_root=$(git -C "${CLAUDE_PROJECT_DIR:-$PWD}" rev-parse --show-toplevel 2>/dev/null || printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}")
+other_repo=0; same_repo=0
+for d in $(printf '%s' "$cmd" | grep -oE '(git[[:space:]]+-C[[:space:]]+|(^|[;&|][[:space:]]*)cd[[:space:]]+)[^[:space:];&|]+' | sed -E 's/.*[[:space:]]//' | tr -d "'\"" ); do
+  case "$d" in ~*) d="$HOME${d#\~}" ;; esac
+  [ -d "$d" ] || continue
+  top=$(git -C "$d" rev-parse --show-toplevel 2>/dev/null) || continue
+  if [ "$top" = "$mission_root" ]; then same_repo=1; else other_repo=1; fi
+done
+if [ "$other_repo" = 1 ] && [ "$same_repo" = 0 ]; then
+  exit 0
+fi
+
 # Pushing is allowed in exactly one phase: `pr`, the terminal review step, which needs a
 # pushed branch for /code-review and /codex-adversarial-review to see. Everywhere else the
 # branch stays local.

@@ -30,7 +30,7 @@ set -uo pipefail
 #
 #                Nothing is lost by skipping it. What the gate protects lives
 #                outside: contract.md, features.md, design.md, state.md,
-#                mission.md, journal.jsonl, handoffs/ and validation/.
+#                mission.md, journal.jsonl, handoffs/, validation/ and baseline/.
 mission_sha() {
   local mission="$1"
   find "$mission" -type f \

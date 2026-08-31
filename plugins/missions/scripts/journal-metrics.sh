@@ -56,4 +56,12 @@ costs = {e.get("session_id"): e.get("usd") for e in ev if e.get("event") == "ses
 print(f"M5 spend     returns with duration: {withdur}/{len(rets)} · sessions with cost: {len(costs)}"
       f" · total journaled usd: {('%.2f' % sum(v for v in costs.values() if isinstance(v,(int,float)))) if costs else 'not recorded'}"
       f" · cap raises: {n.get('cap_raised', 0)}")
+# Seats: which model each dispatch actually ran on (journaled by the hooks from the
+# Agent call's override, else the agent definition). Unrecorded dispatches predate v0.2.
+by_model = collections.Counter(e.get("model") or "not recorded" for e in ev if e.get("event") == "dispatch")
+dur_model = collections.defaultdict(float)
+for e in rets:
+    if isinstance(e.get("duration_s"), (int, float)): dur_model[e.get("model") or "not recorded"] += e["duration_s"]
+print(f"seats        dispatches by model: {dict(by_model) or 'not recorded'}"
+      f" · agent-hours by model: {({k: round(v/3600, 2) for k, v in dur_model.items()}) or 'not recorded'}")
 PY

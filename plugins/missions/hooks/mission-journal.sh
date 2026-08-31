@@ -35,6 +35,11 @@ dispatch_id=$(printf '%s' "$input" | jq -r '.tool_use_id // empty' 2>/dev/null)
 agent_id=$(printf '%s' "$input" | jq -r '.agent_id // .tool_response.agentId // .tool_response.agent_id // empty' 2>/dev/null)
 status=$(printf '%s' "$input" | jq -r '.tool_response.status // empty' 2>/dev/null)
 duration_ms=$(printf '%s' "$input" | jq -r '.duration_ms // empty' 2>/dev/null)
+# The model that ran, by the serial guard's rule. A SubagentStop carries no tool_input, so
+# there it comes from the joined dispatch below (background dispatches) or stays unrecorded --
+# a definition default would be wrong for an overridden seat: not known, not invented.
+model=""
+[ "$event" = "SubagentStop" ] || model=$(mission_resolve_model "$input" "$agent")
 
 ev=agent_return; duration=null
 if [ "$event" = "SubagentStop" ]; then
@@ -43,13 +48,15 @@ if [ "$event" = "SubagentStop" ]; then
   if [ -n "$agent_id" ] && [ -f "$mission/journal.jsonl" ]; then
     did=$(jq -r --arg a "$agent_id" 'select(.event=="agent_launched" and .agent_id==$a) | .dispatch_id // empty' "$mission/journal.jsonl" 2>/dev/null | tail -1)
     if [ -n "$did" ]; then
-      started=$(jq -r --arg id "$did" 'select(.event=="dispatch" and .dispatch_id==$id) | .ts' "$mission/journal.jsonl" 2>/dev/null | tail -1)
-      if [ -n "$started" ]; then
+      # One pass over the journal for everything the dispatch record carries.
+      IFS=$'\t' read -r started feature model < <(jq -r --arg id "$did" \
+        'select(.event=="dispatch" and .dispatch_id==$id) | [.ts // "", .feature // "", .model // ""] | @tsv' \
+        "$mission/journal.jsonl" 2>/dev/null | tail -1)
+      if [ -n "${started:-}" ]; then
         start_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$started" +%s 2>/dev/null || date -u -d "$started" +%s 2>/dev/null)
         [ -n "$start_epoch" ] && duration=$(( $(mission_epoch) - start_epoch ))
       fi
       dispatch_id="$did"
-      feature=$(jq -r --arg id "$did" 'select(.event=="dispatch" and .dispatch_id==$id) | .feature // empty' "$mission/journal.jsonl" 2>/dev/null | tail -1)
     fi
   fi
 elif [ "$status" = "async_launched" ]; then
@@ -61,9 +68,10 @@ fi
 jq -nc \
   --arg ts "$(mission_now)" --arg ev "$ev" --arg agent "$agent" --arg feature "${feature:-}" \
   --arg id "${dispatch_id:-}" --arg agent_id "$agent_id" --arg status "$status" --arg via "$event" \
-  --argjson duration "$duration" \
+  --arg model "$model" --argjson duration "$duration" \
   '{ts:$ts, event:$ev, agent:$agent, via:$via}
    + (if $ev == "agent_launched" then {} else {duration_s:$duration} end)
+   + (if $model == "" then {} else {model:$model} end)
    + (if $feature == "" then {} else {feature:$feature} end)
    + (if $id == "" then {} else {dispatch_id:$id} end)
    + (if $agent_id == "" then {} else {agent_id:$agent_id} end)

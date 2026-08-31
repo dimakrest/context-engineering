@@ -26,6 +26,10 @@ the design constrains the features that exist, not the ones you would have chose
 Fan out `mission-researcher` agents (Agent tool, `subagent_type: mission-researcher`) — read-only,
 parallel-safe, several at once, one bounded question each. Ask for the **canonical example, not a
 survey**: the `file:line` a worker should open and imitate. Do not read the whole codebase yourself.
+Where the digest's `Codebase intelligence:` line names graphify, tell each researcher to start from
+the graph — `query_graph` / `get_community` for the feature's seam, and the community's hub from
+`god_nodes` — so the exemplar it returns is the pattern the codebase converges on, not the first
+grep hit; ask it to say which it found.
 
 Cover, at minimum, whatever of these the mission touches:
 

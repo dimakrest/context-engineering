@@ -211,6 +211,30 @@ mission_agent_tools() {
   ' "$def"
 }
 
+# Prints the agent definition's `model:` from the YAML frontmatter, verbatim (an
+# alias -- sonnet, opus, haiku, fable, inherit -- or whatever full id the author
+# wrote; this reader does not validate, check.sh validates seat lines). Empty when
+# undeclared -- the harness then uses its own default, which we do not guess at.
+mission_agent_model() {
+  local def; def=$(mission_agent_def "$1") || return 0
+  awk '
+    NR==1 && /^---/ { fm = 1; next }
+    fm && /^---/    { exit }
+    fm && /^model:/ { v = $0; sub(/^model:[[:space:]]*/, "", v); gsub(/[[:space:]]+$/, "", v); print v; exit }
+  ' "$def"
+}
+
+# Prints the model a dispatch will actually run on: the Agent call's `model:`
+# override when the payload carries one, else the definition's default. Used by
+# the serial guard (dispatch) and the journal (agent_return) so both record the
+# same answer.   usage: mission_resolve_model <hook input json> <agent type>
+mission_resolve_model() {
+  local m
+  m=$(printf '%s' "$1" | jq -r '.tool_input.model // empty' 2>/dev/null)
+  [ -n "$m" ] || m=$(mission_agent_model "$2")
+  printf '%s' "$m"
+}
+
 # Prints the agent's class: writer | executor | static.
 #   writer   -- can change files (Write/Edit/NotebookEdit/MultiEdit): takes the writer lock AND the lease
 #   executor -- can run commands (Bash) but not edit: takes the execution lease

@@ -37,12 +37,17 @@ class=$(mission_agent_class "$subagent")
 base=$(mission_agent_base "$subagent")
 feature=$(mission_prompt_feature "$prompt")
 is_mission_agent=0; case "$base" in mission-*) is_mission_agent=1 ;; esac
+# The model that will actually run (seat override on the call, else the
+# definition's default) -- recorded so a seat choice can be measured
+# (journal-metrics.sh) instead of asserted in mission.md.
+model=$(mission_resolve_model "$input" "$subagent")
 
 journal_dispatch() {
   [ "$is_mission_agent" = 1 ] || return 0
   mission_journal "$mission" "$(jq -nc --arg ts "$(mission_now)" --arg agent "$base" --arg feature "$feature" \
-    --arg id "$dispatch_id" --arg session "$session" --arg class "$class" \
+    --arg id "$dispatch_id" --arg session "$session" --arg class "$class" --arg model "$model" \
     '{ts:$ts, event:"dispatch", agent:$agent, class:$class}
+     + (if $model == "" then {} else {model:$model} end)
      + (if $feature == "" then {} else {feature:$feature} end)
      + (if $id == "" then {} else {dispatch_id:$id} end)
      + (if $session == "" then {} else {session_id:$session} end)')"
@@ -56,7 +61,28 @@ journal_dispatch() {
   fi
 }
 
-# ---- static agents: never blocked, still journaled if they are mission agents
+# ---- 0. dollar cap -- every class, static included. The researcher is the one agent
+# fanned out unbounded; its spend is real money and the transcript already knows it.
+# Checked before the static early-exit below so a breach stops the next dispatch,
+# not the next writer.
+warn_informational=0
+dollar=$(mission_budget "$mission" dollar_cap)
+if [ -n "$dollar" ]; then
+  spend=$(bash "${CLAUDE_PLUGIN_ROOT:-$(dirname "${BASH_SOURCE[0]}")/..}/scripts/mission-spend.sh" "${transcript:-/dev/null}" "$mission/journal.jsonl" 2>/dev/null | awk '/^spend_usd:/{print $2}')
+  reserve=$(mission_budget "$mission" terminal_reserve_pct); reserve=${reserve:-0}
+  if [ -n "$spend" ] && [ "$spend" != "unknown" ]; then
+    exempt=0; [ "$base" = "mission-reviewer" ] && [ "$phase" = "pr" ] && exempt=1
+    if [ "$exempt" = 0 ] && awk -v s="$spend" -v c="$dollar" -v r="$reserve" 'BEGIN{exit !(s + c*r/100 >= c)}'; then
+      mission_block "MISSION: dollar cap -- spent \$$spend of \$$dollar (terminal-review reserve ${reserve}%).
+
+Measured from the harness (cost-state in the session transcript plus journaled
+session_cost from earlier sessions). Halt (class: block); the remaining budget is
+reserved for the terminal review."
+    fi
+  fi
+else warn_informational=1; fi
+
+# ---- static agents: never blocked by locks or count caps, still journaled if they are mission agents
 if [ "$class" = "static" ]; then
   journal_dispatch
   exit 0
@@ -122,8 +148,7 @@ only with a reason journaled.)"
   fi
 fi
 
-# ---- 4. caps (writers and executors)
-warn_informational=0
+# ---- 4. count caps (writers and executors)
 dcap=$(mission_budget "$mission" dispatch_cap)
 if [ -n "$dcap" ]; then
   n=$(mission_journal_count "$mission" dispatch '.class != "static"')
@@ -172,21 +197,6 @@ scope or weakens an assertion."
   fi
 fi
 
-dollar=$(mission_budget "$mission" dollar_cap)
-if [ -n "$dollar" ]; then
-  spend=$(bash "${CLAUDE_PLUGIN_ROOT:-$(dirname "${BASH_SOURCE[0]}")/..}/scripts/mission-spend.sh" "${transcript:-/dev/null}" "$mission/journal.jsonl" 2>/dev/null | awk '/^spend_usd:/{print $2}')
-  reserve=$(mission_budget "$mission" terminal_reserve_pct); reserve=${reserve:-0}
-  if [ -n "$spend" ] && [ "$spend" != "unknown" ]; then
-    exempt=0; [ "$base" = "mission-reviewer" ] && [ "$phase" = "pr" ] && exempt=1
-    if [ "$exempt" = 0 ] && awk -v s="$spend" -v c="$dollar" -v r="$reserve" 'BEGIN{exit !(s + c*r/100 >= c)}'; then
-      mission_block "MISSION: dollar cap -- spent \$$spend of \$$dollar (terminal-review reserve ${reserve}%).
-
-Measured from the harness (cost-state in the session transcript plus journaled
-session_cost from earlier sessions). Halt (class: block); the remaining budget is
-reserved for the terminal review."
-    fi
-  fi
-else warn_informational=1; fi
 [ "$warn_informational" = 1 ] && echo "mission: no Dollar/Dispatch cap in $mission/mission.md -- caps are informational only for this mission" >&2
 
 # ---- 5. execution lease (writers and executors)

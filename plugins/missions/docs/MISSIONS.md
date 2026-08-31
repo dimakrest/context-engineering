@@ -103,13 +103,59 @@ The mission's **terminal state is a branch plus a draft PR**. Never a merge. A h
 
 ### Subagents
 
-| Agent | Tools | Role |
+| Agent | Model (default seat) | Tools | Role |
+|---|---|---|---|
+| `mission-worker` | Sonnet 5 · per-feature `Seat:` override | Read/Write/Edit/Glob/Grep/Bash | One feature, clean context, one commit, one handoff. Never pushes. |
+| `mission-researcher` | Sonnet 5 | read-only + web + named read-only graph tools (no wildcard: repowise's `get_answer` is an LLM call billed outside the caps, graphify's PR tools shell out to `gh`) | One bounded question, short cited answer. **The only agent run in parallel** — read-only is what makes that safe; MCP tools do not change its class. The planner's lookups and `/missions:mission-design`'s pattern exploration both use it. |
+| `mission-reviewer` | Opus 5, `effort: xhigh` · `Reviewer seat:` override | read-only + Bash + named read-only graph / call-graph tools | Blind adversarial review. Gets the patch and the assertions; never the handoff, the worker's reasoning, or any tool that returns commit messages or PR bodies. Grades the patch's callers in an impact table. One per feature. |
+| `mission-validator-scrutiny` | Sonnet 5 | Read/Bash | The repo's test layers, linters and type checkers, plus the code-health delta when repowise is indexed. Raw output and exit codes. Makes no repairs. |
+| `mission-validator-behavior` | Opus 5 | Read/Bash + Playwright (+ any conversational test server the project exposes) | The QA engineer. Drives the real UI and the real conversational channel. Never reads the implementation. |
+
+**Seats are executable, and measured.** The defaults above live in the agent definitions. A
+mission records only deviations — `- **Seat:** opus` on a feature in `features.md`, `- Reviewer
+seat: fable` in `mission.md` — `check.sh` validates them, the loop passes them as `model:` on the
+Agent call, and the serial guard and journal hooks record the model that actually ran
+(`journal-metrics.sh` sums dispatches and agent-hours per model). The reviewer's default stays
+Opus until a mutation suite measures catch-rate per model; `fable` is offered per mission for
+blast radius that includes auth, money or tenancy.
+
+### Codebase intelligence — graphify and repowise
+
+The plugin is project-agnostic, so it never assumes a code graph exists. `/missions:mission-plan`
+probes once and writes one line under *Standing constraints* in `state.md` — `- Codebase
+intelligence: graphify=cli+mcp (graphify-out/, <date>) · repowise=index (.repowise/)`, or `none` —
+and every agent branches on that line from its digest.
+
+| Consumer | Uses | Why |
 |---|---|---|
-| `mission-worker` | Read/Write/Edit/Glob/Grep/Bash | One feature, clean context, one commit, one handoff. Never pushes. |
-| `mission-researcher` | read-only + web | One bounded question, short cited answer. **The only agent run in parallel** — read-only is what makes that safe. The planner's lookups and `/missions:mission-design`'s pattern exploration both use it. |
-| `mission-reviewer` | read-only | Blind adversarial review. Gets the diff and the assertions; never the handoff or the worker's reasoning. One per feature, fanned out. |
-| `mission-validator-scrutiny` | Read/Bash | The repo's test layers, linters and type checkers. Raw output and exit codes. Makes no repairs. |
-| `mission-validator-behavior` | Read/Bash + Playwright (+ any conversational test server the project exposes) | The QA engineer. Drives the real UI and the real conversational channel. Never reads the implementation. |
+| `mission-researcher` | `query_graph`, `get_neighbors`, `get_community`, `shortest_path`; `search_codebase`, `get_symbol`, `get_callers_callees`, `get_dependency_path` | orientation before reading — the graph says where to read, then the file is cited |
+| `/missions:mission-plan`, `/missions:mission-design` | `graphify query`, `graphify god-nodes`; researchers asked for the community hub | size features to files; pick the exemplar the codebase converges on |
+| `mission-reviewer` | `graphify affected "<symbol>"` (Bash), `get_neighbors`, `get_callers_callees`, `get_dependency_path`, `get_dead_code`, `get_health` | per-feature impact: every caller of a changed public symbol gets a verdict |
+| `mission-validator-scrutiny` | `repowise health --format json` vs `baseline/health.json` | deterministic health delta — reported, never a gate |
+| `/missions:mission-run` ingest | `graphify update .` after every handoff | AST-only, keeps the graph current for the next reviewer |
+| `/missions:mission-pr-review` | `get_pr_impact`, `get_risk`, `graphify affected` across the branch | the cross-feature pass the blind reviewers cannot do |
+
+**Blindness holds — by allowlist and by hook.** The reviewer's tool list is fixed by its definition
+and deliberately omits `get_why` (git archaeology), `list_prs` / `get_pr_impact` / `triage_prs` (PR
+bodies) and `get_answer` — they return the author's reasoning. The reviewer still holds Bash, so
+`mission-shell-guard.sh` refuses `git log/show/diff/blame`, `gh`, `graphify prs` and handoff paths
+from its shell (the harness tags every tool call inside a subagent with `agent_type`). **Spend
+stays measured — by hook.** The same guard blocks, for every caller, `repowise update`, `repowise
+init` without `--index-only`, `graphify label/extract` and `cluster-only` without `--no-label`:
+each calls an LLM through the tool's own provider key, spend the dollar cap cannot see. The
+researcher's allowlist is likewise named tools, never `mcp__repowise__*` — the wildcard would
+enable `get_answer`.
+
+Prerequisites, per project (the plugin documents them; it never edits your config):
+
+```
+uv tool install --with "mcp<2" "graphifyy[mcp]"        # once; graphify 0.9.x's MCP server needs the extra and breaks on mcp 2.x
+claude mcp add -s local graphify -- $(cat graphify-out/.graphify_python) -m graphify.serve $PWD/graphify-out/graph.json
+repowise init --index-only .                           # no LLM spend; builds .repowise/
+claude mcp add -s local repowise -- repowise mcp $PWD --transport stdio
+```
+
+Without them the agents behave exactly as before — the MCP tools are simply not there.
 
 These five are **project-agnostic**. Everything they need to know about the repo they are working in
 comes from the mission's `state.md`, written by the planner. A project's own agents still do their
@@ -184,20 +230,24 @@ inconvenient.
 
 | Hook | Event · matcher | Enforces |
 |---|---|---|
-| `mission-serial-guard.sh` | PreToolUse · `Agent` | Admission control: one writer (`.writer`) and one executor (`.lease`) at a time, classed by the agent definition's tools; blocks on open handoff issues, the `state.md` size cap, and the dollar / dispatch / wall-clock / repair-round caps. Takes the locks and journals `dispatch` + `session_cost` when it allows. Static agents are never blocked. |
+| `mission-serial-guard.sh` | PreToolUse · `Agent` | Admission control: one writer (`.writer`) and one executor (`.lease`) at a time, classed by the agent definition's tools (Write/Edit → writer, Bash → executor, anything else including MCP tools → static); blocks on open handoff issues, the `state.md` size cap, and the dollar / dispatch / wall-clock / repair-round caps. Takes the locks and journals `dispatch` (with the model that will run) + `session_cost` when it allows. Static agents are never blocked. |
 | `mission-blind-review.sh` | PreToolUse · `Agent` | Validators stay blind — rejects a validator prompt containing handoff content, a diff handed to the behavior validator, or a reviewer told to run git instead of reading its patch file. |
 | `mission-contract-first.sh` | PreToolUse · `Write\|Edit` | No product code while phase is `planning`. |
 | `mission-commit-discipline.sh` | PreToolUse · `Bash` | No push outside phase `pr`, no merge, no `--no-verify`/`--admin`; feature id required in commit messages while implementing. |
 | `mission-crosscheck-seal.sh` | PreToolUse · `Bash` | The crosscheck reviewer's spec package stays sealed — blocks a `codex` invocation referencing `.missions/` or `docs/plans/`. |
+| `mission-shell-guard.sh` | PreToolUse · `Bash` | What an agent's own shell may not do. For the blind reviewer (identified by the harness's `agent_type`, else by a `.lease` held by `mission-reviewer` — the doc promises the field, nothing here has yet recorded it, so the lease is the fallback): no `git log/show/diff/blame`, no `gh`, no `graphify prs`, no handoff paths — `mission-blind-review.sh` polices the brief, this polices the shell. For every caller: no `repowise update`, no `repowise init` without `--index-only`, no `graphify label/extract`, no `cluster-only` without `--no-label` — they call an LLM through the tool's own key, outside every cap. |
 | `mission-handoff-schema.sh` | PostToolUse · `Agent` | A worker's handoff has every section, records exit codes, and cites a commit that actually exists. |
-| `mission-journal.sh` | PostToolUse · `Agent` | Appends `agent_return` with the measured `duration_s` (joined to `dispatch` by tool id), agent id, model, status. Never fails a call. |
+| `mission-journal.sh` | PostToolUse · `Agent` | Appends `agent_return` with the measured `duration_s` (joined to `dispatch` by tool id), agent id, the model that ran (the call's override, else the definition's default), status. Never fails a call. |
 | `mission-release.sh` | PostToolUse / PostToolUseFailure · `Agent`, SubagentStop | Releases `.writer` / `.lease` when their holder returns, fails, or is stopped. |
 | `mission-rehydrate.sh` | SessionStart · `startup\|resume\|compact` | Prints the mission digest as session context, so re-entry after a compaction starts from the rulebook and `resume_next`, not from line 1 of `state.md`. |
 
 Shared helpers live in `${CLAUDE_PLUGIN_ROOT}/hooks/mission-lib.sh`. The scripts under
 `${CLAUDE_PLUGIN_ROOT}/scripts/` — `mission-state.sh` (digest), `mission-archive.sh`,
-`mission-patch.sh`, `mission-spend.sh`, `mission-converge.sh`, `check.sh`, `journal-metrics.sh` —
-are the loop's deterministic tools; the skills call them by path.
+`mission-patch.sh`, `mission-spend.sh`, `mission-converge.sh`, `check.sh`, `journal-metrics.sh`,
+`lint-agents.sh` — are the loop's deterministic tools; the skills call them by path.
+`lint-agents.sh` is the one aimed at the plugin itself: it parses `agents/*.md` the way the hooks
+do and fails on a `model:` / `effort:` the harness rejects or a `tools:` list the awk would read as
+empty (which default-denies the agent to *writer*). Run it before shipping an agent change.
 
 **They are inert when no mission is running.** Installed as a plugin, these fire on `Agent`,
 `Write`, `Edit`, and `Bash` calls in *every* session in *every* repo — so "no active mission" is
@@ -214,9 +264,14 @@ suite that was dropped when the machinery moved to user level; add a case for ev
 
 ## Current status and honest limits
 
-**Built:** eight skills, five subagents, nine hooks, seven scripts, the file schema, and a hook
+**Built:** eight skills, five subagents, ten hooks, eight scripts, the file schema, and a hook
 regression suite (`tests/run.sh`), packaged as the `missions` plugin in the
 `dimakrest/context-engineering` marketplace.
+
+**v0.2 (2026-08-31)** wired the codebase intelligence (graphify / repowise) into the researcher,
+reviewer, scrutiny validator and the loop, made model seats executable and journaled, and moved the
+researcher and scrutiny seats from Haiku / Opus to Sonnet 5. Plan and rationale:
+`docs/plans/missions-codebase-intelligence-and-seats-plan.md`.
 
 **v2 (2026-08-31)** applied the five fixes from the analytics-hour-filter retro: bounded assurance
 (feature/file gate, proof budgets, finding registry, convergence gate); advisory vs blocking halts

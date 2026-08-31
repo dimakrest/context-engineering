@@ -35,7 +35,8 @@ If more than one mission directory exists and the user didn't name one, list the
    session via `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-spend.sh" <transcript> <journal>`;
    agent wall-clock from `agent_return.duration_s`; dispatches used vs the dispatch cap; calls placed
    if the behavior validator ran. Tokens, if any were journaled, are estimates — label them so.
-   Also print the five acceptance metrics from
+   Also print the five acceptance metrics and the seats line (dispatches and agent-hours per
+   model — what actually ran, not what `mission.md` planned) from
    `bash "${CLAUDE_PLUGIN_ROOT}/scripts/journal-metrics.sh" .missions/<slug>`.
 7. **Follow-ups.** Contents of `followups.md`.
 

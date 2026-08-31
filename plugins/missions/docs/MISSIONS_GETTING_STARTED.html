@@ -1,0 +1,785 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Missions — Getting Started</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#151b23; --panel2:#1c232d; --line:#2a3441;
+    --ink:#e6edf3; --dim:#9aa7b4; --faint:#6e7c8c;
+    --a1:#7aa2f7; --a2:#f7768e; --a3:#9ece6a; --a4:#e0af68; --a5:#bb9af7; --a6:#2ac3de;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f6f8fa; --panel:#fff; --panel2:#f0f3f6; --line:#d8dee4;
+           --ink:#1c2128; --dim:#57606a; --faint:#8b949e;
+           --a1:#3b5bdb; --a2:#c9184a; --a3:#2f7a34; --a4:#a86a00; --a5:#7048e8; --a6:#0b7285; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;}
+  .wrap{max-width:1200px;margin:0 auto;padding:48px 24px 96px}
+  header{border-bottom:1px solid var(--line);padding-bottom:28px;margin-bottom:20px}
+  .kicker{font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.18em;
+          text-transform:uppercase;color:var(--a1);margin-bottom:14px}
+  h1{font-size:clamp(28px,4.2vw,42px);line-height:1.12;margin:0 0 14px;letter-spacing:-.02em}
+  .sub{color:var(--dim);max-width:76ch;margin:0}
+  .meta{margin-top:16px;font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--faint)}
+  nav{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 48px}
+  nav a{font:600 12px/1 ui-monospace,Menlo,monospace;color:var(--dim);text-decoration:none;
+        border:1px solid var(--line);border-radius:20px;padding:8px 13px;background:var(--panel)}
+  nav a:hover{color:var(--a1);border-color:var(--a1)}
+  h2{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);
+     font-weight:700;margin:0 0 20px;padding-top:10px;border-top:1px solid var(--line)}
+  section{margin-bottom:64px;scroll-margin-top:20px}
+  h3{font-size:20px;margin:28px 0 10px;letter-spacing:-.01em}
+  h3:first-child{margin-top:0}
+  p{margin:0 0 14px;max-width:82ch}
+  .lead{font-size:18.5px;line-height:1.55}
+  ul{margin:0 0 14px;padding-left:20px;max-width:82ch}
+  li{margin-bottom:7px}
+  .grid{display:grid;gap:16px}
+  .g3{grid-template-columns:repeat(auto-fit,minmax(290px,1fr))}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(360px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+  .card h4{margin:0 0 9px;font-size:16px;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .card p,.card li{font-size:14.5px;color:var(--dim);margin:0 0 8px}
+  .card ul{padding-left:18px;margin-bottom:0}
+  .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+  figure{margin:0 0 24px;background:var(--panel);border:1px solid var(--line);
+         border-radius:12px;padding:20px;overflow-x:auto}
+  figcaption{font-size:13px;color:var(--faint);margin-top:14px;text-align:center}
+  svg{display:block;margin:0 auto;max-width:100%;height:auto}
+  .svgtext{font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:var(--ink)}
+  .svgsm{font:11.5px ui-monospace,Menlo,monospace;fill:var(--dim)}
+  .svgxs{font:10px ui-monospace,Menlo,monospace;fill:var(--faint)}
+  table{width:100%;border-collapse:collapse;font-size:14.5px}
+  .tblwrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);
+           border-radius:12px;margin-bottom:18px}
+  th{text-align:left;font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.1em;
+     text-transform:uppercase;color:var(--faint);padding:14px 16px;border-bottom:1px solid var(--line);
+     white-space:nowrap}
+  td{padding:13px 16px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td strong{color:var(--ink)}
+  code,.mono{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;
+       background:var(--panel2);padding:2px 6px;border-radius:4px;color:var(--a6)}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;
+      overflow-x:auto;font:13px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink);
+      margin:0 0 18px}
+  pre code{background:none;padding:0;color:inherit}
+  .c1{color:var(--a1)} .c2{color:var(--a2)} .c3{color:var(--a3)}
+  .c4{color:var(--a4)} .c5{color:var(--a5)} .cf{color:var(--faint)}
+  .callout{border-left:3px solid var(--a4);background:var(--panel);border-radius:0 10px 10px 0;
+           padding:16px 20px;margin:22px 0}
+  .callout.warn{border-color:var(--a2)}
+  .callout.ok{border-color:var(--a3)}
+  .callout strong{color:var(--a4)}
+  .callout.warn strong{color:var(--a2)}
+  .callout.ok strong{color:var(--a3)}
+  .pill{display:inline-block;font:600 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.08em;
+        text-transform:uppercase;padding:5px 8px;border-radius:5px;border:1px solid var(--line);
+        color:var(--faint);vertical-align:middle}
+  .new{color:var(--a3);border-color:color-mix(in srgb,var(--a3) 45%,transparent)}
+  .reuse{color:var(--a6);border-color:color-mix(in srgb,var(--a6) 45%,transparent)}
+  .p1{color:var(--a1);border-color:color-mix(in srgb,var(--a1) 45%,transparent)}
+  .p2{color:var(--a5);border-color:color-mix(in srgb,var(--a5) 45%,transparent)}
+  .p3{color:var(--a4);border-color:color-mix(in srgb,var(--a4) 45%,transparent)}
+  .unk{color:var(--a2);border-color:color-mix(in srgb,var(--a2) 45%,transparent)}
+  ol.phase{counter-reset:s;list-style:none;padding:0;margin:0}
+  ol.phase>li{counter-increment:s;position:relative;padding:0 0 26px 54px;
+             border-left:1px solid var(--line);margin-left:16px}
+  ol.phase>li:last-child{border-left-color:transparent}
+  ol.phase>li::before{content:"P" counter(s,decimal);position:absolute;left:-17px;top:-2px;
+        width:34px;height:34px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);
+        color:var(--a1);display:flex;align-items:center;justify-content:center;
+        font:700 12px ui-monospace,Menlo,monospace}
+  ol.phase h4{margin:5px 0 8px;font-size:18px}
+  .exit{font-size:13.5px;color:var(--faint);border-top:1px dashed var(--line);padding-top:9px;
+        margin-top:10px;max-width:82ch}
+  .exit b{color:var(--a3);font-weight:600}
+  footer{border-top:1px solid var(--line);padding-top:24px;color:var(--faint);font-size:13.5px}
+  .q{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--a5);
+     border-radius:0 10px 10px 0;padding:16px 20px;margin-bottom:14px}
+  .q h4{margin:0 0 6px;font-size:15.5px;color:var(--a5)}
+  .q p{margin:0;font-size:14.5px;color:var(--dim)}
+</style><style>
+  .step{counter-reset:none}
+  ol.steps{counter-reset:st;list-style:none;padding:0;margin:0}
+  ol.steps>li{counter-increment:st;position:relative;padding:0 0 30px 62px;
+             border-left:1px solid var(--line);margin-left:18px}
+  ol.steps>li:last-child{border-left-color:transparent;padding-bottom:0}
+  ol.steps>li::before{content:counter(st);position:absolute;left:-19px;top:-4px;
+        width:38px;height:38px;border-radius:50%;background:var(--panel2);border:1px solid var(--a1);
+        color:var(--a1);display:flex;align-items:center;justify-content:center;
+        font:700 15px ui-monospace,Menlo,monospace}
+  ol.steps h4{margin:6px 0 10px;font-size:19px}
+  .you{display:inline-block;font:600 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.08em;
+       text-transform:uppercase;padding:5px 8px;border-radius:5px;margin-left:8px;
+       color:var(--a3);border:1px solid color-mix(in srgb,var(--a3) 45%,transparent);vertical-align:middle}
+  .auto{color:var(--faint);border-color:var(--line)}
+  .cheat{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .cheat div{display:flex;gap:16px;padding:12px 18px;border-bottom:1px solid var(--line);align-items:baseline}
+  .cheat div:last-child{border-bottom:none}
+  .cheat code{flex:0 0 190px;background:none;padding:0;color:var(--a6);font-size:13.5px}
+  .cheat span{color:var(--dim);font-size:14.5px}
+  .chk{list-style:none;padding-left:0}
+  .chk li{padding-left:28px;position:relative;margin-bottom:11px}
+  .chk li::before{content:"";position:absolute;left:0;top:5px;width:15px;height:15px;
+      border:1.5px solid var(--a1);border-radius:4px}
+  .big{font:700 30px/1 ui-monospace,Menlo,monospace;color:var(--a1);display:block;margin-bottom:6px}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+  .tile p{font-size:14px;color:var(--dim);margin:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">Getting started · missions</div>
+  <h1>Running your first mission</h1>
+  <p class="sub">Everything is installed. This page is the walkthrough: what to pick for a first run,
+  what each command does, the one place where your judgment is irreplaceable, what the hooks will say
+  when they block you, and how to stop cleanly when it goes sideways.</p>
+  <p class="meta">
+    Installed: <span class="mono">4 skills · 5 subagents · 6 hooks · 99 passing hook tests</span><br>
+    Reference: <span class="mono">docs/MISSIONS.md</span> · Schema: <span class="mono">${CLAUDE_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md</span><br>
+    Status: <span style="color:var(--a4)">never run end to end — your first mission is the dry run</span>
+  </p>
+</header>
+
+<nav>
+  <a href="#model">1 · Mental model</a>
+  <a href="#before">2 · Before you start</a>
+  <a href="#pick">3 · Pick the task</a>
+  <a href="#walk">4 · The walkthrough</a>
+  <a href="#contract">5 · Reviewing the contract</a>
+  <a href="#milestone">6 · Inside a milestone</a>
+  <a href="#blocked">7 · When a hook blocks</a>
+  <a href="#stop">8 · Stopping &amp; escape hatches</a>
+  <a href="#expect">9 · What will go wrong</a>
+  <a href="#cheat">10 · Cheat sheet</a>
+</nav>
+
+<!-- ============ 1 ============ -->
+<section id="model">
+<h2>1 · The mental model, in one picture</h2>
+
+<p class="lead">A mission separates three jobs that a single agent session normally blurs together:
+deciding what "correct" means, building it, and checking it. Each one runs in a context that cannot
+see the others.</p>
+
+<figure>
+<svg viewBox="0 0 1080 330" role="img" aria-label="Mission arc from planning through the loop to a draft PR">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6e7c8c"/>
+    </marker>
+  </defs>
+
+  <rect x="10" y="60" width="200" height="120" rx="12" fill="none" stroke="var(--a1)" stroke-width="1.5"/>
+  <text class="svgtext" x="110" y="90" text-anchor="middle" font-weight="700">/missions:mission-plan</text>
+  <text class="svgsm" x="110" y="112" text-anchor="middle">interview · argue</text>
+  <text class="svgsm" x="110" y="130" text-anchor="middle">write assertions</text>
+  <text class="svgxs" x="110" y="152" text-anchor="middle">NO code is written</text>
+  <text class="svgxs" x="110" y="168" text-anchor="middle">here — enforced</text>
+
+  <rect x="240" y="60" width="180" height="120" rx="12" fill="var(--panel2)" stroke="var(--a3)" stroke-width="2"/>
+  <text class="svgtext" x="330" y="90" text-anchor="middle" font-weight="700" fill="var(--a3)">YOU read</text>
+  <text class="svgtext" x="330" y="110" text-anchor="middle" font-weight="700" fill="var(--a3)">the contract</text>
+  <text class="svgsm" x="330" y="134" text-anchor="middle">the one step</text>
+  <text class="svgsm" x="330" y="151" text-anchor="middle">nothing downstream</text>
+  <text class="svgsm" x="330" y="168" text-anchor="middle">can recover from</text>
+
+  <rect x="450" y="20" width="380" height="200" rx="12" fill="none" stroke="var(--a5)" stroke-width="1.5"/>
+  <text class="svgtext" x="640" y="46" text-anchor="middle" font-weight="700">/missions:mission-run</text>
+
+  <rect x="472" y="62" width="150" height="46" rx="8" fill="var(--panel2)" stroke="var(--line)"/>
+  <text class="svgsm" x="547" y="82" text-anchor="middle" fill="var(--ink)">worker → F001</text>
+  <text class="svgxs" x="547" y="99" text-anchor="middle">one at a time</text>
+
+  <rect x="472" y="118" width="150" height="46" rx="8" fill="var(--panel2)" stroke="var(--line)"/>
+  <text class="svgsm" x="547" y="138" text-anchor="middle" fill="var(--ink)">worker → F002</text>
+  <text class="svgxs" x="547" y="155" text-anchor="middle">clean context</text>
+
+  <rect x="654" y="62" width="152" height="102" rx="8" fill="var(--panel2)" stroke="var(--a2)"/>
+  <text class="svgsm" x="730" y="82" text-anchor="middle" fill="var(--a2)" font-weight="700">validators</text>
+  <text class="svgxs" x="730" y="101" text-anchor="middle">scrutiny · blind review</text>
+  <text class="svgxs" x="730" y="117" text-anchor="middle">real calls · real UI</text>
+  <text class="svgxs" x="730" y="140" text-anchor="middle">never saw the code</text>
+  <text class="svgxs" x="730" y="156" text-anchor="middle">get written</text>
+
+  <text class="svgxs" x="640" y="196" text-anchor="middle">defect → new feature, never an in-place patch</text>
+  <text class="svgxs" x="640" y="211" text-anchor="middle">same assertion fails twice → halt, ask you</text>
+
+  <rect x="860" y="60" width="210" height="120" rx="12" fill="none" stroke="var(--a4)" stroke-width="1.5"/>
+  <text class="svgtext" x="965" y="90" text-anchor="middle" font-weight="700">branch + draft PR</text>
+  <text class="svgsm" x="965" y="114" text-anchor="middle">contract in the</text>
+  <text class="svgsm" x="965" y="131" text-anchor="middle">PR description</text>
+  <text class="svgxs" x="965" y="154" text-anchor="middle">never a merge</text>
+  <text class="svgxs" x="965" y="170" text-anchor="middle">never a push</text>
+
+  <line x1="212" y1="120" x2="236" y2="120" stroke="#6e7c8c" marker-end="url(#ar)"/>
+  <line x1="422" y1="120" x2="446" y2="120" stroke="#6e7c8c" marker-end="url(#ar)"/>
+  <line x1="832" y1="120" x2="856" y2="120" stroke="#6e7c8c" marker-end="url(#ar)"/>
+  <line x1="624" y1="85" x2="650" y2="98" stroke="#6e7c8c" marker-end="url(#ar)"/>
+  <line x1="624" y1="141" x2="650" y2="128" stroke="#6e7c8c" marker-end="url(#ar)"/>
+
+  <text class="svgxs" x="330" y="255" text-anchor="middle" fill="var(--a3)">← your judgment lives here</text>
+  <text class="svgxs" x="640" y="255" text-anchor="middle">← you supervise; you do not drive</text>
+  <text class="svgxs" x="965" y="255" text-anchor="middle">← you merge</text>
+
+  <rect x="10" y="285" width="1060" height="34" rx="8" fill="var(--panel2)" stroke="var(--line)"/>
+  <text class="svgsm" x="540" y="307" text-anchor="middle">Everything that matters is a file under .missions/&lt;slug&gt;/ — so a compaction, a /clear, or a reboot loses nothing</text>
+</svg>
+<figcaption>The arc of one mission. Two human gates: the contract at the start, the merge at the end.</figcaption>
+</figure>
+
+<div class="grid g3">
+  <div class="tile"><span class="big">1</span><p><strong>You define done</strong> — with the planner, before any code exists. This is the part you cannot delegate.</p></div>
+  <div class="tile"><span class="big">2</span><p><strong>Agents build it</strong> — one feature at a time, each in a clean context, each ending in a commit.</p></div>
+  <div class="tile"><span class="big">3</span><p><strong>Blind agents grade it</strong> — against your assertions, having never seen how the code was written or why.</p></div>
+</div>
+</section>
+<!-- ============ 2 ============ -->
+<section id="before">
+<h2>2 · Before you start — five minutes</h2>
+
+<div class="grid g2">
+<div class="card">
+  <h4><span class="dot" style="background:var(--a1)"></span>Restart your Claude Code session</h4>
+  <p>The six hooks were added to <code>.claude/settings.json</code>. Skills and subagents were picked
+  up live, but whether hooks hot-reload from a mid-session settings edit is
+  <strong>unconfirmed</strong> — restarting is the cheap way not to care.</p>
+</div>
+<div class="card">
+  <h4><span class="dot" style="background:var(--a3)"></span>Confirm the hooks are asleep</h4>
+  <p>With no mission running they must do nothing. Ordinary work in this repo should feel exactly as
+  it did yesterday — same git commands, same edits, no new messages. If you see a line starting with
+  <code>MISSION:</code> before you have started one, something is wrong; jump to §8.</p>
+</div>
+<div class="card">
+  <h4><span class="dot" style="background:var(--a4)"></span>Decide the autonomy ceiling</h4>
+  <p>For a first run: <strong>halt at every milestone</strong>. Loosening later is cheap; discovering
+  you were too loose is not. The planner asks you this and records it in <code>mission.md</code>.</p>
+</div>
+<div class="card">
+  <h4><span class="dot" style="background:var(--a2)"></span>Decide a budget</h4>
+  <p>A token ceiling the loop enforces by halting. Without a number, the honest answer to "what did
+  that cost" is <em>unknown</em> — and you lose the baseline that tells you whether this is worth
+  repeating.</p>
+</div>
+</div>
+
+<div class="callout">
+<strong>Where it all lands.</strong> <code>.missions/</code> is git-ignored, so run state never
+pollutes a diff. Product code goes onto a branch through normal commits. The contract is copied into
+<code>docs/plans/&lt;slug&gt;-plan.md</code> so a reviewer can see what "done" meant — and
+<code>docs/plans/</code> is git-ignored too, so nothing here reaches a PR unless you put it there.
+</div>
+</section>
+
+<!-- ============ 3 ============ -->
+<section id="pick">
+<h2>3 · Picking the first task</h2>
+
+<p>The first mission is an experiment about the <em>workflow</em>, not a delivery deadline. Pick
+accordingly: something real enough that the result matters, small enough that a bad run costs an
+afternoon rather than a sprint.</p>
+
+<div class="tblwrap">
+<table>
+<tr><th>Good first mission</th><th>Bad first mission</th></tr>
+<tr>
+  <td><strong>3–5 features</strong>, one or two milestones</td>
+  <td>Twelve features — that is two missions, and you will not learn twice as much</td>
+</tr>
+<tr>
+  <td><strong>Low blast radius</strong> — no migration, no partner API, no billing path</td>
+  <td>Anything that halts constantly for confirmation; you will spend the run babysitting</td>
+</tr>
+<tr>
+  <td><strong>Arguable correctness</strong> — where you would have written a test plan anyway</td>
+  <td>A mechanical refactor; a green suite already tells you everything</td>
+</tr>
+<tr>
+  <td><strong>Already on the backlog</strong>, with an issue you can hand the planner</td>
+  <td>A toy invented for the demo — it will not surface the frictions that matter</td>
+</tr>
+<tr>
+  <td><strong>Rich in conversational assertions</strong> if you want to test the payoff case</td>
+  <td>Something where the only assertions are "the function exists"</td>
+</tr>
+</table>
+</div>
+
+<div class="callout warn">
+<strong>The honest recommendation for run one.</strong> Keep every assertion
+<code>structural</code> — provable by the test layers. Skip the behavior validator entirely. It is
+the most valuable part of this workflow on a voice platform and also the slowest, the most expensive,
+and the most likely to fail for environmental reasons that teach you nothing about missions. Prove
+the loop first, then turn on real calls with the second mission.
+</div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section id="walk">
+<h2>4 · The walkthrough</h2>
+
+<ol class="steps">
+
+<li>
+<h4>Start the planner<span class="you">you</span></h4>
+<pre><code><span class="c1">/missions:mission-plan</span>  add per-account retry limits to the outbound dispatch sweep
+<span class="cf">              (or paste an issue number / description)</span></code></pre>
+<p>It reads the project's own docs first, dispatches cheap read-only researchers for anything it needs from the
+code, then <strong>interviews you</strong>. Expect it to push back on scope. That is the job — a
+mission that is twelve features long is usually two missions.</p>
+<p>It will ask for: the goal in one sentence, the non-goals, the blast radius, what done looks like
+to a <em>user</em>, the autonomy ceiling, and the budget. The non-goals matter more than they sound:
+they are what stops a worker from "improving" something adjacent at 2am.</p>
+</li>
+
+<li>
+<h4>It writes three files — and no code<span class="auto">automatic</span></h4>
+<pre><code>.missions/outbound-retry-limits/
+  <span class="c1">mission.md</span>     goal, non-goals, model seats, budget cap
+  <span class="c2">contract.md</span>    A001..A0nn  ← the artifact
+  <span class="c3">features.md</span>    F001.. → milestone, assertions, procedures</code></pre>
+<p>It refuses to finish unless every assertion maps to a feature, every feature to an assertion, and
+every assertion carries a proof class. If it cannot close that gap it tells you which side is wrong
+rather than quietly papering over it.</p>
+<p>While phase is <code>planning</code>, the <code>mission-contract-first</code> hook physically
+blocks writes to product code. Not a reminder — a block.</p>
+</li>
+
+<li>
+<h4>Read the contract. Properly.<span class="you">you</span></h4>
+<p>Ten minutes here is worth more than anything you can do later. §5 is the checklist.</p>
+</li>
+
+<li>
+<h4>Design the architecture<span class="you">you start it</span></h4>
+<pre><code><span class="c1">/missions:mission-design</span></code></pre>
+<p>Mandatory, and still no code. It fans out read-only researcher agents to find how this repo
+already does things — the closest analogue to each feature, layering, error handling, test
+conventions, the legacy pattern nobody should imitate — and writes <code>design.md</code>:
+guidelines <code>D001..</code>, each anchored to a <code>file:line</code> exemplar. Every worker is
+bound to its feature's guidelines, and the blind reviewers grade conformance against the same ids.
+Review it like the contract: after this, the machinery obeys it.</p>
+</li>
+
+<li>
+<h4>Run the loop<span class="you">you start it</span></h4>
+<pre><code><span class="c1">/missions:mission-run</span></code></pre>
+<p>From here it drives itself: dispatch one worker, ingest its handoff, update state, repeat; at a
+milestone, validate. You supervise. You do not steer feature by feature — if you find yourself
+wanting to, that is a signal the contract was underspecified, and the fix belongs in the contract.</p>
+</li>
+
+<li>
+<h4>Milestone — it stops and reports<span class="auto">automatic</span></h4>
+<p>With the ceiling set to "halt at every milestone" you get a report and a decision. §6 covers what
+happened during it.</p>
+</li>
+
+<li>
+<h4>Check in any time<span class="you">you</span></h4>
+<pre><code><span class="c1">/missions:mission-status</span>   <span class="cf">→ docs/plans/&lt;slug&gt;-status.html</span></code></pre>
+<p>Assertion coverage by proof class, features, spend, what is running, what is blocked. Safe to run
+mid-flight; it only reads.</p>
+</li>
+
+<li>
+<h4>New day, new session<span class="you">you</span></h4>
+<pre><code><span class="c1">/missions:mission-resume</span></code></pre>
+<p>Reconstructs position from disk and reconciles it against git — <strong>git wins</strong> any
+disagreement. This is the claim that the state files are real: nothing needed from anyone's memory.</p>
+</li>
+
+<li>
+<h4>Terminal — branch and draft PR<span class="auto">automatic</span></h4>
+<p>Runs whatever pre-merge sweep the project defines, updates the docs whose sources changed, then
+hands the branch to <code>/missions:mission-pr-review</code>: it opens a <strong>draft</strong> PR — with the
+contract and the assertion→evidence table as the description — and puts the <em>whole branch</em>
+through review for the first time: a simplify pass, the general code review plus the repo's
+adversarial-review skill in parallel, a read-only assessment of every finding, and an HTML findings
+report. Surviving findings become follow-ups; nothing gets fixed here. Then it stops. You merge.</p>
+</li>
+
+</ol>
+</section>
+<!-- ============ 5 ============ -->
+<section id="contract">
+<h2>5 · Reviewing the contract — your real job</h2>
+
+<p class="lead">Everything downstream faithfully builds and certifies whatever this file says. A wrong
+assertion does not get caught by the workers, the reviewers, or the validators — they will all agree
+with each other, produce green checkmarks, and ship the wrong thing.</p>
+
+<figure>
+<svg viewBox="0 0 1000 200" role="img" aria-label="A wrong assertion propagates through every downstream check">
+  <rect x="10" y="55" width="170" height="70" rx="10" fill="var(--panel2)" stroke="var(--a2)" stroke-width="2"/>
+  <text class="svgtext" x="95" y="82" text-anchor="middle" fill="var(--a2)" font-weight="700">A007 is wrong</text>
+  <text class="svgxs" x="95" y="103" text-anchor="middle">nobody noticed</text>
+
+  <rect x="230" y="55" width="150" height="70" rx="10" fill="none" stroke="var(--line)"/>
+  <text class="svgsm" x="305" y="82" text-anchor="middle" fill="var(--ink)">worker builds it</text>
+  <text class="svgxs" x="305" y="103" text-anchor="middle">correctly ✓</text>
+
+  <rect x="430" y="55" width="150" height="70" rx="10" fill="none" stroke="var(--line)"/>
+  <text class="svgsm" x="505" y="82" text-anchor="middle" fill="var(--ink)">reviewer checks it</text>
+  <text class="svgxs" x="505" y="103" text-anchor="middle">satisfied ✓</text>
+
+  <rect x="630" y="55" width="150" height="70" rx="10" fill="none" stroke="var(--line)"/>
+  <text class="svgsm" x="705" y="82" text-anchor="middle" fill="var(--ink)">validator proves it</text>
+  <text class="svgxs" x="705" y="103" text-anchor="middle">proven ✓</text>
+
+  <rect x="830" y="55" width="160" height="70" rx="10" fill="var(--panel2)" stroke="var(--a2)" stroke-width="2"/>
+  <text class="svgsm" x="910" y="78" text-anchor="middle" fill="var(--a2)" font-weight="700">wrong thing</text>
+  <text class="svgsm" x="910" y="96" text-anchor="middle" fill="var(--a2)" font-weight="700">ships, green</text>
+
+  <line x1="182" y1="90" x2="226" y2="90" stroke="#6e7c8c" marker-end="url(#ar2)"/>
+  <line x1="382" y1="90" x2="426" y2="90" stroke="#6e7c8c" marker-end="url(#ar2)"/>
+  <line x1="582" y1="90" x2="626" y2="90" stroke="#6e7c8c" marker-end="url(#ar2)"/>
+  <line x1="782" y1="90" x2="826" y2="90" stroke="#6e7c8c" marker-end="url(#ar2)"/>
+  <defs>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6e7c8c"/>
+    </marker>
+  </defs>
+  <text class="svgxs" x="500" y="160" text-anchor="middle">Every mechanism in a mission increases confidence. None of them question the premise.</text>
+  <text class="svgxs" x="500" y="178" text-anchor="middle" fill="var(--a3)">You are the only reader who can.</text>
+</svg>
+<figcaption>Why the contract review is not a formality.</figcaption>
+</figure>
+
+<h3>Read each assertion against these six questions</h3>
+
+<div class="tblwrap">
+<table>
+<tr><th>Ask</th><th>Why it matters</th></tr>
+<tr><td><strong>Is this observable behavior, or implementation?</strong> Could two engineers satisfy it with completely different code and both be right?</td>
+    <td>"<code>reset_streak()</code> exists" is not an assertion — it is a design decision smuggled in as a requirement, and it locks the worker out of a better approach.</td></tr>
+<tr><td><strong>Would I actually care if this broke?</strong></td>
+    <td>Assertions nobody cares about consume validator time at every milestone and train you to skim the results.</td></tr>
+<tr><td><strong>Where is the negative case?</strong></td>
+    <td>Every "it works" needs its "it refuses / it fails safe" pair. Adversarial validators need something to bite on; a contract of happy paths grades a happy-path implementation.</td></tr>
+<tr><td><strong>If this touches data scoped to a user, tenant or account, is the leakage case written down?</strong></td>
+    <td>It is never implied. An assertion that is not written is not checked — and cross-boundary leakage is exactly the defect that passes every test in an implementation-shaped suite.</td></tr>
+<tr><td><strong>Is the proof class honest?</strong></td>
+    <td>A <code>structural</code> tag on something only a real call can prove means it will be marked proven by a unit test that does not actually test it.</td></tr>
+<tr><td><strong>What is missing entirely?</strong></td>
+    <td>The hardest and most valuable question. The planner writes down what it was told about. What did neither of you say out loud?</td></tr>
+</table>
+</div>
+
+<div class="callout ok">
+<strong>The planner hands you a shortlist.</strong> It ends by naming the two or three assertions it
+is <em>least</em> sure about. Start there — that list is worth more than the summary above it, and it
+is the closest thing you get to the machine telling you where it is likely wrong.
+</div>
+</section>
+
+<!-- ============ 6 ============ -->
+<section id="milestone">
+<h2>6 · What happens inside a milestone</h2>
+
+<figure>
+<svg viewBox="0 0 1040 300" role="img" aria-label="Milestone validation order: scrutiny, then parallel blind reviews, then behavior, then negotiation">
+  <text class="svgxs" x="80" y="24" text-anchor="middle">SERIAL — writes</text>
+  <text class="svgxs" x="560" y="24" text-anchor="middle">VALIDATION — cheap and deterministic first, real and expensive last</text>
+
+  <rect x="10" y="40" width="140" height="52" rx="8" fill="var(--panel2)" stroke="var(--line)"/>
+  <text class="svgsm" x="80" y="62" text-anchor="middle" fill="var(--ink)">worker F001</text>
+  <text class="svgxs" x="80" y="79" text-anchor="middle">→ commit + handoff</text>
+  <rect x="10" y="104" width="140" height="52" rx="8" fill="var(--panel2)" stroke="var(--line)"/>
+  <text class="svgsm" x="80" y="126" text-anchor="middle" fill="var(--ink)">worker F002</text>
+  <text class="svgxs" x="80" y="143" text-anchor="middle">→ commit + handoff</text>
+  <rect x="10" y="168" width="140" height="52" rx="8" fill="var(--panel2)" stroke="var(--line)"/>
+  <text class="svgsm" x="80" y="190" text-anchor="middle" fill="var(--ink)">worker F003</text>
+  <text class="svgxs" x="80" y="207" text-anchor="middle">→ commit + handoff</text>
+  <text class="svgxs" x="80" y="242" text-anchor="middle">never concurrent</text>
+  <text class="svgxs" x="80" y="258" text-anchor="middle">hook-enforced</text>
+
+  <line x1="155" y1="130" x2="195" y2="130" stroke="#6e7c8c" marker-end="url(#ar3)"/>
+  <defs>
+    <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6e7c8c"/>
+    </marker>
+  </defs>
+
+  <rect x="200" y="60" width="170" height="140" rx="10" fill="none" stroke="var(--a1)"/>
+  <text class="svgsm" x="285" y="84" text-anchor="middle" fill="var(--a1)" font-weight="700">1 · scrutiny</text>
+  <text class="svgxs" x="285" y="106" text-anchor="middle">unit + integration</text>
+  <text class="svgxs" x="285" y="122" text-anchor="middle">ruff · mypy · tsc</text>
+  <text class="svgxs" x="285" y="146" text-anchor="middle">raw output, exit codes</text>
+  <text class="svgxs" x="285" y="170" text-anchor="middle">flags assertions with</text>
+  <text class="svgxs" x="285" y="186" text-anchor="middle">NO test at all</text>
+
+  <rect x="400" y="40" width="250" height="180" rx="10" fill="none" stroke="var(--a2)" stroke-width="1.5"/>
+  <text class="svgsm" x="525" y="64" text-anchor="middle" fill="var(--a2)" font-weight="700">2 · blind review — parallel</text>
+  <rect x="418" y="80" width="66" height="40" rx="6" fill="var(--panel2)" stroke="var(--line)"/>
+  <text class="svgxs" x="451" y="104" text-anchor="middle">F001</text>
+  <rect x="492" y="80" width="66" height="40" rx="6" fill="var(--panel2)" stroke="var(--line)"/>
+  <text class="svgxs" x="525" y="104" text-anchor="middle">F002</text>
+  <rect x="566" y="80" width="66" height="40" rx="6" fill="var(--panel2)" stroke="var(--line)"/>
+  <text class="svgxs" x="599" y="104" text-anchor="middle">F003</text>
+  <text class="svgxs" x="525" y="146" text-anchor="middle">each gets: the diff + its assertions</text>
+  <text class="svgxs" x="525" y="164" text-anchor="middle">never: the handoff, the reasoning,</text>
+  <text class="svgxs" x="525" y="180" text-anchor="middle">or the other reviewers' findings</text>
+  <text class="svgxs" x="525" y="204" text-anchor="middle" fill="var(--a2)">blindness is hook-enforced</text>
+
+  <rect x="680" y="60" width="160" height="140" rx="10" fill="none" stroke="var(--a5)"/>
+  <text class="svgsm" x="760" y="84" text-anchor="middle" fill="var(--a5)" font-weight="700">3 · behavior</text>
+  <text class="svgxs" x="760" y="106" text-anchor="middle">real calls · real UI</text>
+  <text class="svgxs" x="760" y="130" text-anchor="middle">only if the milestone</text>
+  <text class="svgxs" x="760" y="146" text-anchor="middle">has conversational or</text>
+  <text class="svgxs" x="760" y="162" text-anchor="middle">interface assertions</text>
+  <text class="svgxs" x="760" y="186" text-anchor="middle">costs real money</text>
+
+  <rect x="870" y="60" width="160" height="140" rx="10" fill="none" stroke="var(--a4)"/>
+  <text class="svgsm" x="950" y="84" text-anchor="middle" fill="var(--a4)" font-weight="700">4 · negotiate</text>
+  <text class="svgxs" x="950" y="108" text-anchor="middle">all proven → advance</text>
+  <text class="svgxs" x="950" y="126" text-anchor="middle">defect → new feature</text>
+  <text class="svgxs" x="950" y="144" text-anchor="middle">"cannot tell" → sharpen</text>
+  <text class="svgxs" x="950" y="162" text-anchor="middle">failed twice → halt</text>
+  <text class="svgxs" x="950" y="186" text-anchor="middle">contract wrong → ask you</text>
+
+  <line x1="655" y1="130" x2="675" y2="130" stroke="#6e7c8c" marker-end="url(#ar3)"/>
+  <line x1="845" y1="130" x2="865" y2="130" stroke="#6e7c8c" marker-end="url(#ar3)"/>
+  <line x1="375" y1="130" x2="395" y2="130" stroke="#6e7c8c" marker-end="url(#ar3)"/>
+
+  <text class="svgxs" x="520" y="285" text-anchor="middle" fill="var(--a3)">Expect this to fail on the first pass. That is the normal case — it is what you are paying for.</text>
+</svg>
+<figcaption>One milestone. Writers are serial; validators fan out.</figcaption>
+</figure>
+
+<div class="callout">
+<strong>The number to watch.</strong> At the end, the loop reports how many defects the
+<em>blind reviewers</em> caught that the workers' own tests missed. That figure is the honest measure
+of whether this workflow earns its overhead. If it is consistently zero, you are paying for
+ceremony — either the reviewers are too soft or the assertions are too easy, and both are fixable.
+</div>
+</section>
+<!-- ============ 7 ============ -->
+<section id="blocked">
+<h2>7 · When a hook blocks you</h2>
+
+<p>Every mission hook prints a line starting with <code>MISSION:</code> and explains itself. None of
+them is advisory. Here is the full set and what each one actually means.</p>
+
+<div class="tblwrap">
+<table>
+<tr><th style="width:38%">Message</th><th>What happened</th><th>What to do</th></tr>
+<tr>
+  <td><code>a writing agent is already active</code></td>
+  <td>Two workers at once, or a stale marker left in <code>state.md</code> after a handoff landed.</td>
+  <td>If a worker really is running, wait. If not, the loop skipped its bookkeeping — set
+      <code>**Active writing agent:** none</code>.</td>
+</tr>
+<tr>
+  <td><code>progress is blocked by unresolved handoff issues</code></td>
+  <td>A previous worker reported a problem and nothing has addressed it.</td>
+  <td>Resolve it, or move it into <code>followups.md</code> deliberately. Clearing it without
+      reading it is the one thing this hook exists to prevent.</td>
+</tr>
+<tr>
+  <td><code>this '&lt;agent&gt;' prompt contains handoff content</code></td>
+  <td>A validator was about to be told what the author said about their own work.</td>
+  <td>Strip it. If the validator genuinely needs that fact, it belongs in the contract or in
+      <code>state.md</code> — not in the validator's prompt.</td>
+</tr>
+<tr>
+  <td><code>mission-validator-behavior prompt contains a diff</code></td>
+  <td>The behavior validator was about to read the implementation.</td>
+  <td>Give it the assertions and the environment. It proves things by using the system.</td>
+</tr>
+<tr>
+  <td><code>phase is 'planning' — no product code yet</code></td>
+  <td>Something tried to write code before the contract was finished.</td>
+  <td>Finish the contract. If planning really is done, set <code>**Phase:** implementing</code> and
+      dispatch a worker — the orchestrator does not write product code itself.</td>
+</tr>
+<tr>
+  <td><code>no pushing / no merging during a mission</code></td>
+  <td>Exactly what it says.</td>
+  <td>Nothing leaves the machine on the loop's initiative. Push it yourself when you are satisfied.</td>
+</tr>
+<tr>
+  <td><code>--no-verify / --admin are never allowed</code></td>
+  <td>An agent tried to skip a failing gate.</td>
+  <td>Fix the cause. A bypassed check is a defect no validator will catch, because they trust the
+      gate that got skipped.</td>
+</tr>
+<tr>
+  <td><code>commit message must start with the feature id</code></td>
+  <td>A commit during <code>implementing</code> with no <code>F00n:</code> prefix.</td>
+  <td>Add it. If it belongs to no feature, ask why it is happening mid-mission.</td>
+</tr>
+<tr>
+  <td><code>the handoff for F00n is not valid evidence</code></td>
+  <td>Missing sections, commands with no exit codes, or a commit sha that is not in the repo.</td>
+  <td>Fix the handoff before the next feature. It lists exactly what is missing.</td>
+</tr>
+</table>
+</div>
+
+<div class="callout ok">
+<strong>They are asleep unless a mission is live.</strong> All six check first for a
+<code>.missions/*/state.md</code> whose <code>**Phase:**</code> is something other than
+<code>done</code> or <code>halted</code>; without one they exit immediately. That is the first thing
+the test suite asserts, for every hook, including against a <code>state.md</code> too mangled to
+parse.
+</div>
+</section>
+
+<!-- ============ 8 ============ -->
+<section id="stop">
+<h2>8 · Stopping, pausing, and escape hatches</h2>
+
+<div class="grid g2">
+<div class="card">
+  <h4><span class="dot" style="background:var(--a3)"></span>Pause for the day</h4>
+  <p>Do nothing. State is on disk. Tomorrow: <code>/missions:mission-resume</code>.</p>
+</div>
+<div class="card">
+  <h4><span class="dot" style="background:var(--a4)"></span>Stop the mission</h4>
+  <p>Set <code>**Phase:** halted</code> in <code>state.md</code>, with the reason. Every hook stands
+  down; the branch and commits stay exactly where they are.</p>
+</div>
+<div class="card">
+  <h4><span class="dot" style="background:var(--a1)"></span>Finish and go back to normal</h4>
+  <p><code>**Phase:** done</code>. Or delete <code>.missions/&lt;slug&gt;/</code> — it is git-ignored
+  and the code is already committed on the branch.</p>
+</div>
+<div class="card">
+  <h4><span class="dot" style="background:var(--a2)"></span>Hooks blocking ordinary work</h4>
+  <p>A stale mission directory is almost always the cause. <code>ls .missions/</code>, then set the
+  phase to <code>done</code> or remove it.</p>
+</div>
+</div>
+
+<h3>The mission directory, when you want to look yourself</h3>
+<pre><code>.missions/&lt;slug&gt;/
+  <span class="c1">mission.md</span>       goal · non-goals · seats · budget cap
+  <span class="c2">contract.md</span>      assertions + status + evidence   <span class="cf">← read this one</span>
+  <span class="c3">features.md</span>      F00n → milestone, assertions, procedures
+  <span class="c4">state.md</span>         phase · active writer · open issues   <span class="cf">← edit this to steer</span>
+  handoffs/        what each worker did, and left undone
+  validation/      per-milestone verdicts with evidence
+  followups.md     defects, as features
+  journal.jsonl    append-only event log</code></pre>
+
+<p><code>state.md</code> is the steering wheel: it is what the hooks read and what every agent reads
+first. Editing it by hand is a legitimate, expected operation — that is why it is a markdown file and
+not a database.</p>
+</section>
+
+<!-- ============ 9 ============ -->
+<section id="expect">
+<h2>9 · What will go wrong the first time</h2>
+
+<p class="lead">No mission has been run end to end. The hooks are unit-tested and the prompts are
+written, but the loop as a whole is unproven — so treat run one as a dry run whose product is a list
+of frictions, not a feature.</p>
+
+<div class="grid g2">
+<div class="card">
+  <h4><span class="dot" style="background:var(--a4)"></span>The contract will be too vague</h4>
+  <p>The first few assertions you write will read like requirements, not checks. You will find out at
+  the first milestone when a reviewer answers "cannot tell from the diff" three times. That answer is
+  the system working, not failing.</p>
+</div>
+<div class="card">
+  <h4><span class="dot" style="background:var(--a4)"></span>Features will be sized wrong</h4>
+  <p>A worker that needs to read twenty files to start was given two features. You will see it as a
+  handoff that reports lots of "left undone".</p>
+</div>
+<div class="card">
+  <h4><span class="dot" style="background:var(--a4)"></span>Validation will fail on first pass</h4>
+  <p>Every milestone, by design. Budget for it: the source architecture reports validation never
+  succeeding first try, and roughly 60% of both time and tokens going to implementation.</p>
+</div>
+<div class="card">
+  <h4><span class="dot" style="background:var(--a2)"></span>The validators are themselves unvalidated</h4>
+  <p>Nothing has yet confirmed that <code>mission-reviewer</code> catches a planted defect. Until a
+  mutation suite exists — plant an off-by-one, a swapped ownership filter, a dropped <code>await</code>,
+  measure the catch rate — treat a clean verdict as informative, not authoritative.</p>
+</div>
+</div>
+
+<div class="callout warn">
+<strong>The failure mode to keep in mind.</strong> Every mechanism here increases confidence by
+construction: a contract, a blind check, a verdict table, a coverage percentage. If the validators
+cannot actually fail, all of that machinery is an expensive way to generate green checkmarks. The
+mutation suite is the guard against it, and it should exist before you trust a mission result you
+did not personally read.
+</div>
+
+<h3>Worth capturing as you go</h3>
+<ul class="chk">
+  <li>Which assertions turned out to be wrong, and whether you could have known at planning time</li>
+  <li>How many defects the blind reviewers caught that the workers' own tests missed — the number that justifies the overhead</li>
+  <li>Where you wanted to intervene, and whether the contract or the prompts should have handled it</li>
+  <li>Tokens and wall-clock versus what the same task would have cost conventionally</li>
+</ul>
+</section>
+
+<!-- ============ 10 ============ -->
+<section id="cheat">
+<h2>10 · Cheat sheet</h2>
+
+<div class="grid g2">
+<div>
+<h3>Commands</h3>
+<div class="cheat">
+  <div><code>/missions:mission-plan &lt;task&gt;</code><span>Interview, then write the contract. No code.</span></div>
+  <div><code>/missions:mission-design</code><span>Explore existing patterns, write the guidelines workers obey. No code.</span></div>
+  <div><code>/missions:mission-run</code><span>Drive the loop. Start it, resume it, continue after a decision.</span></div>
+  <div><code>/missions:mission-status</code><span>HTML page: coverage, spend, blockers.</span></div>
+  <div><code>/missions:mission-resume</code><span>Rehydrate after a compaction or a new day.</span></div>
+</div>
+</div>
+<div>
+<h3>Steering by hand</h3>
+<div class="cheat">
+  <div><code>**Phase:**</code><span>planning · implementing · validating · negotiating · halted · done</span></div>
+  <div><code>**Active writing agent:**</code><span>Set to <em>none</em> to clear a stale block.</span></div>
+  <div><code>## Open issues</code><span>Bullets here block the next feature. "none" clears it.</span></div>
+  <div><code>rm -rf .missions/&lt;slug&gt;</code><span>Full stop. Git-ignored; commits survive on the branch.</span></div>
+</div>
+</div>
+</div>
+
+<h3>The five things that are actually load-bearing</h3>
+<div class="tblwrap">
+<table>
+<tr><th style="width:34%">Rule</th><th>If you only remember one thing about it</th></tr>
+<tr><td><strong>Contract before code</strong></td><td>Tests written after the implementation confirm decisions; they do not catch bugs.</td></tr>
+<tr><td><strong>The author never grades itself</strong></td><td>A worker's claim is an input. Only a blind agent's evidence closes an assertion.</td></tr>
+<tr><td><strong>One writer at a time</strong></td><td>Parallel writers produce conflicts and inconsistent architecture; the coordination cost eats the gain.</td></tr>
+<tr><td><strong>Defects become features</strong></td><td>A validator that patches things puts ungraded code into the next milestone's diff.</td></tr>
+<tr><td><strong>Branch and draft PR, never a merge</strong></td><td>The autonomy ceiling. A human decides what ships.</td></tr>
+</table>
+</div>
+
+<div class="callout ok" style="margin-top:26px">
+<strong>Ready?</strong> Pick something from the backlog that is three to five features, structural
+assertions only, no migrations. Then <code>/missions:mission-plan</code>, and spend real time on the contract
+it hands back.
+</div>
+</section>
+
+<footer>
+Getting-started guide for the missions workflow in this repo. Installed and tested: 4 skills,
+5 subagents, 7 hooks. The 99-case hook suite was dropped when the machinery moved to user level.
+Never run end to end — statements about how a full mission behaves describe the design, not observed
+behavior. Reference: <span class="mono">docs/MISSIONS.md</span> ·
+Design rationale: <span class="mono">docs/plans/missions-agent-workflow-plan.html</span> ·
+Schema: <span class="mono">${CLAUDE_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md</span>.
+</footer>
+
+</div>
+</body>
+</html>

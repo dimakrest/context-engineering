@@ -24,6 +24,14 @@ Add the marketplace and install:
 /plugin install context-engineering@dimakrest-context-engineering
 ```
 
+This marketplace also ships **`missions`** — contract-first, multi-feature agent runs with serial
+workers, blind review, behaviour validation and hook-enforced caps. It is a separate plugin with
+its own enable flag; see [`plugins/missions/README.md`](plugins/missions/README.md).
+
+```bash
+/plugin install missions@dimakrest-context-engineering
+```
+
 ### Installation Scopes
 
 ```bash

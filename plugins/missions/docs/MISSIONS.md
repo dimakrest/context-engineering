@@ -140,20 +140,27 @@ and deliberately omits `get_why` (git archaeology), `list_prs` / `get_pr_impact`
 bodies) and `get_answer` — they return the author's reasoning. The reviewer still holds Bash, so
 `mission-shell-guard.sh` refuses `git log/show/diff/blame`, `gh`, `graphify prs` and handoff paths
 from its shell (the harness tags every tool call inside a subagent with `agent_type`). **Spend
-stays measured — by hook.** The same guard blocks, for every caller, `repowise update`, `repowise
-init` without `--index-only`, `graphify label/extract` and `cluster-only` without `--no-label`:
-each calls an LLM through the tool's own provider key, spend the dollar cap cannot see. The
+stays measured — by hook.** The same guard blocks, for every caller, `repowise generate`,
+`repowise update` without `--index-only`, `repowise init` without `--no-prose` (or the legacy
+`--index-only`), `graphify label/extract` and `cluster-only` without `--no-label`. Each can call
+an LLM through the tool's own provider key, spend the dollar cap cannot see. Safe flags must
+belong to each invocation; Repowise's `--full`, `--docs` and `--prose` overrides are blocked.
+Use simple, literal commands for these operations; ambiguous shell forms are refused. The
 researcher's allowlist is likewise named tools, never `mcp__repowise__*` — the wildcard would
 enable `get_answer`.
 
 Prerequisites, per project (the plugin documents them; it never edits your config):
 
 ```
-uv tool install --with "mcp<2" "graphifyy[mcp]"        # once; graphify 0.9.x's MCP server needs the extra and breaks on mcp 2.x
+uv tool install --with "mcp<2" "graphifyy[mcp,sql,terraform]"   # once; the MCP server needs [mcp], and 0.9.29 broke on mcp 2.x
 claude mcp add -s local graphify -- $(cat graphify-out/.graphify_python) -m graphify.serve $PWD/graphify-out/graph.json
-repowise init --index-only .                           # no LLM spend; builds .repowise/
+repowise init --no-prose --no-editor-setup --no-save-key .  # first run, Repowise 0.47.0; no LLM prose or editor setup
+repowise update --index-only .                            # subsequent refreshes; requires an existing index
 claude mcp add -s local repowise -- repowise mcp $PWD --transport stdio
 ```
+
+For older Repowise versions, check `repowise init --help` and use `init --index-only` when
+supported. `update --index-only` does not initialize a fresh repository.
 
 Without them the agents behave exactly as before — the MCP tools are simply not there.
 

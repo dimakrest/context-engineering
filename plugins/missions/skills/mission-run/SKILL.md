@@ -137,8 +137,9 @@ Then:
 - Copy every issue from the handoff into `state.md` under open issues; rewrite `resume_next`.
 - Refresh the code index when the digest's `Codebase intelligence:` line names graphify:
   `graphify update . 2>&1 | tail -3` — AST-only, seconds, no LLM, and it is what the next
-  reviewer's impact step and the next researcher will read. Not `repowise update`: it can generate
-  wiki pages through an LLM, outside the caps.
+  reviewer's impact step and the next researcher will read. Not a bare `repowise update`: without
+  `--index-only` it can generate wiki pages through an LLM, outside the caps. That flag applies
+  only to its own invocation; never combine it with `--full`, `--docs` or `--prose`.
 
 ## VALIDATE — at every milestone
 

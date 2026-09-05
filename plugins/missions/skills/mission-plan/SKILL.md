@@ -55,9 +55,11 @@ fastest honest way to size a feature to the files it touches. When repowise is i
 baseline the scrutiny validator diffs against: `mkdir -p .missions/<slug>/baseline && repowise
 health --format json 2>/dev/null | sed -n '/^[{[]/,$p' > .missions/<slug>/baseline/health.json`
 (repowise prints its log lines on stdout ahead of the JSON; the `sed` keeps only the document —
-verify the file parses). Never run `repowise init` without
-`--index-only`, and never `repowise update`, from a mission — both can spend LLM money outside the
-caps.
+verify the file parses). Use `repowise update --index-only` only for an existing index. Initial
+setup uses `repowise init --no-prose --no-editor-setup --no-save-key` on 0.47.0; older versions
+may support `init --index-only` instead (check `init --help`). Never run paid `repowise generate`
+or combine safe forms with `--full`, `--docs` or `--prose`: their spend is outside the caps.
+The guard checks safe flags per invocation; use simple, literal commands.
 
 ## Step 1 — interview the user, and argue
 

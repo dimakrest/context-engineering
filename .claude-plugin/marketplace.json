@@ -9,7 +9,7 @@
     {
       "name": "context-engineering",
       "description": "Complete development workflow with specialized agents, commands, skills, and execution context. Provides 10 agents for code research and implementation, 6 commands for structured development workflows, 4 skills (commit, debug, describe-pr, code-review).",
-      "version": "1.0.0",
+      "version": "1.0.5",
       "author": {
         "name": "Dima Krest"
       },
@@ -22,7 +22,7 @@
     {
       "name": "missions",
       "description": "Contract-first multi-feature agent missions: plan the definition of done, run serial workers with blind review and behaviour validation, enforced by hooks (writer lock, execution lease, spend/dispatch caps, blindness, commit discipline).",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "author": {
         "name": "Dima Krest"
       },

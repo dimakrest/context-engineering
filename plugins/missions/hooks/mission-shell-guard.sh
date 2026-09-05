@@ -12,7 +12,9 @@
 #     generation call an LLM through their own provider keys: spend that never
 #     reaches the session transcript mission-spend.sh measures, so no cap can
 #     see it. Blocked for every caller while a mission is active; the index-only
-#     forms (`graphify update`, `repowise init --index-only`) stay allowed.
+#     forms (`graphify update`, `repowise update|init --index-only`) stay
+#     allowed, as is `repowise init --no-prose` on current versions. Exceptions
+#     belong to an individual invocation, never to the whole shell command.
 # Exit 0 = allow, exit 2 = block.
 
 set -euo pipefail
@@ -46,11 +48,59 @@ if [ -z "$agent" ]; then
 fi
 
 # ---- spend: LLM-backed index commands, whoever runs them
-# block_llm_spend <tool> <subcommand regex> <escape flag or ""> <message>
-# Blocks `<tool> <subcommand>` unless the escape flag (the index-only form) is present.
+# block_llm_spend <tool> <subcommands> <safe flags> <message>
+# Check each literal invocation independently. This is a conservative shell guard,
+# not a shell interpreter: ambiguous/dynamic forms must be run as simple commands.
 block_llm_spend() {
-  printf '%s' "$cmd" | grep -qE "(^|[;&|[:space:]])$1[[:space:]]+($2)([[:space:]]|\$)" || return 0
-  [ -n "$3" ] && printf '%s' "$cmd" | grep -q -- "$3" && return 0
+  if python3 - "$cmd" "$1" "$2" "$3" <<'PYGUARD'
+import os, re, shlex, sys
+command, tool, subcommands, safe_flags = sys.argv[1:]
+pattern = re.compile(r"(?:^|[;&|\s/()\"'])" + re.escape(tool)
+                     + r"\s+(?:" + subcommands + r")(?=\s|[;&|()]|$)")
+if not pattern.search(command):
+    sys.exit(0)
+# Substitution and escaped spellings cannot establish a literal safe invocation.
+if any(c in command for c in ("$", "`", "\\")):
+    sys.exit(1)
+try:
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
+    lexer.whitespace = " \t\r"
+    tokens = list(lexer)
+except ValueError:
+    sys.exit(1)
+separators = set(";&|()\n")
+matched = 0
+for i, token in enumerate(tokens[:-1]):
+    if os.path.basename(token) != tool or tokens[i + 1] not in subcommands.split("|"):
+        continue
+    matched += 1
+    args, safe_args = [], []
+    redirected = False
+    for arg in tokens[i + 2:]:
+        if arg == "--" or (arg and all(c in separators for c in arg)):
+            break
+        # A redirect's filename cannot supply a safe flag. Keep scanning for
+        # conflicting options after redirections, but accept safe flags before them.
+        if arg and all(c in ";&|()<>\n" for c in arg) and any(c in "<>" for c in arg):
+            redirected = True
+        args.append(arg)
+        if not redirected:
+            safe_args.append(arg)
+    # --full dispatches before index-only in Repowise; positive docs/prose
+    # overrides are also refused even alongside a safe flag.
+    if tool == "repowise" and any(a.split("=", 1)[0] in
+                                   {"--full", "--docs", "--prose"} for a in args):
+        sys.exit(1)
+    if not safe_flags or not set(safe_flags.split("|")).intersection(safe_args):
+        sys.exit(1)
+# Quoted shell programs / wrappers may hide an invocation inside one token.
+# Never let another invocation's safe flag authorize that unparsed program.
+if matched != len(pattern.findall(command)):
+    sys.exit(1)
+PYGUARD
+  then
+    return 0
+  fi
   mission_block "$4"
 }
 GRAPHIFY_MSG="MISSION: graphify label / extract / cluster-only (without --no-label) call an LLM.
@@ -62,12 +112,15 @@ REPOWISE_MSG="MISSION: repowise update / init generate wiki pages through an LLM
 
 That spend is billed to repowise's provider key, outside every mission cap, and
 \`repowise init\` also rewrites the repo's CLAUDE.md and .mcp.json. The only
-form a mission may run is \`repowise init --index-only\` (no LLM). Read the index
-with \`repowise health\` / \`repowise search\` / the MCP tools."
+forms a mission may run are \`repowise update --index-only\` for refreshes and
+\`repowise init --no-prose\` for current initialization (\`init --index-only\`
+on older builds). Do not combine these with --full, --docs or --prose. Read
+the index with \`repowise health\` / \`repowise search\` / the MCP tools."
 block_llm_spend graphify 'label|extract' ''             "$GRAPHIFY_MSG"
 block_llm_spend graphify 'cluster-only'  '--no-label'   "$GRAPHIFY_MSG"
-block_llm_spend repowise 'update'        ''             "$REPOWISE_MSG"
-block_llm_spend repowise 'init'          '--index-only' "$REPOWISE_MSG"
+block_llm_spend repowise 'generate'      ''             "$REPOWISE_MSG"
+block_llm_spend repowise 'update'        '--index-only' "$REPOWISE_MSG"
+block_llm_spend repowise 'init'          '--index-only|--no-prose' "$REPOWISE_MSG"
 
 # ---- blindness: the reviewer's shell
 [ "$agent" = "mission-reviewer" ] || exit 0

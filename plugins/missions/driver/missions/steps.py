@@ -54,6 +54,9 @@ EXIT_CODES = {
     "gate-blocked": 5, "authority": 6, "contract": 7, "provider-quota": 8, "interrupted": 130,
 }
 ALWAYS_HALT = ("budget", "contract", "authority")
+# what the repair-round cap's halt asks for (hooks/mission-serial-guard.sh says the same)
+REPAIR_CAP_NEEDS = ("root-cause classification (contract ambiguity / implementation defect / inadequate evidence / "
+                    "bad brief / environment), then re-plan with /missions:mission-amend -- never a cap raise")
 
 
 @dataclass
@@ -82,21 +85,22 @@ class Context:
 # ---------------------------------------------------------------- stop
 
 def stop(ctx: Context, reason: str, detail: str = "", needs: str = "", halt: bool = False,
-         resume_next: Optional[str] = None) -> int:
-    """Journal `stop`, set the phase (`done`, or `halted` for a halt) and `resume_next`, and return
-    the exit code the reason maps to (design §6.4). A halt also journals the block-class `halt`
-    with what the human must decide."""
+         resume_next: Optional[str] = None, phase: Optional[str] = None) -> int:
+    """Journal `stop`, set `resume_next` and the phase, and return the exit code the reason maps
+    to (design §6.4). A halt journals the block-class `halt` with what the human must decide and
+    writes `halted`; any other stop leaves the phase where the caller put it unless `phase` names
+    one -- `done` included, so the last milestone's close can leave `validating` for the operator
+    who runs the terminal steps to see where the mission stands."""
     code = EXIT_CODES[reason]
     mdir = ctx.mission_dir
     if reason in ALWAYS_HALT:
         halt = True
     try:
-        if reason == "done":
-            files.write_state_fields(mdir, phase="done")
-        elif halt:
+        if halt:
             journal.append(mdir, "halt", **{"class": "block"}, reason=("%s: %s" % (reason, detail))[:300],
                            decision_needed=needs or None)
-            files.write_state_fields(mdir, phase="halted")
+        if phase or halt:
+            files.write_state_fields(mdir, phase=phase or "halted")
         files.write_state_fields(mdir, resume_next=(resume_next or ("%s: %s" % (reason, needs or detail)))[:240])
     except files.MissionFileError as e:
         ctx.log("warning: could not update state.md: %s" % e)
@@ -163,6 +167,27 @@ def _write_outcome(run_dir: Path, outcome: Outcome, grade: Optional[Grade]) -> N
         doc["grade"] = grade.to_json()
     (run_dir / "outcome.json").write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n",
                                           encoding="utf-8")
+
+
+def plugin_script(ctx: Context, name: str, *args: str) -> subprocess.CompletedProcess:
+    """Run one of scripts/ the way the hooks run it: CLAUDE_PLUGIN_ROOT set, the checkout as cwd."""
+    env = dict(os.environ)
+    env["CLAUDE_PLUGIN_ROOT"] = str(ctx.plugin)
+    return subprocess.run(["bash", str(ctx.plugin / "scripts" / name)] + list(args), cwd=str(ctx.checkout),
+                          capture_output=True, text=True, env=env, encoding="utf-8", errors="replace")
+
+
+def materialise_patch(ctx: Context, fid: str, base: str, head: str, paths: List[str]) -> Optional[str]:
+    """`mission-patch.sh` for the blind reviewer's packet: the path it wrote, or None with a `note`
+    journaled. The reviewer then gets no diff and answers `cannot tell` -- never a git command of
+    its own, which would show it the whole branch and the author's commit bodies."""
+    res = plugin_script(ctx, "mission-patch.sh", str(ctx.mission_dir), fid, base, head, "--", *paths)
+    if res.returncode == 0:
+        out = res.stdout.strip()
+        return out.splitlines()[-1] if out else str(ctx.mission_dir / "patches" / (fid + ".patch"))
+    journal.append(ctx.mission_dir, "note", feature=fid, text="mission-patch.sh exited %d for %s..%s: %s" % (
+        res.returncode, base[:7], head[:7], (res.stderr.strip().splitlines() or ["no output"])[-1][:200]))
+    return None
 
 
 def _log_dispatch(ctx: Context, req: RunRequest) -> None:
@@ -443,9 +468,7 @@ def register(ctx: Context, milestone: str, followups: List[Dict], repairs: List[
     for r in repairs:
         over = repair_cap_problem(mdir, list(r.get("assertions") or []), cap)
         if over:
-            return stop(ctx, "gate-blocked", halt=True, detail=over,
-                        needs="root-cause classification (contract ambiguity / implementation defect / inadequate "
-                              "evidence / bad brief / environment), then re-plan with /missions:mission-amend -- never a cap raise")
+            return stop(ctx, "gate-blocked", halt=True, detail=over, needs=REPAIR_CAP_NEEDS)
     first_fu = int(files.next_followup_id(mdir)[2:])
     first_f = int(files.next_feature_id(mdir)[1:])
     feature_of = {r["cluster"]: "F%03d" % (first_f + i) for i, r in enumerate(repairs)}
@@ -638,19 +661,7 @@ def ingest(ctx: Context, feature: files.Feature, grade: Grade) -> Dict:
     head = grade.sha or ""
     base_sha, how = _base_for(ctx, head)
     rng = "%s..%s" % (base_sha, head)
-
-    patch: Optional[str] = None
-    cmd = ["bash", str(ctx.plugin / "scripts" / "mission-patch.sh"), str(mdir), fid, base_sha, head, "--"]
-    cmd += feature.files
-    env = dict(os.environ)
-    env["CLAUDE_PLUGIN_ROOT"] = str(ctx.plugin)
-    res = subprocess.run(cmd, cwd=str(ctx.checkout), capture_output=True, text=True, env=env,
-                         encoding="utf-8", errors="replace")
-    if res.returncode == 0:
-        patch = res.stdout.strip().splitlines()[-1] if res.stdout.strip() else str(mdir / "patches" / (fid + ".patch"))
-    else:
-        journal.append(mdir, "note", feature=fid, text="mission-patch.sh exited %d for %s: %s" % (
-            res.returncode, rng[:15], (res.stderr.strip().splitlines() or ["no output"])[-1][:200]))
+    patch = materialise_patch(ctx, fid, base_sha, head, feature.files)
 
     files.set_feature(mdir, fid, status="done", commit=head, rng=rng)
     # what the handoff claims, within the feature's assertions -- never the feature's list wholesale

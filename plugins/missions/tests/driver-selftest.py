@@ -21,7 +21,7 @@ import re  # noqa: E402
 import subprocess  # noqa: E402
 import time  # noqa: E402
 
-from missions import cli, files, grade as grading, journal, judgment, loop, prep, prompts, steps, verdicts, watchdog  # noqa: E402
+from missions import cli, files, grade as grading, journal, judgment, loop, prep, prompts, steps, validate, verdicts, watchdog  # noqa: E402
 from missions.adapters.claude import ClaudeAdapter, parse_envelope  # noqa: E402
 from missions.adapters.codex import CodexAdapter, parse_events  # noqa: E402
 from missions.adapters.stub import StubAdapter  # noqa: E402
@@ -1341,6 +1341,9 @@ class CliInitTests(Fixture):
     def test_until_choices(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             cli.main(["run", str(self.m), "--until", "bogus"])
+        self.assertEqual(cli.parser().parse_args(["run", str(self.m), "--until", "validate"]).until, "validate")
+        self.assertEqual(cli.parser().parse_args(["run", str(self.m), "--until", "milestone", "--limit", "2"]).until, "milestone")
+        self.assertIsNone(cli.parser().parse_args(["run", str(self.m)]).until)
 
 
 class RolePromptTests(Fixture):
@@ -1768,6 +1771,140 @@ class TriageTests(LockEnv, Fixture):
         self.assertEqual(steps.step_triage(self.ctx, files.read_state(self.m)), 1)
         self.assertIn("could not be applied: the run exited 9 with no reply", files.read_text(self.m / "runs" / "triage#4" / "prompt.md"))
         self.assertEqual(journal.last(self.m, "step_done")["cls"], "error")
+
+
+class ValidateRuleTests(Fixture):
+    """The mechanical half of VALIDATE on the base fixture: the proven rule, the round bookkeeping,
+    the summary the negotiate step reads and the shape its reply is applied in. No run."""
+
+    def verdict(self, validator, assertions, file, feature=None, milestone="M1", round_no=1):
+        journal.append(self.m, "verdict", validator=validator, feature=feature, milestone=milestone, round=round_no,
+                       assertions=assertions, file=file)
+
+    def test_proven_rule_latest_wins_and_interface_needs_behavior(self):
+        files.claim_assertions(self.m, ["A001", "A002"])
+        self.verdict("mission-reviewer", {"A001": "satisfied", "A002": "not satisfied"}, "validation/M1-review-F001.md", "F001")
+        self.verdict("mission-reviewer", {"A002": "cannot tell"}, "validation/M1-review-F002.md", "F002")
+        self.assertEqual(validate.proven_evidence(self.m, "M1"), {"A001": "validation/M1-review-F001.md"})
+        # the repair round's review is the latest verdict on A002, and wins
+        self.verdict("mission-reviewer", {"A002": "satisfied"}, "validation/M1-review-F004-r2.md", "F004", round_no=2)
+        self.assertEqual(validate.proven_evidence(self.m, "M1"),
+                         {"A001": "validation/M1-review-F001.md", "A002": "validation/M1-review-F004-r2.md"})
+        # an interface assertion is proven by the behavior validator, never by a diff
+        self.verdict("mission-reviewer", {"A003": "satisfied"}, "validation/M2-review-F003.md", "F003", milestone="M2")
+        self.assertEqual(validate.proven_evidence(self.m, "M2"), {})
+        self.verdict("mission-validator-behavior", {"A003": "FAILED"}, "validation/M2-behavior.md", milestone="M2")
+        self.assertEqual(validate.proven_evidence(self.m, "M2"), {})
+        latest = verdicts.latest_verdicts(self.m, "M2")
+        self.assertEqual(validate.verdict_of(latest, next(a for a in files.read_contract(self.m) if a.id == "A003")), "FAILED")
+        self.verdict("mission-validator-behavior", {"A003": "proven"}, "validation/M2-behavior-r2.md", milestone="M2", round_no=2)
+        self.assertEqual(validate.proven_evidence(self.m, "M2"), {"A003": "validation/M2-behavior-r2.md"})
+        # a behavior `proven` on a structural assertion proves nothing either
+        self.verdict("mission-validator-behavior", {"A001": "proven"}, "validation/M1-behavior.md")
+        files.write_text(self.m / "contract.md", files.read_text(self.m / "contract.md").replace("| F001 | claimed |", "| F001 | unproven |"))
+        journal.append(self.m, "verdict", validator="mission-reviewer", feature="F001", milestone="M1", round=3,
+                       assertions={"A001": "cannot tell"}, file="validation/M1-review-F001-r3.md")
+        self.assertNotIn("A001", validate.proven_evidence(self.m, "M1"))
+        # end to end: the marks land in contract.md with the file as evidence, and never move down
+        self.assertEqual(files.prove_assertions(self.m, validate.proven_evidence(self.m, "M1")), ["A002"])
+        self.assertEqual(files.prove_assertions(self.m, validate.proven_evidence(self.m, "M2")), ["A003"])
+        rows = {r.id: r for r in files.read_contract(self.m)}
+        self.assertEqual((rows["A001"].status, rows["A002"].status, rows["A002"].evidence, rows["A003"].evidence),
+                         ("unproven", "proven", "validation/M1-review-F004-r2.md", "validation/M2-behavior-r2.md"))
+        rc, out = check_sh(self.m)
+        self.assertEqual(rc, 0, out)
+
+    def test_milestone_assertions_follow_the_routing(self):
+        self.assertEqual([a.id for a in validate.milestone_assertions(self.m, "M1")], ["A001", "A002"])
+        self.assertEqual([a.id for a in validate.milestone_assertions(self.m, "M2")], ["A003"])
+        files.append_feature(self.m, "M2", "repair", ["A002"], ["analytics/service.py"], "", "", "C01 (FU001) of F001")
+        files.route_assertion(self.m, "A002", "F004")
+        self.assertEqual([a.id for a in validate.milestone_assertions(self.m, "M2")], ["A002", "A003"])
+        self.assertEqual([a.id for a in validate.milestone_assertions(self.m, "M1")], ["A001", "A002"])
+
+    def test_round_resumes_an_open_one(self):
+        self.assertEqual(validate._round(self.m, "M1"), (1, False))
+        journal.append(self.m, "validate_start", milestone="M1", round=1)
+        self.assertEqual(validate._round(self.m, "M1"), (1, True))
+        self.assertEqual(validate._round(self.m, "M2"), (1, False))
+        journal.append(self.m, "validate_done", milestone="M1", round=1, result="repairs")
+        self.assertEqual(validate._round(self.m, "M1"), (2, False))
+        # a step counts as done only while its file exists
+        journal.append(self.m, "validate_start", milestone="M1", round=2)
+        journal.append(self.m, "validate_step", milestone="M1", round=2, step="scrutiny", task="scrutiny-M1#2", file="validation/M1-scrutiny-r2.md")
+        journal.append(self.m, "validate_step", milestone="M1", round=2, step="reviewer", feature="F001", task="review-F001#2", file="validation/M1-review-F001-r2.md")
+        journal.append(self.m, "validate_step", milestone="M1", round=1, step="reviewer", feature="F002", task="review-F002#1", file="validation/M1-review-F002.md")
+        (self.m / "validation").mkdir()
+        files.write_text(self.m / "validation" / "M1-scrutiny-r2.md", "x")
+        files.write_text(self.m / "validation" / "M1-review-F002.md", "x")
+        self.assertEqual(sorted(validate._done_steps(self.m, "M1", 2)), [("scrutiny", "")])
+        self.assertEqual(sorted(validate._done_steps(self.m, "M1", 1)), [("reviewer", "F002")])
+        self.assertEqual(validate._round_files(self.m, "M1", 2), {"M1-scrutiny-r2.md": "x"})
+        self.assertEqual(validate.file_name("M1", "reviewer", 1, "F001"), "M1-review-F001.md")
+        self.assertEqual(validate.file_name("M1", "reviewer", 2, "F004"), "M1-review-F004-r2.md")
+        self.assertEqual((validate.file_name("M2", "scrutiny", 1), validate.file_name("M2", "behavior", 3)), ("M2-scrutiny.md", "M2-behavior-r3.md"))
+
+    def test_summary_lists_every_reviewed_feature(self):
+        rows = validate.milestone_assertions(self.m, "M1")
+        self.assertEqual(validate.verdict_summary(self.m, "M1", rows).split("\n"),
+                         ["A001 [structural] \u2014 no verdict \u2014 contract: unproven", "A002 [structural] \u2014 no verdict \u2014 contract: unproven"])
+        self.verdict("mission-reviewer", {"A001": "satisfied", "A002": "not satisfied"}, "validation/M1-review-F001.md", "F001")
+        self.verdict("mission-reviewer", {"A002": "satisfied"}, "validation/M1-review-F002.md", "F002")
+        self.verdict("mission-validator-scrutiny", "n/a", "validation/M1-scrutiny.md")
+        self.verdict("mission-reviewer", {"A002": "cannot tell"}, "validation/M1-review-F001-r2.md", "F001", round_no=2)
+        self.assertEqual(validate.verdict_summary(self.m, "M1", rows).split("\n")[1],
+                         "A002 [structural] \u2014 reviewer F001: cannot tell (validation/M1-review-F001-r2.md); "
+                         "reviewer F002: satisfied (validation/M1-review-F002.md) \u2014 contract: unproven")
+
+    def test_proposals_sources_and_origins(self):
+        feats = files.read_features(self.m)
+        rows = validate.milestone_assertions(self.m, "M1")
+        obj = {"findings": [
+            {"title": "leak", "assertion": "A002", "found_by": "mission-reviewer (review-F001)", "where": "x", "severity": "high",
+             "cluster": "C01", "cluster_label": "tenant", "blocking": True, "disposition": "repair", "why": "defect"},
+            {"title": "same leak, summary", "assertion": "A002", "found_by": "review-F002#1", "severity": "high",
+             "cluster": "C01", "blocking": True, "disposition": "repair"},
+            {"title": "lint", "assertion": None, "found_by": "mission-validator-scrutiny", "severity": "low",
+             "cluster": "C02", "blocking": False, "disposition": "accept", "why": "debt"},
+            {"title": "slow", "assertion": "A001", "found_by": "the reviewer", "severity": "low",
+             "cluster": "C03", "blocking": False, "disposition": "waive", "why": "beyond max"},
+            {"title": "odd", "assertion": "A002", "found_by": "reviewer", "severity": "low", "cluster": "C04", "blocking": False, "disposition": "accept"},
+            {"title": "ui", "assertion": None, "found_by": "mission-validator-behavior", "severity": "low", "cluster": "C05", "blocking": False, "disposition": "accept"}],
+            "repairs": [{"cluster": "C01", "title": "tenancy filter", "assertions": ["A002"], "files": ["analytics/service.py"], "procedures": "make test-unit"}],
+            "contract_wrong": False}
+        self.assertEqual(judgment.validate_negotiate(obj), [])
+        fus, reps = validate.proposals(obj, "M1", [f for f in feats if f.milestone == "M1"], rows)
+        self.assertEqual([f["source"] for f in fus], ["M1-review-F001", "M1-review-F002", "M1-scrutiny", "M1-review-F001", "M1-review", "M1-behavior"])
+        self.assertEqual((fus[0]["disposition"], fus[0]["why"], fus[2]["where"], fus[3]["blocking"]), ("repair", "defect", "", False))
+        self.assertEqual(reps, [{"cluster": "C01", "title": "tenancy filter", "assertions": ["A002"], "files": ["analytics/service.py"],
+                                 "procedures": "make test-unit", "out_of_scope": "", "origins": ["F001", "F002"]}])
+        # no reviewed feature named: the origins are what the assertion routes to in the milestone
+        obj["findings"] = [dict(obj["findings"][2], disposition="repair", cluster="C01", assertion="A001")]
+        fus, reps = validate.proposals(obj, "M1", [f for f in feats if f.milestone == "M1"], rows)
+        self.assertEqual(reps[0]["origins"], ["F001", "F002"])
+        obj["repairs"][0]["assertions"] = ["A001"]
+        self.assertEqual(validate.proposals(obj, "M1", [f for f in feats if f.milestone == "M1"], rows)[1][0]["origins"], ["F001"])
+        # applied through register, the registry names both sides and passes check.sh
+        ctx = make_ctx(self.m, self.tmp)
+        fu_ids, fids = steps.register(ctx, "M1", fus, reps)
+        self.assertEqual((fu_ids, fids), (["FU001"], ["F004"]))
+        self.assertIn("## FU001 \u2014 lint (from M1-scrutiny)\n", files.read_text(self.m / "followups.md"))
+        self.assertIn("- **Repairs:** C01 (FU001) of F001, F002\n", files.read_text(self.m / "features.md"))
+        self.assertEqual(check_sh(self.m)[0], 0)
+
+    def test_stop_phase_kwarg(self):
+        ctx = make_ctx(self.m, self.tmp)
+        files.write_state_fields(self.m, phase="validating")
+        self.assertEqual(steps.stop(ctx, "done", detail="all done", needs="terminal steps", phase="validating"), 0)
+        self.assertEqual(files.read_state(self.m).phase, "validating")
+        self.assertEqual(steps.stop(ctx, "limit-reached", detail="x", needs="re-run"), 3)
+        self.assertEqual(files.read_state(self.m).phase, "validating")
+        self.assertEqual(steps.stop(ctx, "done", detail="x", phase="done"), 0)
+        self.assertEqual(files.read_state(self.m).phase, "done")
+        self.assertEqual(steps.stop(ctx, "gate-blocked", detail="x", needs="y", halt=True), 5)
+        self.assertEqual(files.read_state(self.m).phase, "halted")
+        self.assertEqual(journal.count(self.m, "halt"), 1)
+        self.assertEqual(journal.count(self.m, "stop"), 4)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,6 @@
+{"ts":"2026-09-01T00:00:00Z","event":"validate_start","milestone":"M1","round":1,"features":["F001","F002"],"assertions":["A001","A002"],"via":"driver"}
+{"ts":"2026-09-01T00:00:01Z","event":"dispatch","agent":"mission-validator-scrutiny","class":"executor","milestone":"M1","dispatch_id":"scrutiny-M1#1","session_id":"driver:old","task":"scrutiny-M1#1","harness":"stub","step":"scrutiny","via":"driver"}
+{"ts":"2026-09-01T00:00:04Z","event":"agent_return","agent":"mission-validator-scrutiny","dispatch_id":"scrutiny-M1#1","duration_s":3,"status":"completed","rc":0,"task":"scrutiny-M1#1","via":"driver"}
+{"ts":"2026-09-01T00:00:04Z","event":"verdict","validator":"mission-validator-scrutiny","milestone":"M1","round":1,"file":"validation/M1-scrutiny.md","commands":1,"failed":[],"via":"driver"}
+{"ts":"2026-09-01T00:00:04Z","event":"validate_step","milestone":"M1","round":1,"step":"scrutiny","task":"scrutiny-M1#1","file":"validation/M1-scrutiny.md","via":"driver"}
+{"ts":"2026-09-01T00:00:05Z","event":"stop","reason":"interrupted","detail":"interrupted","exit":130,"run_id":"old","via":"driver"}

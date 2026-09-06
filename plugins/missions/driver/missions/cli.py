@@ -117,7 +117,7 @@ def _raise_interrupt(signum, frame):  # pragma: no cover - signal path
     raise KeyboardInterrupt()
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="missions", description="the missions driver: a program continues the mission, not a model")
     p.add_argument("--version", action="version", version="missions " + __version__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -150,8 +150,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     g.add_argument("--self", action="store_true", help="worker mode: add the 'fix these before you exit' line")
     g.add_argument("--json", action="store_true")
     g.set_defaults(fn=cmd_grade)
+    return p
 
-    args = p.parse_args(argv)
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = parser().parse_args(argv)
     signal.signal(signal.SIGTERM, _raise_interrupt)
     try:
         return int(args.fn(args))

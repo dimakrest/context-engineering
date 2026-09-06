@@ -1,7 +1,8 @@
 # The S3 shape: the worker commits, then goes idle without writing its handoff. The watchdog
 # journals commit_observed, ends the run after the grace, the driver reconstructs the handoff,
 # grades it ONCE, ingests it and moves to the next feature. No human. (#4)
-rc=5
+rc=3
+args=--until validate
 journal~="event":"dispatch".*"dispatch_id":"F001#1"
 journal~="event":"commit_observed".*"task":"F001#1".*"handoff":"pending"
 journal~="event":"agent_return".*"dispatch_id":"F001#1".*"status":"killed".*"killed_by":"watchdog:commit_no_handoff"
@@ -11,7 +12,7 @@ journal~="event":"note".*reconstructed by the driver
 journal~="event":"handoff_ingested".*"feature":"F001".*"reconstructed":true
 journal~="event":"dispatch".*"dispatch_id":"F002#1"
 journal~="event":"handoff_ingested".*"feature":"F002"
-journal~="event":"stop".*"reason":"gate-blocked"
+journal~="event":"stop".*"reason":"limit-reached"
 journal!~="event":"halt"
 state~=^phase: validating
 git~=F001: stub work

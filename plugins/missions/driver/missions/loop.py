@@ -2,10 +2,13 @@
 
 Every iteration reloads state from disk, checks the caps and the gates, sends open issues through
 the triage judgment step, picks the first ready feature of the current milestone, and runs the
-worker step. It exits only through stop(reason) -- steps.stop, re-exported here with EXIT_CODES.
-VALIDATE (scrutiny, blind review, behavior, negotiate) and the pr phase are not driven yet; where
-the loop would need one it stops with `gate-blocked` and names what the human runs instead. A
-quota stops the loop with `provider-quota`; the sleep-and-resume is #7.
+worker step; a milestone whose features are all done goes to VALIDATE (validate.run_validate: one
+round per call, the loop comes back for the repairs it scheduled), and a driver started in
+`validating` or `negotiating` resumes the round it finds. It exits only through stop(reason) --
+steps.stop, re-exported here with EXIT_CODES. `--until validate` stops where VALIDATE would begin,
+`--until milestone` after a milestone closes. The pr phase is not driven (#10): the loop stops with
+`gate-blocked` and names the terminal steps. A quota stops the loop with `provider-quota`; the
+sleep-and-resume is #7.
 """
 from __future__ import annotations
 
@@ -20,7 +23,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from . import __version__, files, journal, prep, prompts, steps
+from . import __version__, files, journal, prep, prompts, steps, validate
 from .adapters import NAMES, make_adapter
 from .steps import EXIT_CODES, Context, stop   # re-exported: cli reads EXIT_CODES from here
 
@@ -208,8 +211,9 @@ def _run_locked(ctx: Context, args) -> int:
         journal.append(mdir, "decision", what="phase planning -> implementing",
                        why="missions run started: design.md present, check.sh passing")
         ctx.log("phase: planning -> implementing")
+    until = getattr(args, "until", None)
     journal.append(mdir, "driver_start", run_id=ctx.run_id, pid=os.getpid(), harness=ctx.harness,
-                   limit=getattr(args, "limit", None), milestone=getattr(args, "milestone", None),
+                   limit=getattr(args, "limit", None), milestone=getattr(args, "milestone", None), until=until,
                    version=__version__)
     ctx.log("missions %s  run %s  mission %s  harness %s  checkout %s" % (
         __version__, ctx.run_id, ctx.slug, ctx.harness, ctx.checkout))
@@ -228,15 +232,27 @@ def _run_locked(ctx: Context, args) -> int:
             if st.phase == "halted":
                 return stop(ctx, "gate-blocked", detail="the mission is halted; last: %s" % st.resume_next[:160],
                             needs="a human decision, then set `phase: implementing` in state.md")
-            if st.phase != "implementing":
-                return stop(ctx, "gate-blocked", detail="phase %s is not driven by this version" % st.phase,
-                            needs="/missions:mission-run for phase %s (driver VALIDATE and pr steps arrive in D3)" % st.phase)
             if limit and attempts >= limit:
                 return stop(ctx, "limit-reached", detail="--limit %d worker run(s) reached" % limit,
                             needs="re-run missions run")
             r = _check_caps(ctx, budget)
             if r is not None:
                 return r
+            if st.phase in ("validating", "negotiating"):
+                # a round left open by a stop (an error, an interrupt) resumes where it stopped
+                if until == "validate":
+                    return stop(ctx, "limit-reached", detail="phase %s: VALIDATE %s is next; --until validate" % (st.phase, st.milestone),
+                                needs="re-run missions run without --until validate")
+                r = validate.run_validate(ctx, st.milestone, until=until)
+                if isinstance(r, int):
+                    return r
+                continue
+            if st.phase == "pr":
+                return stop(ctx, "gate-blocked", detail="phase pr is not driven by this version",
+                            needs="terminal steps via /missions:mission-run (driver pr phase: #10)")
+            if st.phase != "implementing":
+                return stop(ctx, "gate-blocked", detail="phase %r is not one the driver drives" % st.phase,
+                            needs="set `phase:` in state.md to implementing, validating or done")
             if st.open_issues:
                 # a handoff's issues go through triage before anything new starts: resolved,
                 # deferred or repaired by the driver on a judgment's proposal, or escalated to a halt
@@ -262,11 +278,18 @@ def _run_locked(ctx: Context, args) -> int:
             done_ids = {f.id for f in feats if f.status == "done"}
             if all(f.status == "done" for f in mfeats):
                 files.write_state_fields(mdir, phase="validating")
-                return stop(ctx, "gate-blocked",
-                            detail="milestone %s complete: all %d feature(s) done" % (milestone, len(mfeats)),
-                            needs="VALIDATE %s via /missions:mission-run (driver VALIDATE arrives in D3)" % milestone,
-                            resume_next="validate %s via /missions:mission-run (driver VALIDATE is D3); all %d features done" % (
-                                milestone, len(mfeats)))
+                journal.append(mdir, "decision", what="phase implementing -> validating",
+                               why="milestone %s complete: all %d feature(s) done" % (milestone, len(mfeats)))
+                ctx.log("milestone %s complete: all %d feature(s) done -> validating" % (milestone, len(mfeats)))
+                if until == "validate":
+                    return stop(ctx, "limit-reached", detail="milestone %s complete; --until validate" % milestone,
+                                needs="re-run missions run to VALIDATE %s" % milestone,
+                                resume_next="validate %s (all %d features done); --until validate stopped the run" % (
+                                    milestone, len(mfeats)))
+                r = validate.run_validate(ctx, milestone, until=until)
+                if isinstance(r, int):
+                    return r
+                continue
             pending = [f for f in mfeats if f.status == "pending"]
             ready = [f for f in pending if all(d in done_ids for d in f.depends)]
             if not ready:

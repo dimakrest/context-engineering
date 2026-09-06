@@ -1,0 +1,63 @@
+# The normal, healthy case: the first pass finds a defect. The reviewer's verdict goes to the
+# journal, negotiate proposes one finding and one repair, the driver registers FU001 (repair as
+# F004) and F004 (Repairs: C01 of F001) and routes A002 to it; A001 is proven, A002 is NOT
+# (a repair is scheduled for it, whatever F002's review said); the advisory halt is journaled
+# and the loop dispatches the repair. Round 2 reviews everything again, proves A002 from the
+# repair's review, closes M1, and the mission runs to done. (#13, SKILL VALIDATE step 4)
+rc=0
+journal~="event":"verdict".*"validator":"mission-reviewer".*"feature":"F001".*"A002":"not satisfied".*"file":"validation/M1-review-F001.md"
+journal~="event":"verdict".*"feature":"F002".*"A002":"satisfied"
+journal~="event":"dispatch".*"dispatch_id":"negotiate-M1#1"
+journal~="event":"followups_added".*"ids":\["FU001"\].*"milestone":"M1"
+journal~="event":"features_added".*"ids":\["F004"\].*"milestone":"M1"
+journal~="event":"judgment".*"step":"negotiate".*"task":"negotiate-M1#1".*"round":1.*1 finding\(s\): 1 repair, 0 accept, 0 waive \(FU001\), repair feature\(s\) F004
+journal~="event":"decision".*"step":"proven".*"milestone":"M1".*"round":1.*"assertions":\["A001"\]
+journal~="event":"halt".*"class":"advisory".*"reason":"first-pass validation failure in M1".*"assumption":"repairs scheduled: F004"
+journal~="event":"validate_done".*"milestone":"M1".*"round":1.*"result":"repairs"
+journal~="event":"dispatch".*"agent":"mission-worker".*"feature":"F004".*"dispatch_id":"F004#1"
+journal~="event":"handoff_ingested".*"feature":"F004"
+journal~="event":"decision".*implementing -> validating.*M1 complete: all 3 feature
+journal~="event":"validate_start".*"milestone":"M1".*"round":2
+journal~="event":"dispatch".*"dispatch_id":"scrutiny-M1#2"
+journal~="event":"validate_step".*"round":2.*"step":"scrutiny".*"file":"validation/M1-scrutiny-r2.md"
+journal~="event":"dispatch".*"dispatch_id":"review-F001#2"
+journal~="event":"verdict".*"feature":"F001".*"round":2.*"A002":"satisfied".*"file":"validation/M1-review-F001-r2.md"
+journal~="event":"dispatch".*"dispatch_id":"review-F002#2"
+journal~="event":"dispatch".*"dispatch_id":"review-F004#1"
+journal~="event":"verdict".*"feature":"F004".*"round":2.*"assertions":\{"A002":"satisfied"\}.*"file":"validation/M1-review-F004-r2.md"
+journal~="event":"dispatch".*"dispatch_id":"negotiate-M1#2"
+journal~="event":"judgment".*"step":"negotiate".*"task":"negotiate-M1#2".*no findings
+journal~="event":"decision".*"step":"proven".*"milestone":"M1".*"round":2.*"assertions":\["A002"\].*"evidence":\{"A002":"validation/M1-review-F004-r2.md"\}
+journal~="event":"milestone_closed".*"milestone":"M1".*"next":"M2".*"round":2.*follow-ups 1
+journal~="event":"validate_done".*"milestone":"M1".*"round":2.*"result":"closed"
+journal~="event":"handoff_ingested".*"feature":"F003"
+journal~="event":"stop".*"reason":"done"
+journal!~="event":"halt".*"class":"block"
+journal!~="dispatch_id":"F004#2"
+journal!~="ids":\["FU002"
+journal!~="ids":\["F005"
+state~=^phase: validating
+state~=^milestone: M2
+git~=F004: stub work
+file=validation/M1-review-F001.md
+file=validation/M1-review-F001-r2.md
+file=validation/M1-review-F004-r2.md
+file=validation/M1-scrutiny-r2.md
+file=patches/F004.patch
+postcheck=grep -q '^## FU001 — cross-tenant rows in the aggregate (from M1-review-F001)$' "$M/followups.md"
+postcheck=grep -q '^- \*\*Assertion:\*\* A002$' "$M/followups.md" && grep -q '^- \*\*Found by:\*\* mission-reviewer (review-F001), `analytics/service.py:3` — no tenant filter$' "$M/followups.md"
+postcheck=grep -q '^- \*\*Severity:\*\* high$' "$M/followups.md" && grep -q '^- \*\*Cluster:\*\* C01 — missing tenant predicate$' "$M/followups.md" && grep -q '^- \*\*Blocking:\*\* yes$' "$M/followups.md"
+postcheck=grep -q '^- \*\*Disposition:\*\* repair as F004 — a defect, not an ambiguity$' "$M/followups.md" && [ "$(grep -c '^## FU' "$M/followups.md")" = 1 ]
+postcheck=sed -n '/^### F004 — tenancy filter$/,/^## M2/p' "$M/features.md" | grep -q '^- \*\*Repairs:\*\* C01 (FU001) of F001$'
+postcheck=sed -n '/^### F004/,/^## M2/p' "$M/features.md" | grep -q '^- \*\*Assertions:\*\* A002$' && sed -n '/^### F004/,/^## M2/p' "$M/features.md" | grep -q '^- \*\*Files:\*\* `analytics/service.py`$'
+postcheck=sed -n '/^### F004/,/^## M2/p' "$M/features.md" | grep -qE '^- \*\*Status:\*\* done · commit `[0-9a-f]{7}`$'
+postcheck=grep -qE '^\| A002 \| .* \| structural \| F001, F002, F004 \| proven \| validation/M1-review-F004-r2.md \|' "$M/contract.md"
+postcheck=grep -qE '^\| A001 \| .* \| proven \| validation/M1-review-F001.md \|' "$M/contract.md"
+postcheck=head -1 "$M/runs/F004#1/prompt.md" | grep -q '^Mission: demo. Feature: F004 — tenancy filter.$' && grep -q 'D001' "$M/runs/F004#1/prompt.md" && grep -q 'Procedures that apply: make test-unit' "$M/runs/F004#1/prompt.md"
+postcheck=grep -q 'Status:\*\* pending' "$M/runs/F004#1/status-at-launch.txt" || grep -q 'Status:\*\* active' "$M/runs/F004#1/status-at-launch.txt"
+postcheck=grep -q '^| A002 | not satisfied |' "$M/runs/negotiate-M1#1/prompt.md" && grep -q '^  A002 \[structural\] — reviewer F001: not satisfied (validation/M1-review-F001.md); reviewer F002: satisfied (validation/M1-review-F002.md) — contract: claimed$' "$M/runs/negotiate-M1#1/prompt.md"
+postcheck=grep -q '^  A002 \[structural\] — reviewer F001: satisfied (validation/M1-review-F001-r2.md); reviewer F002: satisfied (validation/M1-review-F002-r2.md); reviewer F004: satisfied (validation/M1-review-F004-r2.md) — contract: claimed$' "$M/runs/negotiate-M1#2/prompt.md"
+postcheck=grep -q '^## FU001' "$M/runs/negotiate-M1#2/prompt.md"
+postcheck=grep -q 'A002 \[structural\]' "$M/runs/negotiate-M1#1/prompt.md" && ! grep -q 'A003 \[interface\]' "$M/runs/negotiate-M1#1/prompt.md"
+postcheck=grep -q '^resume_next: dispatch F004 (repair of C01); then validate M1 round 2' "$M/runs/F004#1/journal-at-launch.jsonl" || grep -q 'dispatch F004 (repair of C01)' "$M/journal.jsonl" || true
+postcheck=bash "$plugin/scripts/check.sh" "$M" >/dev/null && bash "$plugin/scripts/mission-state.sh" "$M" >/dev/null

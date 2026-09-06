@@ -1,0 +1,79 @@
+# The VALIDATE sequence end to end under the base stubs: M1's two features done -> scrutiny ->
+# a blind review per feature, serial under the lease -> no behavior run (M1 has no interface
+# assertion) -> negotiate (static, nothing to register) -> A001, A002 proven from the reviews ->
+# converge, archive, M2 -> F003 -> scrutiny -> review -> behavior (A003 is interface) -> A003
+# proven from the behavior run, not the review -> done, phase left at validating for the terminal
+# steps. (#13, design §6.2, §6.1 "proven is written only from a validator verdict")
+rc=0
+journal~="event":"handoff_ingested".*"feature":"F002"
+journal~="event":"decision".*implementing -> validating.*M1 complete
+journal~="event":"validate_start".*"milestone":"M1".*"round":1
+journal~="event":"dispatch".*"agent":"mission-validator-scrutiny".*"class":"executor".*"milestone":"M1".*"dispatch_id":"scrutiny-M1#1".*"step":"scrutiny"
+journal~="event":"lease_released".*dispatch_id=scrutiny-M1#1
+journal~="event":"step_done".*"step":"scrutiny-M1#1".*"role":"scrutiny".*"cls":"ok"
+journal~="event":"verdict".*"validator":"mission-validator-scrutiny".*"milestone":"M1".*"file":"validation/M1-scrutiny.md".*"commands":1.*"failed":\[\]
+journal~="event":"validate_step".*"milestone":"M1".*"round":1.*"step":"scrutiny".*"task":"scrutiny-M1#1".*"file":"validation/M1-scrutiny.md"
+journal~="event":"dispatch".*"agent":"mission-reviewer".*"class":"executor".*"feature":"F001".*"milestone":"M1".*"dispatch_id":"review-F001#1".*"step":"reviewer"
+journal~="event":"lease_released".*agent=mission-reviewer feature=F001 dispatch_id=review-F001#1
+journal~="event":"verdict".*"validator":"mission-reviewer".*"feature":"F001".*"milestone":"M1".*"round":1.*"assertions":\{"A001":"satisfied","A002":"satisfied"\}.*"file":"validation/M1-review-F001.md"
+journal~="event":"validate_step".*"step":"reviewer".*"feature":"F001".*"task":"review-F001#1".*"file":"validation/M1-review-F001.md"
+journal~="event":"dispatch".*"agent":"mission-reviewer".*"feature":"F002".*"dispatch_id":"review-F002#1"
+journal~="event":"verdict".*"feature":"F002".*"assertions":\{"A002":"satisfied"\}.*"file":"validation/M1-review-F002.md"
+journal~="event":"dispatch".*"agent":"mission-judgment".*"class":"static".*"milestone":"M1".*"dispatch_id":"negotiate-M1#1".*"step":"negotiate"
+journal~="event":"step_done".*"step":"negotiate-M1#1".*"role":"judgment".*"cls":"ok"
+journal~="event":"judgment".*"step":"negotiate".*"task":"negotiate-M1#1".*"milestone":"M1".*no findings
+journal~="event":"decision".*"step":"proven".*"milestone":"M1".*"assertions":\["A001","A002"\].*"evidence":\{"A001":"validation/M1-review-F001.md","A002":"validation/M1-review-F002.md"\}
+journal~="event":"milestone_closed".*"milestone":"M1".*"next":"M2".*"converge":"features 3 · follow-ups 0
+journal~="event":"validate_done".*"milestone":"M1".*"round":1.*"result":"closed"
+journal~="event":"dispatch".*"dispatch_id":"F003#1"
+journal~="event":"handoff_ingested".*"feature":"F003"
+journal~="event":"validate_start".*"milestone":"M2".*"round":1
+journal~="event":"dispatch".*"dispatch_id":"scrutiny-M2#1"
+journal~="event":"dispatch".*"dispatch_id":"review-F003#1"
+journal~="event":"verdict".*"feature":"F003".*"assertions":\{"A003":"satisfied"\}
+journal~="event":"dispatch".*"agent":"mission-validator-behavior".*"class":"executor".*"milestone":"M2".*"dispatch_id":"behavior-M2#1".*"step":"behavior"
+journal~="event":"verdict".*"validator":"mission-validator-behavior".*"milestone":"M2".*"assertions":\{"A003":"proven"\}.*"file":"validation/M2-behavior.md"
+journal~="event":"validate_step".*"step":"behavior".*"file":"validation/M2-behavior.md"
+journal~="event":"dispatch".*"dispatch_id":"negotiate-M2#1"
+journal~="event":"decision".*"step":"proven".*"milestone":"M2".*"assertions":\["A003"\].*"evidence":\{"A003":"validation/M2-behavior.md"\}
+journal~="event":"milestone_closed".*"milestone":"M2"
+journal~="event":"validate_done".*"milestone":"M2".*"result":"closed"
+journal~="event":"stop".*"reason":"done".*all 2 milestone\(s\) validated; every assertion proven.*terminal steps 1-6.*"exit":0
+journal!~="dispatch".*"task":"behavior-M1
+journal!~="event":"halt"
+journal!~="event":"lease_wait"
+journal!~="event":"followups_added"
+journal!~="event":"features_added"
+journal!~="event":"note".*reply rejected
+journal!~="event":"agent_stopped"
+state~=^phase: validating
+state~=^milestone: M2
+state~=^resume_next: terminal steps 1-6 of /missions:mission-run: all 2 milestone\(s\) validated
+nofile=.lease
+nofile=.writer
+nofile=.blind
+file=validation/M1-scrutiny.md
+file=validation/M1-review-F001.md
+file=validation/M1-review-F002.md
+file=validation/M2-scrutiny.md
+file=validation/M2-review-F003.md
+file=validation/M2-behavior.md
+file=runs/review-F001#1/prompt.md
+file=runs/negotiate-M2#1/output.md
+postcheck=[ "$(grep -c '"event":"dispatch"' "$M/journal.jsonl")" = 11 ]
+postcheck=[ "$(grep -c '"event":"milestone_closed"' "$M/journal.jsonl")" = 2 ]
+postcheck=head -1 "$M/validation/M1-scrutiny.md" | grep -E '^<!-- scrutiny-M1#1 · mission-validator-scrutiny · stub · [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z -->$' && [ -z "$(sed -n 2p "$M/validation/M1-scrutiny.md")" ] && sed -n 3p "$M/validation/M1-scrutiny.md" | grep -q '^## Commands'
+postcheck=grep -qE '^\| A001 \| .* \| structural \| F001 \| proven \| validation/M1-review-F001.md \|' "$M/contract.md"
+postcheck=grep -qE '^\| A002 \| .* \| structural \| F001, F002 \| proven \| validation/M1-review-F002.md \|' "$M/contract.md"
+postcheck=grep -qE '^\| A003 \| .* \| interface \| F003 \| proven \| validation/M2-behavior.md \|' "$M/contract.md"
+postcheck=grep -q 'Patch: .*/patches/F001.patch (base [0-9a-f]\{7\}, head [0-9a-f]\{7\})' "$M/runs/review-F001#1/prompt.md" && ! grep -qE 'handoffs/|## Handoff|git (log|show|diff)' "$M/runs/review-F001#1/prompt.md"
+postcheck=grep -q '^  A001 — Omitting the window equals the whole day  proof budget: min: named test; max: 1 pinning feature$' "$M/runs/review-F001#1/prompt.md" && ! grep -q 'A003' "$M/runs/review-F001#1/prompt.md"
+postcheck=grep -q '^  A003 — The filter chip is visible on the dashboard  \[interface\]$' "$M/runs/behavior-M2#1/prompt.md" && grep -q '3 live runs' "$M/runs/behavior-M2#1/prompt.md" && ! grep -q 'Filters.tsx' "$M/runs/behavior-M2#1/prompt.md"
+postcheck=grep -q '^--- M1-scrutiny.md ---$' "$M/runs/negotiate-M1#1/prompt.md" && grep -q '^--- M1-review-F002.md ---$' "$M/runs/negotiate-M1#1/prompt.md" && grep -q '^## VALIDATE' "$M/runs/negotiate-M1#1/prompt.md" && tail -1 "$M/runs/negotiate-M1#1/prompt.md" | grep -q '^Answer with the JSON object only.$'
+postcheck=grep -q '^  A001 \[structural\] — reviewer F001: satisfied (validation/M1-review-F001.md) — contract: claimed$' "$M/runs/negotiate-M1#1/prompt.md"
+postcheck=grep -q '^  A002 \[structural\] — reviewer F001: satisfied (validation/M1-review-F001.md); reviewer F002: satisfied (validation/M1-review-F002.md) — contract: claimed$' "$M/runs/negotiate-M1#1/prompt.md"
+postcheck=grep -q '^  A003 \[interface\] — reviewer F003: satisfied (validation/M2-review-F003.md); behavior: proven (validation/M2-behavior.md) — contract: claimed$' "$M/runs/negotiate-M2#1/prompt.md"
+postcheck=grep -q '^--- M2-behavior.md ---$' "$M/runs/negotiate-M2#1/prompt.md" && ! grep -q 'M1-scrutiny.md ---' "$M/runs/negotiate-M2#1/prompt.md"
+postcheck=[ "$(cat "$M/runs/review-F001#1/handoffs-visible.txt")" = absent ] && [ "$(cat "$M/runs/review-F003#1/handoffs-visible.txt")" = absent ]
+postcheck=grep -q 'MISSIONS_ROLE' "$M/runs/scrutiny-M1#1/env-names.txt" && ! grep -q 'MISSIONS_FILES' "$M/runs/review-F001#1/env-names.txt"
+postcheck=bash "$plugin/scripts/check.sh" "$M" >/dev/null && bash "$plugin/scripts/mission-state.sh" "$M" >/dev/null && bash "$plugin/scripts/mission-converge.sh" "$M" M2 >/dev/null

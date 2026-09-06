@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Missions: what to borrow from MCMV after three real runs</title>
+  <style>
+    :root{color-scheme:light;--ink:#172536;--muted:#526477;--line:#d8e1ea;--blue:#1555a2;--bg:#f3f6fa;--green:#116450;--red:#b3261e;--amber:#9a5b00;--redbg:#fbeeed;--greenbg:#e9f5f0;--amberbg:#fff4e0}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,sans-serif}
+    main{max-width:1180px;margin:auto;padding:48px 28px 80px}h1,h2,h3,h4{line-height:1.2;letter-spacing:-.02em}h1{font-size:clamp(32px,5vw,52px);max-width:900px}h2{font-size:28px;margin-top:52px}h3{font-size:22px;margin:12px 0 18px}h4{font-size:14px;text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px;color:var(--muted)}p{margin:10px 0}a{color:var(--blue);text-underline-offset:3px}code{font-size:.87em;overflow-wrap:anywhere;background:#eef2f7;padding:0 4px;border-radius:4px}pre{background:#0f1a2a;color:#dfe8f3;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;padding:12px 14px;border-radius:8px;overflow:auto;margin:8px 0 0;white-space:pre-wrap}pre code{background:none;padding:0;color:inherit}
+    .eyebrow,.tag{font-size:12px;font-weight:750;letter-spacing:.1em;text-transform:uppercase}.eyebrow{color:var(--blue)}.lede{font-size:21px;max-width:900px}.muted,.refs{color:var(--muted)}.refs{font-size:12.5px;overflow-wrap:anywhere}.callout,article{background:white;border:1px solid var(--line);border-radius:14px;padding:26px;margin:20px 0}.callout{border-left:5px solid var(--blue)}.tag{color:var(--green)}.tag .was{color:var(--muted);font-weight:500;letter-spacing:0;text-transform:none}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:22px}.grid p:first-child{margin-top:0}
+    table{width:100%;border-collapse:collapse;background:white;font-size:14px}th,td{text-align:left;vertical-align:top;padding:12px 14px;border-bottom:1px solid var(--line)}th{background:#e8eef6}nav{display:flex;gap:16px;flex-wrap:wrap;margin:25px 0}.flow{display:flex;flex-wrap:wrap;gap:8px;list-style:none;padding:0}.flow li{background:#e5edf7;border-radius:7px;padding:10px 14px}.flow li:not(:last-child)::after{content:' →';color:var(--blue)}li{margin:7px 0}.table-wrap{overflow:auto}.sources li{margin:14px 0}.small{font-size:14px}
+    .proof{background:var(--amberbg);border:1px solid #f0d9a8;border-radius:10px;padding:16px 18px;margin:18px 0}.proof h4{color:var(--amber)}.proof ul{margin:6px 0 0;padding-left:20px}.proof li{margin:5px 0}
+    .ba{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:18px 0 6px}.ba>div{border-radius:10px;padding:16px 18px;border:1px solid var(--line)}.before{background:var(--redbg);border-color:#efc7c3!important}.after{background:var(--greenbg);border-color:#bfe0d0!important}.before h4{color:var(--red)}.after h4{color:var(--green)}.ba p{margin:8px 0;font-size:14.5px}
+    .num{font-variant-numeric:tabular-nums}.up{color:var(--green);font-weight:700}.down{color:var(--red);font-weight:700}.same{color:var(--muted)}
+    .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;margin:8px 0 0}.legend span::before{content:'';display:inline-block;width:14px;height:10px;border-radius:2px;margin-right:6px;vertical-align:middle}.l-red::before{background:var(--red)}.l-amber::before{background:#d98a00}.l-green::before{background:var(--green)}
+    svg text{font:12.5px system-ui,sans-serif;fill:var(--ink)}svg .lbl{fill:var(--muted);font-size:12px}
+    @media(max-width:760px){main{padding:25px 16px 50px}.grid,.ba{grid-template-columns:1fr;gap:10px}article,.callout{padding:20px}th,td{padding:10px;min-width:150px}}
+    @media print{body{background:white}main{max-width:none;padding:0}nav{display:none}article,.callout{break-inside:avoid}a{color:inherit}h2{break-after:avoid}pre{white-space:pre-wrap}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">Session-grounded retrospective · revised 6 September 2026 · three mission runs</p>
+    <h1>Keep the review discipline.<br>Make execution durable.</h1>
+    <p class="lede">The most valuable thing to borrow from MCMV is executable control over worker completion, recovery, and evidence—not more instructions telling an agent to work autonomously. The third run proved it: the prose rule that fixed “stop at a passed milestone” did nothing for “wait forever on a child that already finished.”</p>
+    <p class="muted">Revision of the 5 September page. New in this version: a third evidence set (the <code>analytics-hour-filter</code> mission, run entirely on the Missions plugin 0.2.0, with its own journal and framework notes), a measured idle timeline, re-ranked priorities, and a before/after with a worked example for every recommendation. MCMV comparison is unchanged: commit <code>baf188001d2fba8bbc8e891f1ace424c87425dd6</code>. Current-capability claims were re-checked against the plugin source at 0.2.2.</p>
+  </header>
+  <nav aria-label="Report sections"><a href="#sessions">What happened</a><a href="#idle">Measured idle</a><a href="#ranking">Priorities, re-ranked</a><a href="#features">Eight recommendations</a><a href="#human">Human input</a><a href="#avoid">Do not copy</a><a href="#checks">Acceptance checks</a><a href="#sources">Sources</a></nav>
+
+  <section id="sessions">
+    <h2>What the three runs actually show</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th style="width:17%">Run</th><th>Observed sequence</th><th style="width:30%">Interpretation</th></tr></thead>
+      <tbody>
+        <tr><td><strong>S1 · Monthly report</strong><br>20–27 August<br>pre-plugin missions<br><code>503166fc…</code></td><td>M2 passed at 14:24Z; the turn ended with a status summary. 3 h 08 min later you typed “why did you stop?”. The agent: “M2 passed, so the loop shouldn't have stopped.” M3 passed at 18:24Z; five minutes later, “why did you stop?” again — “no reason to stop, M3 passed.” It then halted before the adversarial review on a merge-main prohibition plus a ~9.1M/10M budget; the next morning you ran <code>git merge origin/main</code> yourself.<br><span class="refs">S1:1209–1223, 1353–1367, 1637, 1767, 1877.</span></td><td><strong>Two stop classes.</strong> Passed-milestone stops were avoidable workflow failures. A budget or authority boundary is a legitimate reason to stop; the system should resolve it, not bulldoze through it.</td></tr>
+        <tr><td><strong>S2 · Analytics redesign</strong><br>27 August–3 September<br>ad-hoc pipeline<br><code>ca7273be…</code></td><td>A nine-step autonomous pipeline was authorised at 17:15Z. At 19:54Z the simplify fixer died with <code>idleReason: failed · session limit · resets 1am</code>; the parent hit the same limit. The limit reset at 21:00Z. Nothing woke until “what are you waiting for?” at 03:59Z — 7 h after the reset. The parent then verified the fixer’s edits by hand. At handover you had to ask whether work was committed: 30 in-scope files were not.<br><span class="refs">S2:15415, 17204–17211, 18026, 18303–18318.</span></td><td><strong>A provider-capacity interruption, not agent idleness</strong> — but one whose recovery was entirely manual. Partial work survived only because a human asked the right question.</td></tr>
+        <tr><td><strong>S3 · Hour filter</strong><br>31 August–3 September<br>plugin 0.2.0, full workflow<br><code>b5e89daf…</code></td><td>Plan → three cross-check rounds (10 → 9 → 0 new defects) → design → run. 14 features, 36/40 dispatches, 18/18 assertions proven, draft PR #3404. Blind review caught six defects invisible to green suites. But: the handoff hook fired a false alarm on <strong>all 19</strong> worker dispatches; <strong>three workers committed and went idle without a handoff</strong> (8, 44 and 10 min stalls, each ended by your question); the forked <code>/code-review</code> waited on finders whose results went to the orchestrator instead — <strong>9 h 15 min</strong> until “what are you waiting for?”. Spend stayed at $20.49 for all 36 dispatches while the cap was raised twice on that frozen number.<br><span class="refs">J3:174–228, 60, 83, 87; N:1–8; S3:3893, 4667, 4721–4730, 6212–6226, 6645–6691.</span></td><td><strong>The workflow worked; the runtime did not.</strong> Every stall had the same shape: a child finished (or failed) and the signal went nowhere the orchestrator was looking. Milestone-class stops did <em>not</em> recur — the 0.2.0 “ADVISORY proceeds” rule fixed those — which is the cleanest evidence that prose fixes prose-shaped failures and nothing else.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout">
+      <strong>The existing process did valuable work — in all three runs.</strong>
+      <p>S1: blind review found five defects behind green tests, including tenant filters that could be deleted without a failure and a response-time KPI 41× flattering because a fixture stamped assignment and reply with one timestamp. S3: “deleting the predicate wiring leaves 92/92 tests green”, an undated-path clock skew, two divergent 422 bodies the orchestrator had personally accepted, an unreachable guard, a recorded design decision never implemented, and an <code>&amp;&amp;→||</code> mutant that passed 69/69. Reviewers ran their own mutations and restored the tree; scrutiny disclosed its own methodology caveat. Preserve all of it. <span class="refs">S1:1042, 2164; J3:213, 226, 233–236; N:6.</span></p>
+      <p><strong>Do not confuse a past failure with a missing current feature — but do not assume it was fixed, either.</strong> The plugin at 0.2.2 already specifies BLOCK/ADVISORY halts, decision cards, a terminal-review reserve, resumable PR review, a journal, a bounded state digest and 17 hook test suites. It also still binds <code>mission-handoff-schema.sh</code> to <code>PostToolUse: Agent</code> with no branch on the tool response: the false alarm that fired 10 times in S1 and 19 times in S3 is live today. <span class="refs">B:216–275; J:50–58; V:12–39; T.</span></p>
+    </div>
+  </section>
+
+  <section id="idle">
+    <h2>Measured idle: every stall, who ended it, and how long it took</h2>
+    <p class="small">Each bar is one stall from the transcripts, measured from the last useful event to the human prompt that ended it (or to self-recovery). Red = avoidable by an orchestration fix. Amber = provider limit; only the part after the reset is avoidable, and only with an external scheduler. Green = the one case that self-healed because the orchestrator had armed a Monitor on the commit.</p>
+    <svg viewBox="0 0 1120 330" width="100%" role="img" aria-label="Stall durations across three runs">
+      <line x1="330" y1="10" x2="330" y2="300" stroke="#d8e1ea"/>
+      <g class="lbl"><text x="330" y="318" text-anchor="middle">0</text><text x="480" y="318" text-anchor="middle">100 min</text><text x="630" y="318" text-anchor="middle">200</text><text x="780" y="318" text-anchor="middle">300</text><text x="930" y="318" text-anchor="middle">400</text><text x="1080" y="318" text-anchor="middle">500</text></g>
+      <g><text x="0" y="34">S1 · M2 passed, turn ended</text><rect x="330" y="22" width="282" height="16" fill="#b3261e" rx="3"/><text x="618" y="34">3 h 08 · “why did you stop?”</text></g>
+      <g><text x="0" y="68">S1 · M3 passed, turn ended</text><rect x="330" y="56" width="8" height="16" fill="#b3261e" rx="3"/><text x="344" y="68">5 min · “why did you stop?”</text></g>
+      <g><text x="0" y="102">S2 · session limit, fixer + parent</text><rect x="330" y="90" width="98" height="16" fill="#d98a00" opacity=".45" rx="3"/><rect x="428" y="90" width="630" height="16" fill="#d98a00" rx="3"/><text x="743" y="102" text-anchor="middle" style="fill:white">8 h 05 · 7 h after the 21:00Z reset · “what are you waiting for?”</text></g>
+      <g><text x="0" y="136">S3 · F003 committed, no handoff</text><rect x="330" y="124" width="12" height="16" fill="#b3261e" rx="3"/><text x="348" y="136">8 min · “what's the status?”</text></g>
+      <g><text x="0" y="170">S3 · F012 committed, no handoff</text><rect x="330" y="158" width="66" height="16" fill="#b3261e" rx="3"/><text x="402" y="170">44 min · “what agents are running”</text></g>
+      <g><text x="0" y="204">S3 · F014 committed, no handoff</text><rect x="330" y="192" width="15" height="16" fill="#b3261e" rx="3"/><text x="351" y="204">10 min · “are you sure the agent is running?”</text></g>
+      <g><text x="0" y="238">S3 · /code-review fork waiting on finders</text><rect x="330" y="226" width="780" height="16" fill="#b3261e" rx="3"/><text x="720" y="238" text-anchor="middle" style="fill:white">9 h 15 · “what are you waiting for?”</text></g>
+      <g><text x="0" y="272">S3 · F015 committed, Monitor armed</text><rect x="330" y="260" width="6" height="16" fill="#116450" rx="3"/><text x="342" y="272">4 min · self-healed: commit_observed → handoff ingested, no human</text></g>
+      <text x="0" y="298" class="lbl">Scale: 1.5 px per minute; bars under 4 px widened to stay visible.</text>
+    </svg>
+    <div class="legend"><span class="l-red">Avoidable orchestration stall — 13 h 30 min across S1 + S3</span><span class="l-amber">Provider limit — 7 h avoidable only with a scheduler</span><span class="l-green">Self-healed with a Monitor</span></div>
+    <div class="table-wrap" style="margin-top:18px"><table>
+      <thead><tr><th>Number</th><th>Value</th><th>Where it comes from</th></tr></thead>
+      <tbody>
+        <tr><td>Human prompts whose only content was “are you still going?”</td><td class="num"><strong>8</strong> across three runs</td><td>S1:1213, 1217, 1357; S2:17206; S3:3893, 4679, 6220, 6645</td></tr>
+        <tr><td>Handoff-hook false alarms on background dispatch</td><td class="num"><strong>29</strong> (10 in S1, 19 in S3)</td><td><code>grep -c 'returned with no handoff'</code> on both transcripts; N:1 “I ignored it ten times”</td></tr>
+        <tr><td>Workers that committed then went idle without a handoff</td><td class="num"><strong>3 of 14</strong> in S3 (F003, F012, F014)</td><td>commit time vs <code>handoffs/F0nn.md</code> mtime; J3:83 “third occurrence”</td></tr>
+        <tr><td>S3 idle share (gaps &gt; 30 min)</td><td class="num"><strong>79 % of 61 h</strong></td><td><code>journal-metrics.sh</code>; includes nights and product decisions — the ceiling, not the orchestration share</td></tr>
+        <tr><td>S3 features that were repairs or review-driven</td><td class="num"><strong>9 of 14</strong> (F007–F013, F014, F015)</td><td>J3 <code>handoff_ingested</code> events; each repair = worker + blind review = 2 dispatches</td></tr>
+        <tr><td>S3 defects behind green suites, caught only by blind review</td><td class="num"><strong>6</strong></td><td>J3:213, 226, 233, 236; N:6</td></tr>
+        <tr><td>Spend figure the caps were raised on</td><td class="num"><strong>$20.49, unchanged across 36 dispatches</strong></td><td>J3: two <code>cost-state</code> records, both pre-M2; cap 25 → 75 → 100; N:7</td></tr>
+        <tr><td>Finished missions whose terminal state needed a manual merge-main</td><td class="num"><strong>2 of 2</strong> (S1, S3)</td><td>S1:1637, 1877; J3:78, 101</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="ranking">
+    <h2>Priorities, re-ranked on measured cost</h2>
+    <p>The 5 September order was reasoned from two transcripts. With S3’s journal the cost of each failure class is countable, and three things move: completion detection goes to the top (it is the single mechanism behind ~10 h of S3 idle), evidence-quality moves up (half of S3’s dispatches were repairs), and the environment manifest moves down (it cost about 30 minutes of re-verification and lost nothing).</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Now</th><th>Was</th><th>Recommendation</th><th>The number that moved it</th></tr></thead>
+      <tbody>
+        <tr><td class="num"><strong>1</strong></td><td class="up">3 ↑</td><td><a href="#handoff">Completion signal keyed by task, plus a watchdog</a></td><td>10 h 17 min of S3 stalls share one cause: the orchestrator was waiting on a signal that had already fired somewhere else. 29 false alarms from the hook that was supposed to be that signal. F015 shows the fix works: 4 min, no human.</td></tr>
+        <tr><td class="num"><strong>2</strong></td><td class="down">1 ↓</td><td><a href="#runner">Executable runner for the authorised pipeline</a></td><td>S1’s 3 h 08 milestone stop did not recur in S3 — the ADVISORY rule works for that shape. What remains is the forked-skill wait (9 h 15) and “turn ended with a status update”; still second because every other fix is delivered through this loop.</td></tr>
+        <tr><td class="num"><strong>3</strong></td><td class="down">2 ↓</td><td><a href="#recovery">Typed worker outcomes and reconciliation before retry</a></td><td>S2: 7 h after the quota reset with a recoverable tree and nothing to wake it. S3: F012 self-reported “waiting for the commit” 37 s after it landed; F010’s <code>git checkout --</code> wiped its own edits. Below 1–2 because 1–2 remove most of the occasions.</td></tr>
+        <tr><td class="num"><strong>4</strong></td><td class="same">4 =</td><td><a href="#rails-tests">Workflow tests and mutation tests for the rails</a></td><td>The false alarm survived three missions and three plugin versions (0.1.0 → 0.2.2). <code>tests/cases/mission-handoff-schema/</code> has four cases; none carries a <code>tool_response</code>, so the case that matters cannot be expressed.</td></tr>
+        <tr><td class="num"><strong>5</strong></td><td class="up">6 ↑</td><td><a href="#proof">Assertions that name the observation and the falsifying change</a></td><td>9 of 14 S3 features were repairs; 6 defects sat behind green suites; the worker for F003 drafted its mutation claim before running it. Each repair costs two dispatches and ~25 min.</td></tr>
+        <tr><td class="num"><strong>6</strong></td><td class="down">5 ↓</td><td><a href="#environment">Verified command and environment manifest</a></td><td>S3 scrutiny ran seven suites in parallel and reported five contention failures plus a pyright OOM; ~30 min to re-verify, nothing lost. S1’s container collision was caught before a write. Real, but cheap.</td></tr>
+        <tr><td class="num"><strong>7</strong></td><td class="same">7 =</td><td><a href="#gates">Explicit stop reasons, scoped permissions, budget admission</a></td><td>Spend frozen at $20.49 across 36 dispatches while caps were raised twice; wall-clock reported 0.10 h. Merge-main manual in 2/2 finished missions. Governance that cannot bind is reporting, not governance.</td></tr>
+        <tr><td class="num"><strong>8</strong></td><td class="same">8 =</td><td><a href="#closure">Durable findings ledger and generated handover</a></td><td>Converge gate flagged 12 FU vs 11 F when 8 of 12 were closed; Codex re-reported 4 of 5; S2 handover had 30 uncommitted files until you asked. Bookkeeping cost, not lost work.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="features">
+    <h2>What to take from MCMV—and the improvement from each</h2>
+
+    <article id="handoff">
+      <span class="tag">1 · Highest priority · Take the mechanism <span class="was">(was 3)</span></span>
+      <h3>One completion signal keyed by task, validated once, with a watchdog</h3>
+      <div class="grid">
+        <div><p><strong>Session evidence.</strong> The handoff hook fires the instant a background dispatch returns, before the worker has started. In S3 that was every one of 19 worker dispatches; the orchestrator learned to ignore it, then also ignored three real “no handoff” situations. Separately, S1’s orchestrator misread a valid Markdown exit-code column. <span class="refs">S1:839, 884, 907; J3:177–178; N:1–2.</span></p><p><strong>Take from MCMV.</strong> The driver waits for the child process before grading. Worker-facing validation and the driver use the same <code>handoff_verdict</code>; local commit evidence rejects a worker merely reporting its inherited base commit. <span class="refs">M:1019–1123, 964–1011, 1622–1625, 2240–2260.</span></p></div>
+        <div><p><strong>Improvement.</strong> Dispatch acknowledgement cannot be misclassified as completion. A commit on the branch with no handoff is detected by the loop, not by a human. Workers can run the same check they are graded against.</p><p><strong>Missions adaptation.</strong> <code>mission-journal.sh</code> already reads <code>tool_response.status</code> and distinguishes <code>async_launched</code>; <code>mission-handoff-schema.sh</code> reads only <code>tool_input</code>. Gate the check on the response status, then add the second half: a watchdog that treats (commit on the mission branch) ∨ (idle notification) ∨ (N minutes of silence) as “verify now”. F015 is the proof of shape: the orchestrator armed a Monitor on the commit by hand and the loop closed itself in 4 minutes. <span class="refs">J3:97–98; hooks/mission-journal.sh:7–13,36,62; V:12–39.</span></p></div>
+      </div>
+      <div class="proof"><h4>Proof it is worth it</h4><ul>
+        <li><strong>10 h 17 min</strong> of S3 stalls — F003 (8 min), F012 (44 min), F014 (10 min), the code-review fork (9 h 15) — all ended by a human question; none by the system.</li>
+        <li><strong>29</strong> false alarms from the hook meant to catch exactly this; N:1: “a hook that is always wrong trains the orchestrator to ignore a hook that is sometimes right.”</li>
+        <li>F012’s idle message — “I'll pause here and wait for the background commit to complete” — arrived at 15:20:35Z; its commit <code>5586689e2</code> had landed at 15:19:58Z. The orchestrator: “I took the agent's word for its own state instead of checking it.” <span class="refs">S3:4667, 4726, 4730.</span></li>
+        <li>F015, with a Monitor armed: commit 04:17:00Z → <code>commit_observed</code> 04:21:22Z → <code>handoff_ingested</code> 04:21:29Z. Same failure class, zero human involvement. <span class="refs">J3:97–98.</span></li>
+      </ul></div>
+      <div class="ba">
+        <div class="before"><h4>Before — S3, F012, as it happened</h4>
+<pre>15:13:12Z dispatch F012            ← hook: "F012 returned with no handoff" (false)
+15:19:58Z commit 5586689e2 lands   ← nobody is watching the branch
+15:20:35Z worker idle: "waiting for the background commit"
+          orchestrator ends its turn: "Expected, no action."
+16:03:42Z user: "what agents are running"
+16:04:59Z handoff F012.md written after the orchestrator prods the worker</pre>
+<p>Cost: 44 min of stalled loop, one human interrupt, and a status report that was wrong.</p></div>
+        <div class="after"><h4>After — same moment with a task-keyed signal</h4>
+<pre>15:13:12Z dispatch F012#1  → journal {task:"F012#1", status:"launched"}
+                              handoff hook: tool_response.status=async_launched → exit 0
+15:19:58Z branch moves     → watchdog: commit 5586689e2 by F012#1, handoff absent
+                              journal {event:"commit_observed", task:"F012#1", handoff:"pending"}
+15:20:35Z idle notification → watchdog re-checks: still no handoff after idle → 
+                              SendMessage(F012): "commit seen, handoff missing — write it now"
+15:23:00Z handoffs/F012.md → handoff hook runs ONCE, on this event, exit 0
+                              journal {event:"handoff_ingested"} → next action selected</pre>
+<p>Cost: ~3 min, no human. If the worker never answers, the watchdog marks <code>handoff_missing</code> and routes to reconstruction (recommendation 3), never to a blind re-dispatch.</p></div>
+      </div>
+      <p class="small"><strong>Success check:</strong> a background launch grades nothing; a commit without a handoff is journaled within 2 minutes; real completion grades exactly once; self-check and driver return the same verdict.</p>
+    </article>
+
+    <article id="runner">
+      <span class="tag">2 · Highest priority · Adapt <span class="was">(was 1)</span></span>
+      <h3>An executable runner for the entire authorised pipeline</h3>
+      <div class="grid">
+        <div><p><strong>Session evidence.</strong> S1: after M2 and again after M3 the turn ended on a status summary — “the loop shouldn't have stopped”, “no reason to stop”. S3: the milestone stops did not recur, but the orchestrator launched <code>/code-review</code> as a forked background skill, whose ten finder agents reported to the orchestrator’s mailbox instead of the fork’s; the fork’s last words were “Now waiting on the 10 finder agents” and it never woke. <span class="refs">S1:1212–1223, 1356–1361; S3:6645–6691; agent-abd4eb9a:89; N:8.</span></p><p><strong>Take from MCMV.</strong> <code>cmd_run</code> selects pending work in a program loop, waits for a worker, evaluates its result, and advances or records a specific stop reason. Progress does not rely on the conversational orchestrator deciding to take another turn. <span class="refs">M:2023–2150, 2240–2260, 1990–2005.</span></p></div>
+        <div><p><strong>Improvement.</strong> A passed milestone, an ingested handoff, or a finished review schedules the next authorised step. A status update is not an implicit end of execution. Nothing is awaited without a deadline.</p><p><strong>Missions adaptation.</strong> The 0.2.0 “ADVISORY proceeds” text (B:224–247) already covers milestone boundaries and the evidence says it works. What it cannot cover is a turn that ends while a child is running, or a fork whose children report elsewhere. Extend the runner to validation, PR-review and forked skills: every background launch gets a deadline and a fallback (“assess the finder outputs directly”), which is precisely what the human triggered at 03:59Z. Keep independent read-only reviews parallel; keep writing ownership serial. Do not import MCMV’s mandatory G2 approval at every milestone. Never auto-merge.</p></div>
+      </div>
+      <div class="proof"><h4>Proof it is worth it</h4><ul>
+        <li>S1: <strong>3 h 08 min</strong> (14:27Z → 17:35Z) and <strong>5 min</strong> after passed milestones; both ended with “why did you stop?”. <span class="refs">S1:1212–1213, 1356–1357.</span></li>
+        <li>S3: <strong>9 h 15 min</strong> (18:44Z Sep 2 → 03:59Z Sep 3) on a fork that could never resume; recovery took the orchestrator <strong>3 minutes</strong> once asked — it spawned six assessors and finished the review the same morning. <span class="refs">S3:6669–6691; J3:87–92.</span></li>
+        <li>The plugin’s own SKILL.md records the pre-plugin baseline: “idle for ~85% of its nine days, 13 of its 15 long waits ended with the human typing continue.” S3’s journal-metrics still reports 79 % idle over 61 h. <span class="refs">B:224–225; journal-metrics.</span></li>
+        <li>Milestone-class stops: <strong>2 in S1, 0 in S3</strong> — the one class a prose rule could fix, it fixed. The remaining stalls are structural.</li>
+      </ul></div>
+      <div class="ba">
+        <div class="before"><h4>Before — S3, the code-review fork</h4>
+<pre>18:38Z  orchestrator: launch /code-review as background fork; end turn
+18:42Z  fork spawns 10 finder agents
+18:44Z  fork: "Now waiting on the 10 finder agents; nothing else to request"
+19:0xZ  finders finish → results land in the ORCHESTRATOR's mailbox
+        fork is idle; orchestrator's turn is over; nobody is running
+03:59Z  user: "what are you waiting for?"
+04:02Z  journal halt: "consolidation agent stalled ~9h ... Detected only on user prompt"</pre></div>
+        <div class="after"><h4>After — runner owns every wait</h4>
+<pre>18:38Z  runner: step=pr-review/code-review, deadline=+45m, on_timeout=assess_directly
+        journal {event:"await", task:"code-review#1", deadline:"19:23Z"}
+19:0xZ  finder results arrive addressed to the orchestrator
+        runner: "child of code-review#1 reported here" → fork will not resume
+        → cancel await, run on_timeout path now (six read-only assessors)
+19:30Z  findings assessed, F015 dispatched — what actually happened at 04:10Z
+        journal {event:"next", from:"code-review#1", action:"dispatch F015"}</pre>
+<p>Same work, same quality, ~9 h earlier, no prompt. The BLOCK list is unchanged; only the definition of “nothing to do” changes.</p></div>
+      </div>
+      <p class="small"><strong>Success check:</strong> a passed-milestone event advances once, without a “continue” prompt; a background skill has a deadline and a fallback; a real approval boundary stops with its exact reason.</p>
+    </article>
+
+    <article id="recovery">
+      <span class="tag">3 · Highest priority · Adapt + extend <span class="was">(was 2)</span></span>
+      <h3>Typed worker outcomes and reconciliation before retry</h3>
+      <div class="grid">
+        <div><p><strong>Session evidence.</strong> S2’s fixer reported <code>idleReason: failed</code> with a session-limit reason; the parent hit the same limit; the reset came at 21:00Z and nothing used it. Next morning the parent verified the already-written work rather than starting from zero — by hand. S3: F010’s worker ran <code>git checkout -- AnalyticsFilters.tsx</code> to undo a mutation and wiped its own uncommitted edits with it; F012 self-reported a state 37 s stale. <span class="refs">S2:17204–17211; J3:26, 59; S3:4730.</span></p><p><strong>Take from MCMV.</strong> Worker execution records exit, elapsed time, cost, timeout and the CLI error detail; infrastructure errors are classified apart from substantive failures. <code>cmd_resume</code> checks handoffs and commit ancestry before deciding to merge, mark done or requeue. <code>inherited_work_note</code> tells a new worker about interrupted changes. <span class="refs">M:1620–1700, 2485–2555, 1290–1319.</span></p></div>
+        <div><p><strong>Improvement.</strong> “No handoff” no longer means “the worker did nothing.” Quota, malformed handoff, failed test and still-running are four different recovery actions. Completed edits survive a lost reporting turn; retries do not duplicate them; a worker’s self-report is never the source of truth for its state.</p><p><strong>Missions adaptation.</strong> Provider-neutral task IDs, process/session ownership, a tree snapshot at every idle (a patch under <code>.missions/&lt;slug&gt;/partial/</code>), and a generated recovery packet. A quota outcome carries <code>resume_at</code>; waking at that time needs an external scheduler, which a stopped process cannot be. Claude-to-Codex continuation is an extension, not an MCMV capability. Provider switch and extra spend need prior authorisation.</p></div>
+      </div>
+      <div class="proof"><h4>Proof it is worth it</h4><ul>
+        <li>S2: fixer failed 19:54Z, limit reset 21:00Z, human 03:59Z — <strong>7 h</strong> of recoverable time with a dirty tree that only a human inspection recovered. <span class="refs">S2:17204–17211.</span></li>
+        <li>S3 F010: “a mid-work <code>git checkout --</code> wiped its own uncommitted (a)+(c) edits along with the mutation; it re-applied and verified.” Recovered by luck of a diligent worker; a snapshot would make it recoverable by rule. <span class="refs">J3:26.</span></li>
+        <li>S3 F012 / F003 / F014: three stale or absent self-reports; every one resolved by <code>git log</code> + <code>ls handoffs/</code> once someone ran them. The orchestrator wrote the lesson itself: “verify state rather than trust the agent's prose status.” <span class="refs">N:2; S3:4730.</span></li>
+        <li>S3 M2 scrutiny: the validator’s own caveat (“ran in parallel, contention possible”) is what turned five red results into a non-event. Typed outcomes make that caveat a field, not a paragraph. <span class="refs">J3:45–46.</span></li>
+      </ul></div>
+      <div class="ba">
+        <div class="before"><h4>Before — S2, the fixer’s death</h4>
+<pre>19:54:52Z teammate simplify-fixer:
+  {"idleReason":"failed","failureReason":"You've hit your session limit · resets 1am",
+   "result":"All hooks green. Gathering the line citations for the report…"}
+19:54:54Z parent: "You've hit your session limit · resets 1am"    ← turn ends
+21:00:00Z limit resets. Nothing happens.
+03:59:56Z user: "what are you waiting for?"
+04:00:07Z parent: "Its work is in the tree, so I'm verifying it myself now and committing."
+06:07:19Z user: "besides the plans rest of the files are commited and pushed?" → 30 files: no</pre></div>
+        <div class="after"><h4>After — typed outcome + recovery packet</h4>
+<pre>19:54:52Z outcome {task:"simplify-fixer#1", class:"infra_quota",
+                   resume_at:"21:00Z", tree:{dirty:12, snapshot:"partial/simplify-fixer#1.patch"},
+                   last_commit:"22460ad70", handoff:"absent",
+                   remaining:["commit","codex-adversarial-review","code-review xhigh","merge reports"]}
+19:55Z    scheduler: wake session at 21:05Z (pre-authorised: same provider, same cap)
+21:05Z    reconcile: diff vs snapshot = identical → no duplicate work
+          handoff reconstructed from diff, marked "reconstructed"
+21:06Z    runner: next = commit (pre-commit hooks) → continue steps 7–9
+          journal {event:"resumed", task:"simplify-fixer#1", by:"scheduler"}</pre>
+<p>Provider switch to Codex stays a human decision — the packet just makes it a 2-minute one instead of a 30-file audit.</p></div>
+      </div>
+      <p class="small"><strong>Success check:</strong> interrupt after edits, after commit, and after integration; each restart preserves work and neither duplicates the commit nor mistakes an active worker for a dead one; a self-reported status that contradicts git is journaled as a discrepancy.</p>
+    </article>
+
+    <article id="rails-tests">
+      <span class="tag">4 · High priority · Extend the existing test suite <span class="was">(was 4)</span></span>
+      <h3>End-to-end tests and mutation tests for the workflow itself</h3>
+      <div class="grid">
+        <div><p><strong>Session evidence.</strong> The background false alarm was first reported on 20 August (S1:907) and fired again on 2 September in a plugin two versions newer. The plugin ships 17 hook test suites; <code>tests/cases/mission-handoff-schema/</code> has four cases, and <code>missing-handoff-rc2</code> pins exit 2 on a stdin that carries no <code>tool_response</code> at all — so the suite certifies the behaviour that produced the false alarm and cannot express the case that would catch it. <span class="refs">S1:839, 907; J3:177; T; tests/cases/mission-handoff-schema/missing-handoff-rc2/stdin.json.</span></p><p><strong>Take from MCMV.</strong> Its regression harness creates temporary repositories, substitutes a stub CLI and exercises the real driver. A separate mutation harness deliberately breaks the driver and checks that tests notice. <span class="refs">E:1–36; U:1–15.</span></p></div>
+        <div><p><strong>Improvement.</strong> “The next task never starts”, “a valid result is rejected”, “dispatch is graded as completion” fail in CI before they cost a mission. A green workflow test proves progress, not only refusal.</p><p><strong>Missions adaptation.</strong> Keep the crafted-input suite; add traces: dispatch(background) → PostToolUse with <code>status: async_launched</code> → SubagentStop → commit → handoff, asserting which hooks fire and when. Add one bounded live smoke against a stub repo, because a stub CLI cannot establish the real runtime’s hook timing. Mutate continuation, task identity, approval scope and evidence freshness separately.</p></div>
+      </div>
+      <div class="proof"><h4>Proof it is worth it</h4><ul>
+        <li>One defect, <strong>three missions, three plugin versions</strong> (0.1.0 → 0.2.0 → 0.2.2), <strong>29 firings</strong>, still present at <code>hooks/hooks.json</code> PostToolUse/Agent today.</li>
+        <li>The commit-discipline hook blocked <code>/merge-main</code> in <strong>both</strong> finished missions after the user had asked for it; a “legitimate authorised work has a tested success path” case would have surfaced the missing scope before a run did. <span class="refs">S1:1767, 1877; J3:78.</span></li>
+        <li>N:4: <code>mission-patch.sh</code> from the wrong cwd “reports empty diff and exits 0 — a silent wrong answer that would hand a reviewer an empty patch.” Exactly the shape a mutation test catches.</li>
+      </ul></div>
+      <div class="ba">
+        <div class="before"><h4>Before — the test that exists</h4>
+<pre># tests/cases/mission-handoff-schema/missing-handoff-rc2
+stdin.json: {"hook_event_name":"PostToolUse","tool_name":"Agent",
+             "tool_input":{"subagent_type":"mission-worker","prompt":"… Feature: F002 …"}}
+expect:     rc=2   stderr~=no handoff at
+# no tool_response → background and foreground are indistinguishable
+# → the case that fired 29 times in production is, by construction, "correct"</pre></div>
+        <div class="after"><h4>After — a trace case and its mutant</h4>
+<pre># tests/traces/background-dispatch-does-not-grade/
+step1 PostToolUse Agent  tool_response.status=async_launched, agentId=a1
+      expect handoff-schema rc=0 ; journal has {event:"agent_launched",agent_id:"a1"}
+step2 git commit on mission branch (stub repo), no handoff
+      expect watchdog journal {event:"commit_observed",feature:"F002",handoff:"pending"}
+step3 SubagentStop agent_id=a1, handoff still absent
+      expect handoff-schema rc=2 exactly once ; stderr~=no handoff at
+step4 write handoffs/F002.md ; re-run
+      expect rc=0 ; journal {event:"handoff_ingested"}
+# mutants.sh: delete the status branch in handoff-schema → step1 must FAIL
+#             delete the watchdog → step2 must FAIL</pre></div>
+      </div>
+      <p class="small"><strong>Success check:</strong> disabling continuation or firing completion early makes the corresponding test fail; an explicitly authorised merge-main on the named branch has a passing test; the false-alarm case above fails on 0.2.2 and passes after the fix.</p>
+    </article>
+
+    <article id="proof">
+      <span class="tag">5 · High priority · Take the evidence model <span class="was">(was 6)</span></span>
+      <h3>Assertions that name the observation and the defect that must fail</h3>
+      <div class="grid">
+        <div><p><strong>Session evidence.</strong> S1: removing tenant filters left a suite green; a fixture gave assignment and reply one timestamp, so a KPI was 41× flattering; a ranking symptom returned through three fixes. S3: F001 claimed eight assertions on 9,319 green tests; blind review deleted the predicate wiring and 92/92 stayed green. The F003 worker “drafted the A013 mutation claim before running it, then actually ran it.” <span class="refs">S1:1042, 2164, 1547; J3:185, 207, 213, 18.</span></p><p><strong>Take from MCMV.</strong> Preflight requires contract evidence metadata naming an observation surface and a falsifying change. Opt-in fixture coverage maps behavioural assertions to a fault fixture, a catching check and an evidence pointer. <span class="refs">M:609–619, 677–694.</span></p></div>
+        <div><p><strong>Improvement.</strong> “Tests passed” becomes “this test distinguishes the required behaviour from the realistic wrong implementation” — and the worker proves it before the reviewer has to. Repair rounds shrink because the first handoff already carries the mutation the reviewer would have run.</p><p><strong>Missions adaptation.</strong> The S3 contract already went three cross-check rounds and still shipped assertions whose tests were inert. Add an executable <code>falsify:</code> field per assertion, require a red-then-green row for it in the handoff, and have the schema hook reject a claimed assertion without one. Keep blind review — its job becomes finding the mutation the contract did not name, not re-running the one it did. Split proofs need explicit ownership (one final owner with contributors) — MCMV’s exactly-one-owner rule needs that adaptation.</p></div>
+      </div>
+      <div class="proof"><h4>Proof it is worth it</h4><ul>
+        <li>S3: <strong>9 of 14</strong> features were repairs or review-driven; each repair is a worker plus a blind review — roughly <strong>18 of 36 dispatches</strong> and, by the journal timestamps, 10–25 min each. <span class="refs">J3:221–226, 3–9, 18–37, 71–76.</span></li>
+        <li><strong>6</strong> S3 defects and <strong>5</strong> S1 defects were invisible to a green suite and visible to one mutation. Four of the S3 six were <em>test-side</em> — the product code was right, the proof was not — which is precisely what a named falsifier prevents. <span class="refs">J3:207, 213; N:6.</span></li>
+        <li>Where the contract did name the mutation (A002 DST cases, A013 cache invalidation), workers ran it themselves and reviewers confirmed on first pass. <span class="refs">J3:132, 18, 21.</span></li>
+      </ul></div>
+      <div class="ba">
+        <div class="before"><h4>Before — S3, A016 as written and as tested</h4>
+<pre>contract.md  A016: the call population is preserved — the hour predicate is
+             conjoined to the existing tenant/agent/date predicates, never replaces them.
+handoff F001 "assertions_claimed": ["A001","A002","A003","A005","A006","A007","A016","A017"]
+             "Full suite: 9319 passed, 13 skipped."
+review F001  "NOT SATISFIED: A005, A016 … deleting the predicate wiring leaves 92/92 green"
+→ FU005 → F007 (worker, 17 min) → review F007 (7 min) → A016 proven, one milestone later</pre></div>
+        <div class="after"><h4>After — the same assertion with a named falsifier</h4>
+<pre>contract.md  A016 …
+  observe:  tests/unit/calls/test_call_log_repository.py::test_hour_window_is_conjunctive
+  falsify:  remove the start_hour/end_hour clauses from _build_filters
+  expect:   that test fails with "hour predicate absent"; passes after restore
+handoff F001  ## Mutations
+  | A016 | falsify applied | .venv/bin/pytest …::test_hour_window_is_conjunctive | 1 (red) |
+  | A016 | restored        | same                                                | 0 (green) |
+hook: a claimed assertion with no red-then-green row → rc=2 "A016 claimed without its falsifier"
+→ F007 never needed; reviewer spends its budget on M13/M12a (the mutations nobody named)</pre></div>
+      </div>
+      <p class="small"><strong>Success check:</strong> replay the concrete wrong implementation and require the named test to fail for the intended reason, then pass after restoration; a handoff claiming an assertion without that row is rejected by the hook, not by a reviewer.</p>
+    </article>
+
+    <article id="environment">
+      <span class="tag">6 · Medium-high priority · Adapt <span class="was">(was 5)</span></span>
+      <h3>A verified command and environment manifest</h3>
+      <div class="grid">
+        <div><p><strong>Session evidence.</strong> S1: several worktrees computed the same Compose project name, so a documented <code>docker compose exec</code> would test another checkout’s source. S3: the M2 scrutiny validator ran seven suites in parallel and reported 1 pytest + 4 vitest failures and a pyright OOM; all five passed in isolation, and the repo’s pyright gate turned out to run on changed files only. Three pre-existing tooling gaps (missing <code>beautifulsoup4</code>, <code>make bootstrap</code> failing on <code>core.hooksPath</code>, e2e deps unprovisioned) each cost a worker a detour. <span class="refs">S1:907; J3:45–48, 179, 41–42.</span></p><p><strong>Take from MCMV.</strong> <code>services.yaml</code> centralises build/test/lint/service commands and tells planning to verify them before use; preflight checks that key commands are declared. <span class="refs">Y:1–42; M:790–794.</span></p></div>
+        <div><p><strong>Improvement.</strong> Every worker and validator receives the same verified recipe, including how suites may be combined. A test result carries the identity of the checkout and services it exercised. Environment failures stop being misdiagnosed as code defects — or, as in S3, spending 30 minutes to prove they are not.</p><p><strong>Missions adaptation.</strong> The planner already writes a rules digest into <code>state.md</code>; make the command block structured and verified at plan time and re-verified at dispatch: Compose <code>working_dir</code> label, container IDs, ports, tested revision, fixture ownership, and <em>concurrency</em> (“pytest and vitest: serial”). S3’s F005 worker checked the Compose label before creating a local account — make that recorded step mandatory. Per-feature worktrees alone cannot isolate shared containers or databases.</p></div>
+      </div>
+      <div class="proof"><h4>Proof it is worth it</h4><ul>
+        <li>S3 M2 scrutiny: 14:22Z report → 14:30Z resolution; five false failures re-run serially, pyright re-run twice at 8 GB, then scoped to the seven mission files. ~<strong>30 min</strong> of orchestrator time and one advisory halt for zero defects. <span class="refs">J3:45–48.</span></li>
+        <li>S1: the container-name collision was caught by the worker before a test write — the manifest is the difference between “caught by a careful worker” and “caught by rule.” <span class="refs">S1:907.</span></li>
+        <li>S3 planner digest already carried the right facts (“Never <code>pytest tests/</code>”, “only errors in files you changed count”); the validator did not have the one it needed — run order. <span class="refs">state.md:39–43.</span></li>
+      </ul></div>
+      <div class="ba">
+        <div class="before"><h4>Before — S3 M2 scrutiny</h4>
+<pre>scrutiny_ingested M2:
+  pytest   exit 1 — 1 failed / 9337 passed
+  pyright  exit 250 — JS heap OOM at ~4GB, twice
+  npm test exit 1 — 4 failed / 3213
+  (validator: "ran all 7 in PARALLEL; contention possible")
+orchestrator: re-run 1 pytest + 4 vitest in isolation → all pass
+              pyright at 8GB → OOM again → read .pre-commit-config → changed-files only
+              → 7 files, 0 errors. Advisory halt journaled. ~30 min.</pre></div>
+        <div class="after"><h4>After — manifest in the digest, echoed in the result</h4>
+<pre># .missions/&lt;slug&gt;/environment.md (verified at plan, re-verified at dispatch)
+checkout:   <host-repo> @ ffc478301
+compose:    project app-7c1e (label working_dir = this checkout) · db 5432 only; never 5435/5436
+pytest:     .venv/bin/pytest tests/unit -n auto            serial-with: vitest
+vitest:     cd ui && npm test                              serial-with: pytest
+pyright:    changed files only (pre-commit:37-44 "matches CI") — never whole-repo
+e2e:        needs e2e-automation@ account; seeded? no → create via load_fixtures shape
+
+scrutiny result carries: {checkout:"ffc478301", compose:"app-7c1e", ran_serially:true}
+→ a red result from a different checkout or a parallel run is rejected before it is read</pre></div>
+      </div>
+      <p class="small"><strong>Success check:</strong> a container from another checkout is refused before any test write; a result without checkout identity is not ingested; only the verified local stack is writable, never dev/prod DBs.</p>
+    </article>
+
+    <article id="gates">
+      <span class="tag">7 · Medium priority · Adapt, do not add blanket gates <span class="was">(was 7)</span></span>
+      <h3>Explicit stop reasons, scoped permissions, and budget admission</h3>
+      <div class="grid">
+        <div><p><strong>Session evidence.</strong> S1’s terminal review collided with budget and the merge-main prohibition; you merged by hand the next morning. S3: the dollar cap was raised 25 → 75 → 100 with <code>spend_at_raise: 20.49</code> both times, because the harness wrote only two cost records, both before M2; every <code>session_cost</code> line for 36 dispatches reads 20.49; wall-clock reported 0.10 h against a 4 h cap. The dispatch cap was “the binding governor.” S3 ended with merge-main “hook-blocked, open for the user” again. <span class="refs">S1:1637, 1877; J3:12–14, 101; N:5, N:7.</span></p><p><strong>Take from MCMV.</strong> The driver persists a typed stop reason, produces a gate briefing, caps individual workers, and checks spend before dispatch; infrastructure failures are classified apart from worker mistakes. <span class="refs">M:1990–2005, 2649–2684, 1484–1501, 2175–2184, 1665–1688.</span></p></div>
+        <div><p><strong>Improvement.</strong> The human sees whether the system needs a product decision, permission, budget, or provider capacity. A spend figure carries its age; a cap raise on a stale figure is refused. “Merge main into the mission branch” is a scoped operation that can be pre-authorised, distinct from merging the PR.</p><p><strong>Missions adaptation.</strong> Keep the decision-card format and the terminal-review reserve. Add <code>merge-main</code> to the authority vocabulary of <code>mission.md</code> — operation, repository, branch, phase — and have <code>mission-commit-discipline.sh</code> honour it in phase <code>pr</code>; keep <code>gh pr merge</code> blocked. Report spend as “$20.49, last record 5 h 12 min old — floor”. Do not treat a subscription’s API-equivalent cost as an invoice, and never treat missing usage as zero.</p></div>
+      </div>
+      <div class="proof"><h4>Proof it is worth it</h4><ul>
+        <li>Caps raised twice on a number that could not move; the dollar governor “could not bind for the entire second milestone.” The framework note is the plugin’s own admission. <span class="refs">J3:12–14; N:7.</span></li>
+        <li><strong>2 of 2</strong> finished missions ended with a merge-main the human had asked for and the hook refused; both times the read-only analysis was done and the one command was handed back. <span class="refs">S1:1767–1877; J3:78.</span></li>
+        <li>Where the stop was typed, it worked: S3’s user-stopped validator became a <code>halt class:block</code> with the exact unproven assertions named, and resumed cleanly 30 min later. <span class="refs">J3:56, 63.</span></li>
+      </ul></div>
+      <div class="ba">
+        <div class="before"><h4>Before — S3 cap raises and the merge block</h4>
+<pre>{"event":"cap_raise","cap":"dollar_cap","from":25,"to":75,"spend_at_raise":20.49}
+{"event":"cap_raise","cap":"dollar_cap","from":75,"to":100,"spend_at_raise":20.49}
+… 36 × {"event":"session_cost","usd":20.49494895}
+journal-metrics: agent-hours 0.1 · total journaled usd 20.49 · cap raises: 0   ← also wrong
+17:55Z halt advisory: "/merge-main blocked by mission-commit-discipline hook … 25 behind"
+mission_done: open_for_user: ["merge main into branch (hook-blocked) or merge PR as is", …]</pre></div>
+        <div class="after"><h4>After — aged spend, scoped authority</h4>
+<pre>spend: {usd:20.49, source:"cost-state", age:"5h12m", quality:"FLOOR"}
+cap_raise request → refused: "spend figure is 5h12m stale; measure first"
+   → mission-spend.sh falls back to subagent transcripts; reports 41.80 ± source
+
+mission.md authority:
+  - op: merge-main   repo: <org>/<host-repo>   branch: mission/analytics-hour-filter
+    phase: pr   granted_by: user 2026-09-02T12:31Z   expires: mission end
+  - op: pr-merge     DENIED
+17:55Z runner: merge-main authorised for this branch in phase pr → git merge origin/main
+       → conflicts? none (merge-tree clean) → adversarial review on a fresh base, no caveat
+stop record, if it had to stop: {"stop":"authority","op":"merge-main","needs":"grant for branch X"}</pre></div>
+      </div>
+      <p class="small"><strong>Success check:</strong> an authorised merge-main runs only on the named branch and only in phase <code>pr</code>; PR merge remains blocked; a cap raise on a spend figure older than one dispatch is refused with the age shown; new feature admission cannot consume the reserved review allowance.</p>
+    </article>
+
+    <article id="closure">
+      <span class="tag">8 · Medium priority · Borrow primitives; build the closure logic <span class="was">(was 8)</span></span>
+      <h3>A durable findings ledger and generated completion/handover view</h3>
+      <div class="grid">
+        <div><p><strong>Session evidence.</strong> S1: a review’s “satisfied” labels contradicted its own defects; Codex re-read <code>followups.md</code> mid-run so four of five findings were re-reports. S2: you had to ask whether work was committed — 30 files were not. S3: the convergence gate flagged “12 FU vs 11 F”; the orchestrator audited the ledger by hand and found eight of twelve closed, superseded or not defects, and the two open ones sharing one disposition. <span class="refs">S1:1042, 2120; S2:18303–18318; J3:53; N:3.</span></p><p><strong>Take from MCMV.</strong> Locked state updates, structured progress events and JSON status are useful storage and projection primitives; handoffs carry discovered issues and unfinished work. <span class="refs">M:204–212, 409–429, 1039–1075, 2901–2907.</span></p></div>
+        <div><p><strong>Improvement.</strong> Every finding has an owner, a disposition and provenance; “fixed” requires evidence on the current code; the gate counts open debt, not filed rows. Status, PR body and handover are projections of one record — the “is it committed?” question is answered before it is asked.</p><p><strong>Missions adaptation.</strong> Keep first-pass reviews blind; reveal the ledger only for deduplication. A machine-readable <code>disposition:</code> line (<code>open | repair F0nn | repaired F0nn@sha | accepted | superseded | out-of-scope</code>) lets <code>mission-converge.sh</code> count only <code>open</code>. Record provenance so a re-reported finding is not counted twice. Generate the handover from ledger + git. Not an MCMV feature: <code>_report_debt</code> prints; it does not close. <span class="refs">M:2466–2479; scripts/mission-converge.sh:36–44.</span></p></div>
+      </div>
+      <div class="proof"><h4>Proof it is worth it</h4><ul>
+        <li>S3 converge gate: <strong>8 of 12</strong> counted entries were not open debt; the gate’s remedy is “halt and re-plan; never raise a cap” — it would have halted a healthy mission over bookkeeping, and its pressure is toward <em>not filing</em>. <span class="refs">J3:53; N:3.</span></li>
+        <li>S1 Codex: <strong>4 of 5</strong> findings were re-reports of filed follow-ups, presented as independent. <span class="refs">S1:2120.</span></li>
+        <li>S2 handover: “Everything committed is pushed… But the batch-3 work is not committed at all. 30 in-scope files.” Discovered by your question, not by the handover. <span class="refs">S2:18312.</span></li>
+      </ul></div>
+      <div class="ba">
+        <div class="before"><h4>Before — S3, the gate and the ledger</h4>
+<pre>mission-converge.sh: re.findall(r'^##\s+(FU\d{3})', followups.md) → 12
+                     "follow-ups exceed features: 12 FU vs 11 F"
+followups.md  FU002 Disposition: SUPERSEDED     FU004–007, 009, 010: repaired
+              FU003 Disposition: accept          FU008: accepted debt
+              FU011 "repair as F012, batched"    FU012 "repair as F012 (batched)"  ← same repair
+orchestrator: hand audit, consolidates FU012 into FU011, retires the id, journals 300 words</pre></div>
+        <div class="after"><h4>After — dispositions the gate can read</h4>
+<pre>## FU011 — exact-pair boundary unpinned
+- disposition: repaired F012@5586689e2      # verified: sha on branch, review_ingested F012
+- provenance:  M2-review-F011
+## FU013 — pre-merge residue
+- disposition: repaired F013@069560734 ; residue: accepted (start-bound proof gap)
+converge: open 0 · repair-pending 0 · repaired 9 · accepted 2 · superseded 1 · out-of-scope 1
+          → PASS (open/features = 0/11)
+adversarial C1 → provenance: duplicates FU010 → not counted as new
+handover (generated): branch in sync · uncommitted in-scope: 0 · open: FU001 (own issue),
+          2 accepted nits · next: merge-main decision</pre></div>
+      </div>
+      <p class="small"><strong>Success check:</strong> unresolved blocking findings or stale review evidence prevent “done”; the gate ignores repaired/accepted/superseded rows; the generated handover lists remaining steps, code revision, uncommitted in-scope files and unrelated changes to leave alone.</p>
+    </article>
+  </section>
+
+  <section id="human">
+    <h2>Where human input belongs</h2>
+    <ol class="flow" aria-label="Recommended mission sequence"><li>Explore with human</li><li>Approve scope + authority</li><li>Execute + validate</li><li>Repair within scope</li><li>Review + draft PR</li><li>Human release decision</li></ol>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Situation</th><th>Human involvement</th><th>What should proceed automatically?</th></tr></thead>
+      <tbody>
+        <tr><td>Design exploration and scope choice</td><td>Required when choosing product behaviour or what to ship. S2’s narrowing of scope and S3’s three amendment rounds belong here. <span class="refs">S2:14592; S3:2208.</span></td><td>Research, alternatives, and reversible prototypes within the request.</td></tr>
+        <tr><td>Before autonomous implementation</td><td>Approve goal, exclusions, acceptance criteria, spend/time bounds, provider choices, and allowed Git actions — including merge-main on the mission branch if you want it.</td><td>Dispatch, validation, and in-scope repairs under that authority.</td></tr>
+        <tr><td>Contract cannot be satisfied</td><td>Required. S1’s immutable-report requirement collided with untimestamped classification data. <span class="refs">S1:1547.</span></td><td>Gather examples and present consequences; never silently weaken the assertion.</td></tr>
+        <tr><td>Passed milestone, ingested handoff, finished review</td><td>None under the default advisory ceiling.</td><td>Record evidence, select the next task, dispatch. Status text is not an end state.</td></tr>
+        <tr><td>Quota, crash, missing handoff, stale self-report</td><td>Only if recovery needs a new provider, added cost or new authority.</td><td>Diagnose from git, snapshot, reconcile, resume at the reset time.</td></tr>
+        <tr><td>Human stops an agent mid-run</td><td>That is a decision; S3 handled it right — BLOCK halt naming the unproven assertions, clean resume. <span class="refs">J3:56, 63.</span></td><td>Nothing until the human says how to proceed.</td></tr>
+        <tr><td>Database, external side effect, PR merge</td><td>Respect the specific authorisation and the host project safety policy. A draft-PR request never authorises merging it.</td><td>Safe local checks and the decision packet; never expand permissions to keep moving.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="avoid">
+    <h2>What not to import wholesale</h2>
+    <ul>
+      <li><strong>Mandatory human approval after every green milestone.</strong> MCMV raises G2 gates inside the runner; S3 shows the advisory ceiling works when the runtime does. Borrow gate mechanics, not its fixed approval policy. <span class="refs">M:2037–2047, 2140–2147.</span></li>
+      <li><strong>Checkpoint commits and automatic pushes.</strong> MCMV uses <code>--no-verify</code> and pushes unless disabled. S3’s pre-commit hooks caught real problems every single commit; keep them. Use durable local state without silently taking Git authority. <span class="refs">M:1847–1848, 1875–1890.</span></li>
+      <li><strong>Worker configuration stripping.</strong> MCMV removes inherited hooks and permissions, then reinstalls selected guards. Do not remove the project’s safety checks to gain a headless runner. <span class="refs">M:1570–1608.</span></li>
+      <li><strong>An agent-readable approval secret as a security boundary.</strong> MCMV’s approval path checks environment/TTY state and has a test bypass. Use the trusted host approval mechanism. <span class="refs">M:2687–2726.</span></li>
+      <li><strong>“MCMV has this, so it will solve the incident.”</strong> Its runner is Claude-specific; services are a template; fixtures can be only metadata; debt reporting is not closure; mandatory gates still stop execution. Building blocks, not a drop-in.</li>
+    </ul>
+  </section>
+
+  <section id="checks">
+    <h2>Adoption order and how to verify the benefit</h2>
+    <p><strong>First: 1, 2, 4.</strong> Fix the handoff hook’s timing (one <code>jq</code> read of <code>tool_response.status</code>), add the commit watchdog, give every background wait a deadline, and pin all three with trace tests that fail on 0.2.2. <strong>Next: 3, 5.</strong> Typed outcomes with tree snapshots; a <code>falsify:</code> field per assertion enforced by the schema hook. <strong>Then: 6, 7, 8.</strong> Structured environment block, aged spend and scoped merge-main authority, machine-readable dispositions.</p>
+    <p>This is a recommendation sequence, not an implemented change. The idle figures are transcript gaps between a last useful event and the human prompt that ended them; they are attributed to orchestration only where the transcript shows nothing was running and nothing could arrive.</p>
+    <p><strong>Acceptance checks:</strong> replay S1’s two passed-milestone stops; replay S3’s F012 (commit, stale idle message, no handoff) and require detection within 2 minutes; replay the code-review fork (children reporting to the parent) and require the fallback path within the deadline; a background dispatch that grades nothing; a duplicate completion event graded once; interruption before and after a commit with a snapshot diff of zero; a quota failure that schedules its own resume; a wrong-checkout container refused; an authorised merge-main versus a forbidden PR merge; a cap raise on a stale spend figure refused; a stale review after a code change; a blocking finding left unresolved at terminal completion.</p>
+    <p><strong>Baselines to beat on the next comparable mission</strong> (from S3 unless noted): “are you still going?” prompts — 4 (S1: 3); handoff-hook false alarms — 19; commit-without-handoff stalls — 3, median 10 min, max 44; longest single stall — 9 h 15; repair share of features — 9/14; spend records per dispatch — 2/36; merge-main resolved by a human — 1/1. Keep human product decisions and provider-limit waiting out of these counts.</p>
+  </section>
+
+  <section id="sources">
+    <h2>Evidence and limits</h2>
+    <p class="small">Reviewed: the three sessions’ user/assistant timelines and pivotal completion/failure records; S3’s mission directory (journal, state, follow-ups, framework notes, handoff mtimes) and its branch’s commit timestamps; the S2 handover; the plugin source at 0.2.2; MCMV at the pinned commit. Idle durations are UTC transcript timestamps; commit times were converted from +04:00. No application changes, remote writes or mission execution were performed. MCMV suites were inspected, not executed. Raw logs, credentials and full teammate messages are not reproduced.</p>
+    <ol class="sources small">
+      <li><strong>S1</strong> · Monthly-report session, JSONL line numbers.<br><code>/Users/dima/.claude/projects/-<host-repo-v3>/503166fc-fa1a-4e26-88f3-1db94821ea23.jsonl</code></li>
+      <li><strong>S2</strong> · Analytics-redesign session.<br><code>/Users/dima/.claude/projects/-<host-repo-v3>/ca7273be-b0c4-46c5-8f11-f720095dd107.jsonl</code></li>
+      <li><strong>S3</strong> · Hour-filter mission orchestrator session; <strong>agent-abd4eb9a</strong> = its stalled code-review fork under <code>…/subagents/</code>.<br><code>/Users/dima/.claude/projects/-<host-repo>/b5e89daf-b556-4f97-a14f-75b360107e05.jsonl</code></li>
+      <li><strong>J3</strong> · Mission journal, line numbers; <strong>N</strong> · framework notes, section numbers; handoff mtimes from the same directory.<br><code><host-repo>/.missions/analytics-hour-filter/{journal.jsonl,mission-framework-notes.md,state.md,followups.md,handoffs/}</code></li>
+      <li><strong>H</strong> · <a href="<host-repo-v3>/docs/plans/omni-analytics-ia-handover.md">Analytics handover</a>, lines 10–24 and 142–146. Historical artefact.</li>
+      <li><strong>M</strong> · <a href="https://github.com/0rion7st/mcmv/blob/baf188001d2fba8bbc8e891f1ace424c87425dd6/.mc/bin/mc">MCMV driver, pinned source</a>. <strong>Y</strong> · <a href="https://github.com/0rion7st/mcmv/blob/baf188001d2fba8bbc8e891f1ace424c87425dd6/.mc/services.yaml#L1">services manifest</a>. <strong>E</strong> · <a href="https://github.com/0rion7st/mcmv/blob/baf188001d2fba8bbc8e891f1ace424c87425dd6/tests/regress.sh#L1">regression harness</a>. <strong>U</strong> · <a href="https://github.com/0rion7st/mcmv/blob/baf188001d2fba8bbc8e891f1ace424c87425dd6/tests/mutants.sh#L1">mutation harness</a>.</li>
+      <li><strong>Current Missions source (0.2.2):</strong> <code>/Users/dima/development/context-engineering/plugins/missions/</code><br><strong>B</strong> = <code>skills/mission-run/SKILL.md</code>; <strong>R</strong> = <code>skills/mission-resume/SKILL.md</code>; <strong>D</strong> = <code>scripts/mission-state.sh</code>; <strong>T</strong> = <code>tests/run.sh</code> + <code>tests/cases/</code>; <strong>J</strong> = <code>hooks/hooks.json</code>; <strong>V</strong> = <code>hooks/mission-handoff-schema.sh</code>; <strong>G</strong> = <code>hooks/mission-commit-discipline.sh</code>; <code>hooks/mission-journal.sh</code>, <code>scripts/mission-converge.sh</code>, <code>scripts/journal-metrics.sh</code> as cited. S3 ran on the installed 0.2.0 copy; the hook wiring cited here is unchanged in 0.2.2.</li>
+    </ol>
+  </section>
+</main>
+</body>
+</html>

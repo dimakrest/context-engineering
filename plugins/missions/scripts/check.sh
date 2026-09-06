@@ -159,7 +159,7 @@ else:
 # is what makes it a repair -- so counting it would trip the gate on the first
 # validation round of every mission that found a defect.
 if files:
-    planned = {f for f in sections if f not in repairs}
+    planned = sections - repairs
     distinct = {x for f, fs in files.items() if f not in repairs for x in fs}
     if len(planned) > len(distinct):
         errs.append(f"feature count exceeds files touched: {len(planned)} features over {len(distinct)} distinct files -- merge features that share a file")

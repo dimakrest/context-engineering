@@ -2,9 +2,9 @@
 # A behavior validator that proves every assertion the prompt names -- the format
 # agents/mission-validator-behavior.md fixes.
 set -e
-ids=$(grep -oE '^  A[0-9]{3}[a-z]? ' "$MISSIONS_PROMPT" | grep -oE 'A[0-9]{3}[a-z]?' || true)
+. "$(dirname "$0")/lib.sh"   # prompt_assertions
 {
   printf '## Assertion results\n| ID | Verdict | Evidence |\n|---|---|---|\n'
-  for a in $ids; do printf '| %s | proven | stub run 1: the chip is visible on the dashboard |\n' "$a"; done
+  for a in $(prompt_assertions); do printf '| %s | proven | stub run 1: the chip is visible on the dashboard |\n' "$a"; done
   printf '\n## Defects\nnone\n'
 } > "$MISSIONS_RUN_DIR/output.md"

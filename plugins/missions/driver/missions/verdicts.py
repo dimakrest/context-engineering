@@ -6,7 +6,8 @@ fixes: agents/mission-reviewer.md `## Assertion verdicts`, agents/mission-valida
 parsers read those tables and nothing else -- a verdict is a cell in a table, never a sentence in
 the prose, so a reviewer that writes "A002 is probably fine" in a paragraph has said nothing about
 A002. An assertion the table does not name is left to the caller, which treats a missing verdict
-as the weakest one.
+as the weakest one. A reviewer's `## Defects` table has no parser: the negotiate prompt pastes
+the whole validation file, and the judgment reads the defects there.
 
 `latest_verdicts` reads the journal's `verdict` events rather than the validation files: they are
 the source of truth after a run, so a driver re-entering VALIDATE after a crash never re-parses a
@@ -20,27 +21,9 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from . import files, journal, prompts
 
-_HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
 _SEP_CELL = re.compile(r"^:?-+:?$")
 # a table whose header row has no separator under it is still a table; its first cell says so
 _HEADER_WORDS = ("id", "assertion", "command", "severity", "d-id", "changed symbol", "file")
-
-
-def section(text: str, title: str) -> str:
-    """The lines under the heading whose text starts with `title` (any level, case-insensitive),
-    up to the next heading. Empty when absent."""
-    out: List[str] = []
-    on = False
-    for ln in text.split("\n"):
-        m = _HEADING.match(ln)
-        if m:
-            if on:
-                break
-            on = m.group(1).strip().lower().startswith(title.lower())
-            continue
-        if on:
-            out.append(ln)
-    return "\n".join(out)
 
 
 def _is_separator(cells: List[str]) -> bool:
@@ -53,10 +36,10 @@ def table_rows(sec: str) -> List[List[str]]:
     lines = [ln for ln in sec.split("\n") if ln.lstrip().startswith("|")]
     rows: List[List[str]] = []
     for i, ln in enumerate(lines):
-        cells = files._table_cells(ln)
+        cells = files.table_cells(ln)
         if _is_separator(cells):
             continue
-        if i + 1 < len(lines) and _is_separator(files._table_cells(lines[i + 1])):
+        if i + 1 < len(lines) and _is_separator(files.table_cells(lines[i + 1])):
             continue
         if cells and cells[0].strip("*`_ ").lower() in _HEADER_WORDS:
             continue
@@ -86,19 +69,10 @@ def reviewer_verdict(cell: str) -> str:
 def parse_reviewer(text: str) -> Dict[str, str]:
     """`## Assertion verdicts` rows -> {A001: satisfied | not satisfied | cannot tell}."""
     out: Dict[str, str] = {}
-    for cells in table_rows(section(text, "Assertion verdicts")):
+    for cells in table_rows(files.section(text, "Assertion verdicts")):
         aid = _id_cell(cells[0]) if cells else None
         if aid and len(cells) > 1:
             out[aid] = reviewer_verdict(cells[1])
-    return out
-
-
-def parse_defects(text: str) -> List[Dict[str, str]]:
-    """`## Defects` rows as {severity, location, what}; extra cells fold into `what`."""
-    out: List[Dict[str, str]] = []
-    for cells in table_rows(section(text, "Defects")):
-        cells = cells + ["", "", ""]
-        out.append({"severity": cells[0], "location": cells[1], "what": " | ".join(c for c in cells[2:] if c)})
     return out
 
 
@@ -118,7 +92,7 @@ def behavior_verdict(cell: str) -> str:
 def parse_behavior(text: str) -> Dict[str, str]:
     """`## Assertion results` rows -> {A012: proven | FAILED | not reached}."""
     out: Dict[str, str] = {}
-    for cells in table_rows(section(text, "Assertion results")):
+    for cells in table_rows(files.section(text, "Assertion results")):
         aid = _id_cell(cells[0]) if cells else None
         if aid and len(cells) > 1:
             out[aid] = behavior_verdict(cells[1])
@@ -132,11 +106,11 @@ def parse_scrutiny(text: str) -> Dict[str, Any]:
     `failures`: the `## Failures` section's text. Enough to journal a summary and to say whether
     the gate was green; the negotiate prompt pastes the file itself."""
     commands: List[Dict[str, Any]] = []
-    for cells in table_rows(section(text, "Commands")):
+    for cells in table_rows(files.section(text, "Commands")):
         cells = cells + ["", "", ""]
         m = re.search(r"-?\d+", cells[1])
         commands.append({"command": cells[0], "exit": int(m.group(0)) if m else None, "duration": cells[2]})
-    return {"commands": commands, "failures": section(text, "Failures").strip()}
+    return {"commands": commands, "failures": files.section(text, "Failures").strip()}
 
 
 # ---------------------------------------------------------------- journal

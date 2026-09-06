@@ -123,15 +123,9 @@ def skill_section(plugin: Path, name: str) -> str:
     heading included; empty when there is no such heading. The judgment prompts carry the SKILL's
     rules this way so the driver and the prose loop cannot drift apart on what VALIDATE decides
     or what a BLOCK halt is."""
-    out: List[str] = []
-    for ln in files.read_text(plugin / "skills" / "mission-run" / "SKILL.md").split("\n"):
-        if out:
-            if re.match(r"^##\s", ln):
-                break
-            out.append(ln)
-        elif re.match(r"^##\s+" + re.escape(name) + r"\b", ln):
-            out.append(ln)
-    return ("\n".join(out).rstrip("\n") + "\n") if out else ""
+    text = files.section(files.read_text(plugin / "skills" / "mission-run" / "SKILL.md"),
+                         name, keep_heading=True, level=r"##")
+    return (text.rstrip("\n") + "\n") if text else ""
 
 
 def digest(mission_dir: Path, plugin: Path) -> str:
@@ -310,20 +304,14 @@ def behavior_prompt(mission_dir: Path, milestone: str, tagged_assertions: List[f
     return "\n".join(parts) + "\n"
 
 
-def _rules_and_shape(parts: List[str], followups_text: str, rules: str, shape: str) -> str:
+def _rules_and_shape(followups_text: str, rules: str, shape: str) -> List[str]:
     """The tail every judgment prompt shares: the registry and the rules pasted whole (verbatim,
     not indented -- their headings stay headings), then the shape and the one-line instruction."""
-    parts.append("")
-    parts.append("followups.md as it stands:")
-    parts.append(followups_text.rstrip("\n") if followups_text.strip() else "  (empty)")
-    parts.append("")
-    parts.append("The rules (verbatim from the mission-run skill):")
-    parts.append(rules.rstrip("\n") if rules.strip() else "  (none)")
-    parts.append("")
-    parts.append("Answer with exactly this JSON shape:")
-    parts.append(shape)
-    parts.append(ANSWER_LINE)
-    return "\n".join(parts) + "\n"
+    return ["", "followups.md as it stands:",
+            followups_text.rstrip("\n") if followups_text.strip() else "  (empty)",
+            "", "The rules (verbatim from the mission-run skill):",
+            rules.rstrip("\n") if rules.strip() else "  (none)",
+            "", "Answer with exactly this JSON shape:", shape, ANSWER_LINE]
 
 
 def negotiate_prompt(mission_dir: Path, milestone: str, round_no: int, verdict_summary: str,
@@ -349,7 +337,8 @@ def negotiate_prompt(mission_dir: Path, milestone: str, round_no: int, verdict_s
         parts.append(text.rstrip("\n"))
     if not validation_texts:
         parts.append("  (none)")
-    return _rules_and_shape(parts, followups_text, rules, NEGOTIATE_SHAPE)
+    parts += _rules_and_shape(followups_text, rules, NEGOTIATE_SHAPE)
+    return "\n".join(parts) + "\n"
 
 
 def triage_prompt(mission_dir: Path, issues: List[str], handoff_texts: Dict[str, str],
@@ -379,4 +368,5 @@ def triage_prompt(mission_dir: Path, issues: List[str], handoff_texts: Dict[str,
         parts.append("  (none found)")
     parts.append("")
     parts.append("`issue` in your answer is the number in brackets above.")
-    return _rules_and_shape(parts, followups_text, rules, TRIAGE_SHAPE)
+    parts += _rules_and_shape(followups_text, rules, TRIAGE_SHAPE)
+    return "\n".join(parts) + "\n"

@@ -803,9 +803,6 @@ class VerdictTests(unittest.TestCase):
     def test_reviewer(self):
         self.assertEqual(verdicts.parse_reviewer(REVIEW), {
             "A001": "satisfied", "A002": "not satisfied", "A003": "cannot tell", "A004": "satisfied", "A005": "cannot tell"})
-        d = verdicts.parse_defects(REVIEW)
-        self.assertEqual(len(d), 1)
-        self.assertEqual((d[0]["severity"], d[0]["location"]), ("high", "analytics/service.py:3"))
         self.assertEqual(verdicts.parse_reviewer("no table here"), {})
         # `satisfied` is a substring of `not satisfied`: the order of the two tests decides every failure
         self.assertEqual(verdicts.reviewer_verdict("satisfied for tenant A, not satisfied for tenant B"), "not satisfied")
@@ -1374,6 +1371,10 @@ class RolePromptTests(Fixture):
         self.assertNotIn("## Terminal steps", h)
         self.assertTrue(h.endswith("\n"))
         self.assertEqual(prompts.skill_section(PLUGIN, "No such section"), "")
+        # the one slicer: any heading ends a validator's section, only a `##` ends the SKILL's
+        text = "## A\nx\n### B\ny\n## C\nz"
+        self.assertEqual(files.section(text, "a"), "x")
+        self.assertEqual(files.section(text, "a", keep_heading=True, level=r"##"), "## A\nx\n### B\ny")
 
     def blind_review_hook(self, prompt, agent="mission-reviewer"):
         """hooks/mission-blind-review.sh's verdict on an Agent call: 0 allows, 2 blocks."""

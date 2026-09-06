@@ -137,19 +137,22 @@ def normalise_phase(value: str) -> str:
     return _PHASE_ALIASES.get(v, v)
 
 
+def _bullet_text(line: str) -> Optional[str]:
+    """The text after a `- ` bullet marker, None when the line is not a bullet. The one reader of
+    state.md's bullets: what triage removes is by construction what read_state reported."""
+    m = re.match(r"^\s*-\s*", line)
+    return line[m.end():] if m else None
+
+
 def _open_issues(lines: List[str]) -> List[str]:
+    try:
+        head, end = _open_issues_span(lines)
+    except MissionFileError:
+        return []                      # a state.md without the section has no open issues
     out: List[str] = []
-    inblock = False
-    for ln in lines:
-        if re.match(r"^##\s+[Oo]pen issues", ln):
-            inblock = True
-            continue
-        if inblock and re.match(r"^##\s", ln):
-            inblock = False
-        if inblock and re.match(r"^\s*-\s*", ln):
-            text = re.sub(r"^\s*-\s*", "", ln)
-            if text.strip().lower() == "none" or text.strip() == "":
-                continue
+    for ln in lines[head + 1:end]:
+        text = _bullet_text(ln)
+        if text is not None and text.strip().lower() not in ("", "none"):
             out.append(text)
     return out
 
@@ -219,9 +222,9 @@ def add_open_issues(mission_dir: Path, bullets: List[str]) -> None:
     path = mission_dir / "state.md"
     lines = read_text(path).split("\n")
     head, end = _open_issues_span(lines)
-    existing = [i for i in range(head + 1, end) if re.match(r"^\s*-\s*", lines[i])]
+    existing = [i for i in range(head + 1, end) if _bullet_text(lines[i]) is not None]
     new = ["- " + b.strip() for b in bullets]
-    if len(existing) == 1 and re.sub(r"^\s*-\s*", "", lines[existing[0]]).strip().lower() in ("none", ""):
+    if len(existing) == 1 and (_bullet_text(lines[existing[0]]) or "").strip().lower() in ("", "none"):
         lines[existing[0]:existing[0] + 1] = new
     elif existing:
         at = existing[-1] + 1
@@ -242,14 +245,14 @@ def remove_open_issues(mission_dir: Path, texts: List[str]) -> List[str]:
     removed: List[str] = []
     keep: List[str] = []
     for ln in lines[head + 1:end]:
-        text = re.sub(r"^\s*-\s*", "", ln).strip() if re.match(r"^\s*-\s*", ln) else None
-        if text is not None and text in want:
-            removed.append(text)
+        text = _bullet_text(ln)
+        if text is not None and text.strip() in want:
+            removed.append(text.strip())
         else:
             keep.append(ln)
     if not removed:
         return []
-    if not any(re.match(r"^\s*-\s*\S", ln) for ln in keep):
+    if not any((_bullet_text(ln) or "").strip() for ln in keep):
         keep.insert(0, "- none")
     lines[head + 1:end] = keep
     write_text(path, "\n".join(lines))
@@ -302,6 +305,29 @@ def _section_end(lines: List[str], start: int) -> int:
         if re.match(r"^##", lines[i]):
             return i
     return len(lines)
+
+
+def section(text: str, title: str, keep_heading: bool = False, level: str = r"#{1,6}") -> str:
+    """The lines under the first heading whose text starts with `title` (case-insensitive), up to
+    the next heading whose hashes `level` matches. Any level by default: a validator's
+    `### Assertion verdicts` reads like a `##`, and any heading under it ends it. `r"##"` for the
+    SKILL, whose `###` sub-headings belong to the section above them. Empty when there is no such
+    heading; the heading line itself is kept only on `keep_heading`."""
+    heading = re.compile(r"^" + level + r"\s+(.+?)\s*#*\s*$")
+    out: List[str] = []
+    on = False
+    for ln in text.split("\n"):
+        m = heading.match(ln)
+        if m:
+            if on:
+                break
+            on = m.group(1).strip().lower().startswith(title.lower())
+            if on and keep_heading:
+                out.append(ln)
+            continue
+        if on:
+            out.append(ln)
+    return "\n".join(out)
 
 
 def _split_files(value: str) -> List[str]:
@@ -419,14 +445,20 @@ def next_milestone(mission_dir: Path, current: str) -> Optional[str]:
     return ids[ids.index(current) + 1]
 
 
+def _max_id(text: str, pattern: re.Pattern[str], prefix: str) -> int:
+    """The highest `<prefix>nnn` heading `pattern` matches in `text`, 0 when there is none. The one
+    id scanner: next_feature_id / next_followup_id promise what append_feature / append_followups
+    then write, and an id promised before its section exists must be the id that gets written."""
+    return max([int(m.group(1)[len(prefix):]) for ln in text.split("\n")
+                for m in [pattern.match(ln)] if m] or [0])
+
+
 def next_feature_id(mission_dir: Path) -> str:
     """The id append_feature gives the next feature: the highest `### F` plus one -- never a
     reused number, whatever milestone the last one sits in. Exposed because a repair feature and
     the follow-ups it repairs name each other, so the applier needs the id before the feature
-    exists; the two must compute it the same way, and do."""
-    lines = read_text(mission_dir / "features.md").split("\n")
-    n = max([int(m.group(1)[1:]) for ln in lines for m in [_FEATURE_RE.match(ln)] if m] or [0])
-    return "F%03d" % (n + 1)
+    exists."""
+    return "F%03d" % (_max_id(read_text(mission_dir / "features.md"), _FEATURE_RE, "F") + 1)
 
 
 def append_feature(mission_dir: Path, milestone: str, title: str, assertions: List[str],
@@ -436,8 +468,9 @@ def append_feature(mission_dir: Path, milestone: str, title: str, assertions: Li
     those: a repair re-touches files its origin feature already lists). The id is
     `next_feature_id`'s. Returns the new id."""
     path = mission_dir / "features.md"
-    fid = next_feature_id(mission_dir)
-    lines = read_text(path).split("\n")
+    text = read_text(path)
+    fid = "F%03d" % (_max_id(text, _FEATURE_RE, "F") + 1)
+    lines = text.split("\n")
     head = next((i for i, ln in enumerate(lines)
                  if _MILESTONE_RE.match(ln) and _MILESTONE_RE.match(ln).group(1) == milestone), None)
     if head is None:
@@ -476,7 +509,9 @@ class Assertion:
     line: int
 
 
-def _table_cells(line: str) -> List[str]:
+def table_cells(line: str) -> List[str]:
+    """The cells of a markdown table row, stripped, outer pipes dropped -- the one cell splitter
+    for every table the driver reads: contract.md here, the validators' reports in verdicts.py."""
     s = line.strip()
     if s.startswith("|"):
         s = s[1:]
@@ -490,7 +525,7 @@ def _contract_columns(lines: List[str]) -> Tuple[Optional[int], Dict[str, int]]:
     for i, ln in enumerate(lines):
         if not ln.lstrip().startswith("|"):
             continue
-        cells = [c.lower() for c in _table_cells(ln)]
+        cells = [c.lower() for c in table_cells(ln)]
         if "id" not in cells:
             continue
         cols: Dict[str, int] = {}
@@ -514,33 +549,49 @@ def _contract_columns(lines: List[str]) -> Tuple[Optional[int], Dict[str, int]]:
     return None, {}
 
 
+def _cell(cells: List[str], cols: Dict[str, int], key: str) -> str:
+    """One cell by column name; empty when the column is absent or the row is short."""
+    j = cols.get(key)
+    return cells[j] if j is not None and j < len(cells) else ""
+
+
 def read_contract(mission_dir: Path) -> List[Assertion]:
     lines = read_text(mission_dir / "contract.md").split("\n")
     header, cols = _contract_columns(lines)
     if header is None:
         return []
     rows: List[Assertion] = []
-
-    def cell(cells: List[str], key: str) -> str:
-        j = cols.get(key)
-        return cells[j] if j is not None and j < len(cells) else ""
-
     for i in range(header + 1, len(lines)):
         ln = lines[i]
         if not ln.lstrip().startswith("|"):
             if rows:
                 break
             continue
-        cells = _table_cells(ln)
-        aid = cell(cells, "id")
+        cells = table_cells(ln)
+        aid = _cell(cells, cols, "id")
         if not re.match(r"^A\d{3}[a-z]?$", aid):
             continue
         rows.append(Assertion(
-            id=aid, text=cell(cells, "text"), proof_class=cell(cells, "class").lower(),
-            features=re.findall(r"F\d{3}", cell(cells, "features")),
-            status=cell(cells, "status").lower(), evidence=cell(cells, "evidence"),
-            budget=cell(cells, "budget"), line=i))
+            id=aid, text=_cell(cells, cols, "text"), proof_class=_cell(cells, cols, "class").lower(),
+            features=re.findall(r"F\d{3}", _cell(cells, cols, "features")),
+            status=_cell(cells, cols, "status").lower(), evidence=_cell(cells, cols, "evidence"),
+            budget=_cell(cells, cols, "budget"), line=i))
     return rows
+
+
+def _set_cell(lines: List[str], cols: Dict[str, int], row: Assertion, key: str, value: str) -> bool:
+    """Replace one cell of the row's line in place. False when the column is absent or the row is
+    short -- a ragged table is left alone rather than shifted. The one writer behind
+    claim_assertions, prove_assertions and route_assertion, so the three edit a row the same way."""
+    j = cols.get(key)
+    if j is None:
+        return False
+    parts = lines[row.line].split("|")
+    if j + 1 >= len(parts):
+        return False
+    parts[j + 1] = " %s " % value.strip()
+    lines[row.line] = "|".join(parts)
+    return True
 
 
 def claim_assertions(mission_dir: Path, ids: List[str]) -> List[str]:
@@ -549,16 +600,9 @@ def claim_assertions(mission_dir: Path, ids: List[str]) -> List[str]:
     lines = read_text(path).split("\n")
     _, cols = _contract_columns(lines)
     changed: List[str] = []
-    if "status" not in cols:
-        return changed
     for row in read_contract(mission_dir):
-        if row.id in ids and row.status == "unproven":
-            parts = lines[row.line].split("|")
-            k = cols["status"] + 1
-            if k < len(parts):
-                parts[k] = " claimed "
-                lines[row.line] = "|".join(parts)
-                changed.append(row.id)
+        if row.id in ids and row.status == "unproven" and _set_cell(lines, cols, row, "status", "claimed"):
+            changed.append(row.id)
     if changed:
         write_text(path, "\n".join(lines))
     return changed
@@ -574,21 +618,12 @@ def prove_assertions(mission_dir: Path, evidence: Dict[str, str]) -> List[str]:
     lines = read_text(path).split("\n")
     _, cols = _contract_columns(lines)
     changed: List[str] = []
-    if "status" not in cols:
-        return changed
     for row in read_contract(mission_dir):
         if row.id not in evidence or row.status == "proven":
             continue
-        parts = lines[row.line].split("|")
-        k = cols["status"] + 1
-        if k >= len(parts):
-            continue
-        parts[k] = " proven "
-        j = cols.get("evidence")
-        if j is not None and j + 1 < len(parts):
-            parts[j + 1] = " %s " % evidence[row.id].strip()
-        lines[row.line] = "|".join(parts)
-        changed.append(row.id)
+        if _set_cell(lines, cols, row, "status", "proven"):
+            _set_cell(lines, cols, row, "evidence", evidence[row.id])
+            changed.append(row.id)
     if changed:
         write_text(path, "\n".join(lines))
     return changed
@@ -601,20 +636,14 @@ def route_assertion(mission_dir: Path, aid: str, fid: str) -> bool:
     path = mission_dir / "contract.md"
     lines = read_text(path).split("\n")
     _, cols = _contract_columns(lines)
-    if "features" not in cols:
-        return False
     for row in read_contract(mission_dir):
         if row.id != aid:
             continue
         if fid in row.features:
             return False
-        parts = lines[row.line].split("|")
-        k = cols["features"] + 1
-        if k >= len(parts):
+        cur = _cell(table_cells(lines[row.line]), cols, "features")
+        if not _set_cell(lines, cols, row, "features", fid if cur in ("", "\u2014", "-") else cur + ", " + fid):
             return False
-        cur = parts[k].strip()
-        parts[k] = " %s " % (fid if cur in ("", "\u2014", "-") else cur + ", " + fid)
-        lines[row.line] = "|".join(parts)
         write_text(path, "\n".join(lines))
         return True
     return False
@@ -631,40 +660,35 @@ _BUDGET_LABELS = {
 }
 
 
-def read_budget(mission_dir: Path) -> Dict[str, Optional[float]]:
-    """mission_budget(): `- [**]Label...: <first number>`; a missing cap is None (informational)."""
+def _mission_lines(mission_dir: Path) -> List[str]:
     path = mission_dir / "mission.md"
-    lines = read_text(path).split("\n") if path.exists() else []
-    out: Dict[str, Optional[float]] = {}
-    for key, label in _BUDGET_LABELS.items():
-        out[key] = None
-        for ln in lines:
-            if re.match(r"^-\s*(\*\*)?" + re.escape(label), ln, re.I):
-                rest = ln.split(":", 1)[1] if ":" in ln else ""
-                m = re.search(r"[0-9]+([.][0-9]+)?", rest)
-                if m:
-                    out[key] = float(m.group(0))
-                break
-    return out
+    return read_text(path).split("\n") if path.exists() else []
 
 
-def _mission_line(mission_dir: Path, label: str) -> Optional[str]:
-    """The text after `- Label:` (or `- **Label:**`) in mission.md, found the way read_budget finds
-    a cap; None when the line is absent."""
-    path = mission_dir / "mission.md"
-    if not path.exists():
-        return None
-    for ln in read_text(path).split("\n"):
+def _mission_line(lines: List[str], label: str) -> Optional[str]:
+    """The text after `- Label:` (or `- **Label:**`), the way mission_budget() finds a cap -- the
+    one label parser for mission.md; None when the line is absent."""
+    for ln in lines:
         if re.match(r"^-\s*(\*\*)?" + re.escape(label), ln, re.I):
             return ln.split(":", 1)[1].lstrip("* ").strip() if ":" in ln else ""
     return None
+
+
+def read_budget(mission_dir: Path) -> Dict[str, Optional[float]]:
+    """mission_budget(): `- [**]Label...: <first number>`; a missing cap is None (informational)."""
+    lines = _mission_lines(mission_dir)
+    out: Dict[str, Optional[float]] = {}
+    for key, label in _BUDGET_LABELS.items():
+        m = re.search(r"[0-9]+([.][0-9]+)?", _mission_line(lines, label) or "")
+        out[key] = float(m.group(0)) if m else None
+    return out
 
 
 def read_reviewer_seat(mission_dir: Path) -> Optional[str]:
     """`- Reviewer seat: <seat>` -- the head token, as check.sh validates it and as a feature's
     Seat is read; None when absent or `none`. A rationale after an em dash, a paren or a `#`
     comment is not part of the seat."""
-    val = _mission_line(mission_dir, "Reviewer seat")
+    val = _mission_line(_mission_lines(mission_dir), "Reviewer seat")
     tok = re.match(r"[A-Za-z0-9.\-]+", val or "")
     if not tok or tok.group(0).lower() in ("none", "-"):
         return None
@@ -673,7 +697,7 @@ def read_reviewer_seat(mission_dir: Path) -> Optional[str]:
 
 def read_behavior_cap(mission_dir: Path) -> Optional[int]:
     """`- Behavior-validation cap: <n> live runs per milestone`; None when unset."""
-    m = re.search(r"\d+", _mission_line(mission_dir, "Behavior-validation cap") or "")
+    m = re.search(r"\d+", _mission_line(_mission_lines(mission_dir), "Behavior-validation cap") or "")
     return int(m.group(0)) if m else None
 
 
@@ -681,7 +705,7 @@ def read_autonomy_ceiling(mission_dir: Path) -> str:
     """`advisory` (the default) or `halt at every milestone`. Only the head of the line counts:
     the template's own line names both options in its explanation, so a planner who copied it
     verbatim must still read as advisory."""
-    val = _mission_line(mission_dir, "Autonomy ceiling") or ""
+    val = _mission_line(_mission_lines(mission_dir), "Autonomy ceiling") or ""
     head = re.split(r"[(|#\u2014]", val, 1)[0].strip().lower()
     return "halt at every milestone" if head.startswith("halt") else "advisory"
 
@@ -786,9 +810,7 @@ def next_followup_id(mission_dir: Path) -> str:
     """The id append_followups gives the next entry: the highest `## FU` plus one (FU001 for a
     missing or empty registry). Exposed for the same reason as next_feature_id."""
     path = mission_dir / "followups.md"
-    text = read_text(path) if path.exists() else ""
-    n = max([int(m.group(1)[2:]) for ln in text.split("\n") for m in [_FU_RE.match(ln)] if m] or [0])
-    return "FU%03d" % (n + 1)
+    return "FU%03d" % (_max_id(read_text(path) if path.exists() else "", _FU_RE, "FU") + 1)
 
 
 def append_followups(mission_dir: Path, entries: List[Dict]) -> List[str]:
@@ -800,7 +822,7 @@ def append_followups(mission_dir: Path, entries: List[Dict]) -> List[str]:
     an already rendered line, written verbatim), why. Returns the new ids."""
     path = mission_dir / "followups.md"
     text = read_text(path) if path.exists() else "# Follow-ups \u2014 %s\n" % mission_dir.name
-    n = int(next_followup_id(mission_dir)[2:]) - 1
+    n = _max_id(text, _FU_RE, "FU")
     ids: List[str] = []
     blocks: List[str] = []
     for e in entries:

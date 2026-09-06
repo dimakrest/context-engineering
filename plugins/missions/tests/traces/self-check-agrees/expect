@@ -1,0 +1,12 @@
+# The worker runs `missions grade --self` before exiting: it reports the same problems the driver
+# finds after exit (rc 2 on the malformed attempt, rc 0 on the valid ones), tells a partial handoff
+# what the driver will do with it (re-dispatch), and the prompt told it to run the check.
+rc=5
+journal~="event":"step_done".*"step":"F001#1".*"cls":"malformed_handoff".*missing sections
+journal~="event":"step_done".*"step":"F001#2".*"cls":"tests_failed".*status partial: the A002 tenancy test
+journal~="event":"step_done".*"step":"F001#3".*"cls":"done"
+postcheck=[ "$(cat "$M/runs/F001#1/selfcheck.rc")" = 2 ] && grep 'missing sections' "$M/runs/F001#1/selfcheck.txt" >/dev/null
+postcheck=[ "$(cat "$M/runs/F001#2/selfcheck.rc")" = 0 ] && grep 'status partial: the driver will re-dispatch' "$M/runs/F001#2/selfcheck.txt" >/dev/null
+postcheck=[ "$(cat "$M/runs/F001#3/selfcheck.rc")" = 0 ] && grep 'handoff valid' "$M/runs/F001#3/selfcheck.txt" >/dev/null
+postcheck=grep 'status partial: the A002 tenancy test' "$M/runs/F001#3/prompt.md" >/dev/null
+postcheck=grep 'missions grade .*demo F001 --self' "$M/runs/F001#1/prompt.md" >/dev/null

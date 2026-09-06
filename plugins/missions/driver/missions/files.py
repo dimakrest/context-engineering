@@ -7,6 +7,7 @@ not a new format (design §2). Edits are line-surgical: the surrounding prose is
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -59,6 +60,26 @@ def git(checkout: Path, *args: str, check: bool = True) -> subprocess.CompletedP
 def git_out(checkout: Path, *args: str) -> str:
     res = git(checkout, *args, check=False)
     return res.stdout.strip() if res.returncode == 0 else ""
+
+
+def fingerprint(path: Path) -> Optional[str]:
+    """Content hash of a file, None when it does not exist. The handoff's identity for one run:
+    a file identical to the one present at launch was not written by this attempt."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def dirty_paths(checkout: Path) -> List[str]:
+    """Uncommitted paths (modified, staged, untracked) outside .missions/ -- the driver rewrites
+    .missions/ constantly, so it never counts."""
+    out: List[str] = []
+    for ln in git_out(checkout, "status", "--porcelain", "--untracked-files=normal").splitlines():
+        p = ln[3:].split(" -> ")[-1].strip().strip('"')
+        if p and not p.startswith(".missions/") and p != ".missions":
+            out.append(p)
+    return out
 
 
 # ---------------------------------------------------------------- state.md
@@ -495,6 +516,7 @@ class Handoff:
     exists: bool
     status: str = ""
     issues: List[str] = field(default_factory=list)
+    undone: List[str] = field(default_factory=list)   # `## Left undone`, bullets stripped; "nothing" is empty
     sha: Optional[str] = None
     raw: str = ""
 
@@ -536,6 +558,19 @@ def read_handoff(mission_dir: Path, fid: str) -> Handoff:
             prose.append(ln.strip())
     items = bullets if bullets else prose
     h.issues = [t for t in items if t and t.lower().strip("*_`. ") != "none"]
+    # left undone: the section's lines as written, bullets stripped; the template's own "nothing"
+    # (or "none") is the empty answer
+    inblock = False
+    undone: List[str] = []
+    for ln in lines:
+        if re.match(r"^##\s*left undone", ln, re.I):
+            inblock = True
+            continue
+        if inblock and re.match(r"^##\s", ln):
+            break
+        if inblock and ln.strip():
+            undone.append(re.sub(r"^\s*-\s*", "", ln).strip())
+    h.undone = [t for t in undone if t.lower().strip("*_`. ") not in ("nothing", "none")]
     # commit: first sha on a line after `## Commit`
     after = False
     for ln in lines:

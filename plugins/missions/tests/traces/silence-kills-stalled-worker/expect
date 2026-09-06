@@ -1,0 +1,12 @@
+# With silence_s set, a worker that changes nothing and prints nothing is ended by the watchdog:
+# stalled, feature back to pending; twice in a row is stop(error). (#4)
+rc=1
+journal~="event":"agent_return".*"dispatch_id":"F001#1".*"status":"killed".*"killed_by":"watchdog:silence"
+journal~="event":"step_done".*"step":"F001#1".*"cls":"stalled"
+journal~="event":"dispatch".*"dispatch_id":"F001#2"
+journal~="event":"step_done".*"step":"F001#2".*"cls":"stalled"
+journal~="event":"stop".*"reason":"error"
+journal!~="event":"commit_observed"
+state~=^phase: implementing
+postcheck=[ "$(jq -r 'select(.event=="agent_return") | .duration_s' "$M/journal.jsonl" | sort -n | tail -1)" -lt 20 ]
+postcheck=sed -n '/^### F001/,/^##/p' "$M/features.md" | grep 'Status:\*\* pending' >/dev/null

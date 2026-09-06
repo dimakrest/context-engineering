@@ -1,0 +1,7 @@
+# A worker that leaves the checkout on another branch ends the run: the next dispatch would build
+# on the wrong branch. gate-blocked, feature back to pending, nothing halted.
+rc=5
+journal~="event":"stop".*"reason":"gate-blocked".*left the checkout on branch other
+journal!~="dispatch_id":"F001#2"
+journal!~="event":"halt"
+postcheck=sed -n '/^### F001/,/^##/p' "$M/features.md" | grep 'Status:\*\* pending' >/dev/null

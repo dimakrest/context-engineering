@@ -1,0 +1,11 @@
+# Attempt 1 leaves a malformed handoff; attempts 2 and 3 crash without touching anything. The
+# stale file must not be graded as attempt 2's handoff: attempt 2 is infra_crash, not
+# malformed_handoff, and two crashes stop the run. (#4, task-keyed identity)
+rc=1
+journal~="event":"step_done".*"step":"F001#1".*"cls":"malformed_handoff"
+journal~="event":"step_done".*"step":"F001#2".*"cls":"infra_crash".*unchanged since launch
+journal~="event":"step_done".*"step":"F001#3".*"cls":"infra_crash"
+journal~="event":"stop".*"reason":"error"
+journal!~="step":"F001#2".*"cls":"malformed_handoff"
+journal!~="event":"halt"
+postcheck=[ "$(grep -c '"event":"step_done"' "$M/journal.jsonl")" = 3 ]

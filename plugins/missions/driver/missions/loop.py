@@ -2,8 +2,9 @@
 
 Every iteration reloads state from disk, checks the caps and the gates, picks the first ready
 feature of the current milestone, and runs the worker step. It exits only through stop(reason).
-The judgment steps (triage, decide, negotiate), VALIDATE and the pr phase are D3; where D1 would
-need one it stops with `gate-blocked` and names what the human runs instead.
+The judgment steps (triage, decide, negotiate), VALIDATE and the pr phase are D3; where the loop
+would need one it stops with `gate-blocked` and names what the human runs instead. A quota stops
+the loop with `provider-quota`; the sleep-and-resume is #7.
 """
 from __future__ import annotations
 
@@ -116,11 +117,7 @@ def preflight(mission_dir: Path, plugin: Path, harness: Optional[str] = None) ->
             want = cfg.get("branch") or st.branch
             if want and branch and branch != want:
                 problems.append("checked out branch is %s; the mission branch is %s" % (branch, want))
-            dirty = []
-            for ln in files.git_out(checkout, "status", "--porcelain", "--untracked-files=normal").splitlines():
-                p = ln[3:].split(" -> ")[-1].strip().strip('"')
-                if p and not p.startswith(".missions/") and p != ".missions":
-                    dirty.append(p)
+            dirty = files.dirty_paths(checkout)
             if dirty:
                 problems.append("working tree is dirty outside .missions/ (%s%s) -- a worker died mid-feature or "
                                 "someone is editing; commit, stash or discard first" % (
@@ -301,10 +298,26 @@ def _run_locked(ctx: Context, args) -> int:
             attempts += 1
             cls, outcome, grade = steps.step_worker(ctx, feat, st)
 
+            mission_branch = ctx.cfg.get("branch") or st.branch
+            if mission_branch and grade.branch_after != mission_branch:
+                # another branch, or none at all: a detached HEAD is not "no change"
+                files.set_feature(mdir, feat.id, status="pending")
+                where = ("on branch " + grade.branch_after) if grade.branch_after else "detached from any branch"
+                return stop(ctx, "gate-blocked",
+                            detail="%s left the checkout %s, not on the mission branch %s" % (outcome.task, where, mission_branch),
+                            needs="check out the mission branch, reconcile the worker's commits, then missions run again")
             if cls == "done":
-                steps.ingest_minimal(ctx, feat, grade)
+                steps.ingest(ctx, feat, grade)
                 crash_streak = noop_streak = 0
                 continue
+            if cls == "tests_failed" and grade.status == "blocked":
+                # design §5: worker says blocked -> blocked. Its own reason goes on the decision card;
+                # a re-dispatch would only buy the same answer again.
+                files.set_feature(mdir, feat.id, status="blocked")
+                return stop(ctx, "gate-blocked", halt=True,
+                            detail="%s reports %s blocked: %s" % (
+                                outcome.task, feat.id, "; ".join(grade.undone[:3]) or "no reason given under Left undone"),
+                            needs="decide: fix the brief or the contract (/missions:mission-amend), or set %s back to pending" % feat.id)
             if cls in ("malformed_handoff", "tests_failed"):
                 n = journal.attempts(mdir, feat.id)
                 if n > repair_rounds:
@@ -315,11 +328,11 @@ def _run_locked(ctx: Context, args) -> int:
                 files.set_feature(mdir, feat.id, status="pending")
                 ctx.log("   re-dispatching %s with the rejection (%d of %d)" % (feat.id, n, repair_rounds + 1))
                 continue
-            if cls == "handoff_missing":
-                return stop(ctx, "gate-blocked", halt=True,
-                            detail="%s: commit %s landed but no handoff was written" % (feat.id, (grade.new_commit or "")[:7]),
-                            needs="the record is missing, not necessarily the work: inspect the commit, reconstruct "
-                                  "handoffs/%s.md marked 'reconstructed', then set Status pending or done (D2 automates this)" % feat.id)
+            if cls == "infra_quota":
+                files.set_feature(mdir, feat.id, status="pending")
+                return stop(ctx, "provider-quota",
+                            detail="%s: the harness reported a quota or rate limit: %s" % (outcome.task, grade.quota),
+                            needs="wait for the reset, then missions run again (the driver's own sleep-and-resume is #7)")
             if cls in ("infra_crash", "stalled"):
                 crash_streak += 1
                 files.set_feature(mdir, feat.id, status="pending")

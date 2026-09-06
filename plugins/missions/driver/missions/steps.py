@@ -1,9 +1,11 @@
-"""The worker step and the minimal ingest (design §6, D1 subset).
+"""The worker step and the ingest (design §6).
 
-step_worker: render -> take the 0.2 locks -> journal dispatch -> adapter.run() BLOCKS -> journal
-return and cost -> release locks -> grade after exit -> classify -> journal step_done.
-ingest_minimal: on `done`, range + patch + features.md + contract.md (claimed, never proven) +
-open issues + resume_next + handoff_ingested. D2 (#4) owns the full ingest.
+step_worker: render -> take the 0.2 locks -> journal dispatch -> adapter.run() BLOCKS, with the
+watchdog watching the branch -> journal return and cost -> release locks -> grade after exit,
+exactly once, keyed by task -> classify -> journal step_done. A commit without a handoff is
+reconstructed here and graded once more before the loop sees a class.
+ingest: on `done`, range + patch + features.md + contract.md (claimed, never proven) + open issues
++ code-index refresh + resume_next + handoff_ingested.
 """
 from __future__ import annotations
 
@@ -14,10 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from . import files, journal, prompts
+from . import files, journal, prompts, watchdog
 from .adapters import base
-from .grade import grade_feature
-from .outcome import Grade, Outcome, RunRequest, classify_minimal
+from .grade import grade_feature, reconstruct
+from .outcome import Grade, Outcome, RunRequest, classify
 
 WORKER_DEFAULTS = {"timeout_s": 2400, "budget_usd": 8.0}
 
@@ -72,9 +74,7 @@ def build_request(ctx: Context, feature: files.Feature, task: str, run_dir: Path
 def _write_outcome(run_dir: Path, outcome: Outcome, grade: Optional[Grade]) -> None:
     doc = outcome.to_json()
     if grade is not None:
-        doc["grade"] = {"handoff_exists": grade.handoff_exists, "problems": grade.problems,
-                        "status": grade.status, "sha": grade.sha, "commit_on_branch": grade.commit_on_branch,
-                        "new_commit": grade.new_commit, "issues": grade.issues}
+        doc["grade"] = grade.to_json()
     (run_dir / "outcome.json").write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n",
                                           encoding="utf-8")
 
@@ -93,13 +93,19 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
     assertions = [a for a in files.read_contract(mdir) if a.id in feature.assertions]
     design = files.design_section(mdir, fid)
     rejection = journal.last_rejection(mdir, fid)
-    user = prompts.worker_prompt(mdir, feature, digest_text, assertions, design, ctx.plugin, rejection)
+    inherited = files.dirty_paths(ctx.checkout)
+    user = prompts.worker_prompt(mdir, feature, digest_text, assertions, design, ctx.plugin, rejection,
+                                 inherited=inherited)
     files.write_text(run_dir / "prompt.md", user)
     files.write_text(run_dir / "system.md", system)
     req = build_request(ctx, feature, task, run_dir, meta, state.phase)
 
-    # launch: nothing is graded here -- a launch grades nothing
+    # launch: nothing is graded here -- a launch grades nothing. What is recorded is the identity
+    # the grade will be keyed to: HEAD and the handoff's content as they were when this task began.
     head_before = files.git_out(ctx.checkout, "rev-parse", "HEAD")
+    handoff_before = files.fingerprint(files.handoff_path(mdir, fid))
+    req.watchdog = watchdog.Watchdog(mdir, ctx.checkout, fid, task, head_before, handoff_before, run_dir,
+                                     log=ctx.log, **watchdog.config(ctx.cfg))
     files.set_feature(mdir, fid, status="active")
     files.write_lock(mdir / ".writer", "mission-worker", fid, task, ctx.session)
     files.write_lock(mdir / ".lease", "mission-worker", fid, task, ctx.session)
@@ -117,10 +123,15 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
             if line is not None:
                 journal.append(mdir, event, reason="returned", lock=line)
 
-    status = "timed_out" if outcome.timed_out else ("completed" if outcome.rc == 0 else "error")
+    if outcome.timed_out:
+        status = "timed_out"
+    elif outcome.killed_by:
+        status = "killed"
+    else:
+        status = "completed" if outcome.rc == 0 else "error"
     journal.append(mdir, "agent_return", agent="mission-worker", feature=fid, dispatch_id=task,
                    duration_s=int(round(outcome.elapsed_s)), status=status, rc=outcome.rc,
-                   model=outcome.model, task=task)
+                   model=outcome.model, task=task, killed_by=outcome.killed_by)
     journal.append(mdir, "cost", task=task, unit=outcome.cost.get("unit"), value=outcome.cost.get("value"),
                    source=outcome.cost.get("source"), harness=outcome.harness, model=outcome.model)
     if outcome.cost.get("unit") == "usd" and isinstance(outcome.cost.get("value"), (int, float)):
@@ -131,16 +142,41 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
                        text="processes were still alive in the run's process group after it exited")
     _write_outcome(run_dir, outcome, None)
 
-    # grade after exit, exactly once
-    grade = grade_feature(mdir, fid, ctx.checkout, ctx.plugin, head_before)
-    cls = classify_minimal(outcome, grade)
+    # grade after exit, exactly once, keyed to this task; commits count on the mission branch's ref
+    branch = ctx.cfg.get("branch") or state.branch
+    grade = grade_feature(mdir, fid, ctx.checkout, ctx.plugin, head_before, handoff_before,
+                          feature.assertions, task=task, outcome=outcome, branch=branch)
+    cls = classify(outcome, grade)
+    if cls == "handoff_missing":
+        # the work is on the branch, the record is not: write the record from the work, then grade
+        # it like any other. A run that ended on its own terms (a clean exit, or the watchdog ending
+        # a worker that went idle after its commit) is recorded complete; one cut off by its
+        # deadline or a crash is recorded partial, and comes back as a re-dispatch, not as done.
+        commit = grade.new_commit or ""
+        finished = outcome.killed_by == watchdog.COMMIT_NO_HANDOFF or (not outcome.killed and outcome.rc == 0)
+        how = ("was ended by the driver (%s)" % outcome.killed_by) if outcome.killed else ("exited %d" % outcome.rc)
+        reconstruct(mdir, fid, ctx.checkout, head_before, commit, task, feature.assertions, how, finished=finished)
+        journal.append(mdir, "handoff_reconstructed", task=task, feature=fid, commit=commit[:7],
+                       status="complete" if finished else "partial", killed_by=outcome.killed_by, rc=outcome.rc)
+        ctx.log("   %s: commit %s landed without a handoff -- reconstructed it from the commit as %s" % (
+            task, commit[:7], "complete" if finished else "partial"))
+        grade = grade_feature(mdir, fid, ctx.checkout, ctx.plugin, head_before, handoff_before,
+                              feature.assertions, task=task, outcome=outcome, branch=branch)
+        grade.reconstructed = True
+        cls = classify(outcome, grade)
     outcome.cls = cls
     _write_outcome(run_dir, outcome, grade)
     problems = list(grade.problems)
     if cls == "no_op":
         problems.append("the run exited %d but produced no commit and no handoff" % outcome.rc)
+    if cls == "infra_quota":
+        problems.append("the harness reported a quota or rate limit: %s" % grade.quota)
+    if cls == "tests_failed":
+        problems.append("the handoff reports status %s%s" % (
+            grade.status, (": " + "; ".join(grade.undone[:3])) if grade.undone else " and says nothing under Left undone"))
     journal.append(mdir, "step_done", step=task, feature=fid, cls=cls, elapsed_s=round(outcome.elapsed_s, 1),
-                   rc=outcome.rc, problems=problems or None, task=task)
+                   rc=outcome.rc, problems=problems or None, task=task, killed_by=outcome.killed_by,
+                   reconstructed=True if grade.reconstructed else None)
     mark = "ok" if cls == "done" else "xx"
     ctx.log("%s %s  %s  rc=%d  %.1fs  cost=%s%s" % (
         mark, task, cls, outcome.rc, outcome.elapsed_s, _fmt_cost(outcome.cost),
@@ -181,7 +217,7 @@ def _base_for(ctx: Context, head: str) -> Tuple[str, str]:
     return (parent or head), "the commit's first parent (no previous feature, no main branch)"
 
 
-def ingest_minimal(ctx: Context, feature: files.Feature, grade: Grade) -> Dict:
+def ingest(ctx: Context, feature: files.Feature, grade: Grade) -> Dict:
     mdir = ctx.mission_dir
     fid = feature.id
     head = grade.sha or ""
@@ -202,9 +238,15 @@ def ingest_minimal(ctx: Context, feature: files.Feature, grade: Grade) -> Dict:
             res.returncode, rng[:15], (res.stderr.strip().splitlines() or ["no output"])[-1][:200]))
 
     files.set_feature(mdir, fid, status="done", commit=head, rng=rng)
-    claimed = files.claim_assertions(mdir, feature.assertions)
+    # what the handoff claims, within the feature's assertions -- never the feature's list wholesale
+    claimed = files.claim_assertions(mdir, [a for a in grade.claimed if a in feature.assertions])
     if grade.issues:
         files.add_open_issues(mdir, ["%s handoff: %s" % (fid, i) for i in grade.issues])
+    if grade.reconstructed:
+        journal.append(mdir, "note", feature=fid, task=grade.task,
+                       text="%s's handoff was reconstructed by the driver from commit %s; its claims carry no "
+                            "worker test evidence -- the VALIDATE reviewers must run the procedures themselves" % (fid, head[:7]))
+    _refresh_index(ctx)
 
     feats = files.read_features(mdir)
     same = [f for f in feats if f.milestone == feature.milestone]
@@ -222,8 +264,33 @@ def ingest_minimal(ctx: Context, feature: files.Feature, grade: Grade) -> Dict:
                              spend_usd=("%.2f" % spend) if spend is not None else "unknown")
     rec = journal.append(mdir, "handoff_ingested", feature=fid, status=grade.status or "complete",
                          commit=head[:7], range="%s..%s" % (base_sha[:7], head[:7]),
-                         claimed=claimed or None, patch=patch, base_from=how)
-    ctx.log("   ingested %s: range %s..%s (%s)%s%s" % (
+                         claimed=claimed or None, patch=patch, base_from=how, task=grade.task or None,
+                         reconstructed=True if grade.reconstructed else None)
+    ctx.log("   ingested %s: range %s..%s (%s)%s%s%s" % (
         fid, base_sha[:7], head[:7], how, (", claimed " + ", ".join(claimed)) if claimed else "",
-        (", %d issue(s) -> open issues" % len(grade.issues)) if grade.issues else ""))
+        (", %d issue(s) -> open issues" % len(grade.issues)) if grade.issues else "",
+        " -- RECONSTRUCTED handoff" if grade.reconstructed else ""))
     return rec
+
+
+def _refresh_index(ctx: Context) -> None:
+    """`graphify update .` after every handoff when state.md's intelligence line names graphify
+    (SKILL.md "Ingesting a handoff"): AST-only, no LLM. Best effort; a failure is a note."""
+    try:
+        text = files.read_text(ctx.mission_dir / "state.md")
+    except OSError:
+        return
+    line = next((ln for ln in text.splitlines() if "codebase intelligence:" in ln.lower()), "")
+    if "graphify=" not in line or "graphify=none" in line:
+        return
+    try:
+        res = subprocess.run(["graphify", "update", "."], cwd=str(ctx.checkout), capture_output=True,
+                             text=True, encoding="utf-8", errors="replace", timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        journal.append(ctx.mission_dir, "note", text="graphify update failed: %s" % str(e)[:200])
+        return
+    if res.returncode != 0:
+        tail = (res.stderr.strip().splitlines() or res.stdout.strip().splitlines() or ["no output"])[-1]
+        journal.append(ctx.mission_dir, "note", text="graphify update exited %d: %s" % (res.returncode, tail[:200]))
+    else:
+        ctx.log("   graphify update: ok")

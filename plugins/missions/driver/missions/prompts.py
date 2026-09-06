@@ -79,7 +79,8 @@ def _indent(text: str, prefix: str = "  ") -> str:
 
 def worker_prompt(mission_dir: Path, feature: files.Feature, digest_text: str,
                   assertions: List[files.Assertion], design: Tuple[str, List[str]],
-                  plugin: Path, rejection: Optional[Dict] = None) -> str:
+                  plugin: Path, rejection: Optional[Dict] = None,
+                  inherited: Optional[List[str]] = None) -> str:
     slug = mission_dir.name
     parts: List[str] = []
     parts.append("Mission: %s. Feature: %s \u2014 %s." % (slug, feature.id, feature.title or feature.id))
@@ -117,6 +118,14 @@ def worker_prompt(mission_dir: Path, feature: files.Feature, digest_text: str,
     parts.append("starts with \"%s:\", and .missions/%s/handoffs/%s.md written to the schema in" % (feature.id, slug, feature.id))
     parts.append("%s/templates/MISSIONS_TEMPLATES.md. Do not push." % plugin)
     parts.append("Do not spawn background work or sub-agents; the driver waits only for this process.")
+    parts.append("Before you exit, run `bash %s/bin/missions grade %s %s --self` and fix what it reports:" % (
+        plugin, mission_dir, feature.id))
+    parts.append("the driver runs the same check after you exit, and a handoff it rejects costs another run.")
+    if inherited:
+        parts.append("")
+        parts.append("The working tree carries uncommitted changes from a previous attempt (%s%s)." % (
+            ", ".join("`%s`" % f for f in inherited[:6]), ", ..." if len(inherited) > 6 else ""))
+        parts.append("Review them before you start: keep what is right and commit it with your work, discard the rest.")
     if rejection:
         parts.append("")
         parts.append("Your previous attempt (%s) was rejected after it exited:" % rejection.get("step", "?"))

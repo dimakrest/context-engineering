@@ -9,6 +9,9 @@ echo "# $f" >> analytics/service.py
 git add analytics/service.py
 git commit -qm "$f: stub work"
 sha=$(git rev-parse HEAD)
+# the feature's own assertions, from features.md (a claim outside them is rejected by the grade)
+claims=$(sed -n "/^### $f /,/^### /p" "$MISSIONS_DIR/features.md" | sed -n 's/^- \*\*Assertions:\*\* //p' | head -1 \
+  | tr ',' '\n' | sed 's/^ *//; s/ *$//' | sed 's/^\(A[0-9]*\).*/- \1 — satisfied by `analytics\/service.py:1`/')
 mkdir -p "$MISSIONS_DIR/handoffs"
 cat > "$MISSIONS_DIR/handoffs/$f.md" <<EOF
 # Handoff $f — stub work
@@ -17,7 +20,7 @@ cat > "$MISSIONS_DIR/handoffs/$f.md" <<EOF
 complete
 
 ## Assertions claimed
-- A001 — satisfied by \`analytics/service.py:1\`
+$claims
 
 ## Completed
 Appended $f to analytics/service.py.

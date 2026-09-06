@@ -1,0 +1,12 @@
+# A worker that detaches HEAD, commits and writes a valid handoff has moved nothing on the mission
+# branch. The grade measures against the branch's ref, not HEAD: the commit is not on it, the empty
+# branch name is a branch change, and the run is gate-blocked with the feature pending. (review of #17)
+rc=5
+journal~="event":"step_done".*"step":"F001#1".*"cls":"malformed_handoff".*not on the mission branch
+journal~="event":"stop".*"reason":"gate-blocked".*detached from any branch
+journal!~="event":"handoff_ingested"
+journal!~="dispatch_id":"F001#2"
+journal!~="event":"halt"
+postcheck=sed -n '/^### F001/,/^##/p' "$M/features.md" | grep 'Status:\*\* pending' >/dev/null
+postcheck=[ "$(git rev-parse mission/demo)" = "$(git rev-parse HEAD~1)" ]
+postcheck=grep -E '^\| A001 .*\| unproven \|' "$M/contract.md" >/dev/null

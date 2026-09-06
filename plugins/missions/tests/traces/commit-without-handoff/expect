@@ -1,0 +1,26 @@
+# The S3 shape: the worker commits, then goes idle without writing its handoff. The watchdog
+# journals commit_observed, ends the run after the grace, the driver reconstructs the handoff,
+# grades it ONCE, ingests it and moves to the next feature. No human. (#4)
+rc=5
+journal~="event":"dispatch".*"dispatch_id":"F001#1"
+journal~="event":"commit_observed".*"task":"F001#1".*"handoff":"pending"
+journal~="event":"agent_return".*"dispatch_id":"F001#1".*"status":"killed".*"killed_by":"watchdog:commit_no_handoff"
+journal~="event":"handoff_reconstructed".*"task":"F001#1"
+journal~="event":"step_done".*"step":"F001#1".*"cls":"done".*"reconstructed":true
+journal~="event":"note".*reconstructed by the driver
+journal~="event":"handoff_ingested".*"feature":"F001".*"reconstructed":true
+journal~="event":"dispatch".*"dispatch_id":"F002#1"
+journal~="event":"handoff_ingested".*"feature":"F002"
+journal~="event":"stop".*"reason":"gate-blocked"
+journal!~="event":"halt"
+state~=^phase: validating
+git~=F001: stub work
+file=handoffs/F001.md
+file=patches/F001.patch
+postcheck=head -1 "$M/handoffs/F001.md" | grep 'reconstructed by the driver (F001#1)' >/dev/null
+postcheck=[ "$(grep -c '"event":"step_done".*"feature":"F001"' "$M/journal.jsonl")" = 1 ]
+postcheck=[ "$(grep -c '"event":"commit_observed"' "$M/journal.jsonl")" = 1 ]
+postcheck=[ "$(jq -r 'select(.event=="agent_return" and .dispatch_id=="F001#1") | .duration_s' "$M/journal.jsonl")" -lt 20 ]
+postcheck=test -f "$M/runs/F001#1/journal-at-commit.jsonl" && ! grep -q '"event":"step_done"\|"event":"commit_observed"' "$M/runs/F001#1/journal-at-commit.jsonl"
+postcheck=grep -q '"cls": "done"' "$M/runs/F001#1/outcome.json" && grep -q '"reconstructed": true' "$M/runs/F001#1/outcome.json"
+postcheck=grep -q 'claimed by the driver from commit' "$M/handoffs/F001.md" && bash "$plugin/bin/missions" grade "$M" F001 --self

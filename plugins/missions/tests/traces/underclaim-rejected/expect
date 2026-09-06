@@ -1,0 +1,11 @@
+# A handoff that says complete but marks one of the feature's assertions NOT satisfied is not
+# complete: rejected with the missing id named, re-dispatched with it, and the contract marks
+# claimed only what a handoff claims. A bullet naming two ids claims both. (review of #17)
+rc=3
+args=--limit 2
+journal~="event":"step_done".*"step":"F001#1".*"cls":"malformed_handoff".*A002 not claimed
+journal~="event":"step_done".*"step":"F001#2".*"cls":"done"
+journal~="event":"handoff_ingested".*"feature":"F001".*"claimed":\["A001","A002"\]
+journal~="event":"stop".*"reason":"limit-reached"
+postcheck=grep 'A002 not claimed' "$M/runs/F001#2/prompt.md" >/dev/null
+postcheck=grep -E '^\| A001 .*\| claimed \|' "$M/contract.md" >/dev/null && grep -E '^\| A002 .*\| claimed \|' "$M/contract.md" >/dev/null

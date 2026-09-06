@@ -3,3 +3,6 @@ plugins/missions/tests/cases/
 __pycache__/
 plugins/missions/tests/traces/.out/
 plugins/missions/tests/traces/.selftest.log
+
+# subagent worktrees (Claude Code isolation) must never be committed as gitlinks
+.claude/worktrees/

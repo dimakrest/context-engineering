@@ -1,0 +1,7 @@
+#!/bin/bash
+# Launcher for the missions driver: `python3 -m missions` with the package on the path.
+# The package lives in plugins/missions/driver/missions; stdlib only, python >= 3.9.
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+export MISSIONS_PLUGIN_ROOT="${MISSIONS_PLUGIN_ROOT:-$(cd "$here/.." && pwd)}"
+export PYTHONPATH="$here/../driver${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -m missions "$@"

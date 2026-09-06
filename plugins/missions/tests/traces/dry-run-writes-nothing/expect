@@ -1,0 +1,10 @@
+rc=0
+args=--dry-run
+nofile=runs
+nofile=.driver.lock
+nofile=.writer
+stdout~=\[1/2\] F001#1
+stdout~=\[2/2\] F002#1
+stdout~=nothing executed
+postcheck=[ ! -s "$M/journal.jsonl" ]
+postcheck=grep -q 'resume_next: dispatch F001 (M1 feature 1 of 2)' "$M/state.md"

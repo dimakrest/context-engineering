@@ -438,6 +438,16 @@ case(H, "missing-handoff-rc2", "rc=2\nstderr~=no handoff at", stdin=agent_payloa
 case(H, "blocked-handoff-without-sha-ok", "rc=0", stdin=agent_payload("mission-worker", WORKER_PROMPT, event="PostToolUse"), missions={"demo": demo(**{"handoffs/F002.md": HANDOFF_OK})})
 case(H, "missing-section-rc2", "rc=2\nstderr~=missing sections", stdin=agent_payload("mission-worker", WORKER_PROMPT, event="PostToolUse"), missions={"demo": demo(**{"handoffs/F002.md": HANDOFF_OK.replace("## Left undone\ny\n\n", "")})})
 case(H, "feature-from-first-line-not-digest", "rc=0", stdin=agent_payload("mission-worker", WORKER_PROMPT_DIGEST_FIRST, event="PostToolUse"), missions={"demo": demo(**{"handoffs/F002.md": HANDOFF_OK})})
+# MISSION_DIR pins the mission for the driver (it calls this hook as the schema function). Relative to the
+# hook's cwd because run.sh does not expand $TMP in env= lines. Without it, glob order picks `demo` first.
+case(H, "mission-dir-override-picks-second-mission", "rc=0\nenv=MISSION_DIR=.missions/second", stdin=agent_payload("mission-worker", WORKER_PROMPT, event="PostToolUse"),
+     missions={"demo": demo(), "second": demo(**{"handoffs/F002.md": HANDOFF_OK})})
+case(H, "mission-dir-unset-picks-first-active", "rc=2\nstderr~=no handoff at", stdin=agent_payload("mission-worker", WORKER_PROMPT, event="PostToolUse"),
+     missions={"demo": demo(), "second": demo(**{"handoffs/F002.md": HANDOFF_OK})})
+case(H, "mission-dir-override-bypasses-halted-phase", "rc=2\nstderr~=no handoff at\nenv=MISSION_DIR=.missions/demo", stdin=agent_payload("mission-worker", WORKER_PROMPT, event="PostToolUse"),
+     missions={"demo": demo(**{"state.md": state_block(phase="halted")})})
+case(H, "mission-dir-override-nonexistent-falls-through", "rc=2\nstderr~=no handoff at\nenv=MISSION_DIR=.missions/nope", stdin=agent_payload("mission-worker", WORKER_PROMPT, event="PostToolUse"),
+     missions={"demo": demo()})
 
 # ================================================================ rehydrate
 case("mission-rehydrate", "prints-digest-when-active", "rc=0\nstdout~=MISSION ACTIVE: demo\nstdout~=resume_next: dispatch F002\nstdout~=Standing constraints", stdin={"session_id": "s1", "hook_event_name": "SessionStart", "source": "compact"}, missions={"demo": demo()})

@@ -1,0 +1,6 @@
+rc=4
+journal~="event":"halt".*"class":"block".*dollar cap
+journal~="event":"stop".*"reason":"budget"
+journal!~="event":"dispatch"
+state~=^phase: halted
+state~=^resume_next: budget

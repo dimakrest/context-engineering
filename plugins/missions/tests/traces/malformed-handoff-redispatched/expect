@@ -1,0 +1,9 @@
+rc=5
+journal~="event":"dispatch".*"dispatch_id":"F001#1"
+journal~="event":"step_done".*"step":"F001#1".*"cls":"malformed_handoff"
+journal~="event":"dispatch".*"dispatch_id":"F001#2"
+journal~="event":"step_done".*"step":"F001#2".*"cls":"done"
+journal~="event":"handoff_ingested".*"feature":"F001"
+journal~="event":"handoff_ingested".*"feature":"F002"
+postcheck=grep -q 'was rejected' "$M/runs/F001#2/prompt.md" && grep -q 'Left undone' "$M/runs/F001#2/prompt.md"
+postcheck=! grep -q 'was rejected' "$M/runs/F001#1/prompt.md"

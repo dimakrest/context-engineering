@@ -1,3 +1,5 @@
 plugins/missions/tests/cases/
 .DS_Store
 __pycache__/
+plugins/missions/tests/traces/.out/
+plugins/missions/tests/traces/.selftest.log

@@ -22,7 +22,7 @@
     {
       "name": "missions",
       "description": "Contract-first multi-feature agent missions: plan the definition of done, run serial workers with blind review and behaviour validation, enforced by hooks (writer lock, execution lease, spend/dispatch caps, blindness, commit discipline).",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "author": {
         "name": "Dima Krest"
       },

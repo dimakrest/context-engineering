@@ -1,0 +1,8 @@
+rc=3
+args=--limit 1
+journal~="event":"handoff_ingested".*"feature":"F001"
+journal~="event":"stop".*"reason":"limit-reached"
+journal!~="dispatch_id":"F002#1"
+journal!~="event":"halt"
+state~=^phase: implementing
+state~=^resume_next: limit-reached

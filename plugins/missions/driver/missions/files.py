@@ -419,14 +419,24 @@ def next_milestone(mission_dir: Path, current: str) -> Optional[str]:
     return ids[ids.index(current) + 1]
 
 
+def next_feature_id(mission_dir: Path) -> str:
+    """The id append_feature gives the next feature: the highest `### F` plus one -- never a
+    reused number, whatever milestone the last one sits in. Exposed because a repair feature and
+    the follow-ups it repairs name each other, so the applier needs the id before the feature
+    exists; the two must compute it the same way, and do."""
+    lines = read_text(mission_dir / "features.md").split("\n")
+    n = max([int(m.group(1)[1:]) for ln in lines for m in [_FEATURE_RE.match(ln)] if m] or [0])
+    return "F%03d" % (n + 1)
+
+
 def append_feature(mission_dir: Path, milestone: str, title: str, assertions: List[str],
                    file_list: List[str], procedures: str, out_of_scope: str, repairs_line: str) -> str:
     """Add `### F0nn — <title>` at the end of the milestone's section, in the template's shape,
     with the `- **Repairs:**` line that marks a repair feature (check.sh's feature/file gate skips
-    those: a repair re-touches files its origin feature already lists). The id is the highest
-    existing one plus one -- ids are never reused, whatever milestone the last one sits in.
-    Returns the new id."""
+    those: a repair re-touches files its origin feature already lists). The id is
+    `next_feature_id`'s. Returns the new id."""
     path = mission_dir / "features.md"
+    fid = next_feature_id(mission_dir)
     lines = read_text(path).split("\n")
     head = next((i for i, ln in enumerate(lines)
                  if _MILESTONE_RE.match(ln) and _MILESTONE_RE.match(ln).group(1) == milestone), None)
@@ -435,8 +445,6 @@ def append_feature(mission_dir: Path, milestone: str, title: str, assertions: Li
     end = next((i for i in range(head + 1, len(lines)) if re.match(r"^##\s", lines[i])), len(lines))
     while end > head + 1 and not lines[end - 1].strip():
         end -= 1          # insert after the section's last text line; the blank(s) before the next heading stay
-    n = max([int(m.group(1)[1:]) for ln in lines for m in [_FEATURE_RE.match(ln)] if m] or [0]) + 1
-    fid = "F%03d" % n
     dash = "\u2014"
     block = [
         "",
@@ -774,16 +782,25 @@ def _disposition_line(entry: Dict) -> str:
     return d
 
 
+def next_followup_id(mission_dir: Path) -> str:
+    """The id append_followups gives the next entry: the highest `## FU` plus one (FU001 for a
+    missing or empty registry). Exposed for the same reason as next_feature_id."""
+    path = mission_dir / "followups.md"
+    text = read_text(path) if path.exists() else ""
+    n = max([int(m.group(1)[2:]) for ln in text.split("\n") for m in [_FU_RE.match(ln)] if m] or [0])
+    return "FU%03d" % (n + 1)
+
+
 def append_followups(mission_dir: Path, entries: List[Dict]) -> List[str]:
     """Register findings in followups.md in the template's exact shape -- check.sh's registry
     rules and mission-converge.sh's `(from M<n>-...)` attribution both parse it. Ids continue from
-    the highest existing `## FU`; nothing above the new entries is rewritten. Each entry is a dict:
+    `next_followup_id`; nothing above the new entries is rewritten. Each entry is a dict:
     title, source (`M1-review-F001`), assertion (or None), found_by, where, severity, cluster,
     cluster_label, blocking (bool), disposition (`repair` with repair_as, `accept`, `waive` -- or
     an already rendered line, written verbatim), why. Returns the new ids."""
     path = mission_dir / "followups.md"
     text = read_text(path) if path.exists() else "# Follow-ups \u2014 %s\n" % mission_dir.name
-    n = max([int(m.group(1)[2:]) for ln in text.split("\n") for m in [_FU_RE.match(ln)] if m] or [0])
+    n = int(next_followup_id(mission_dir)[2:]) - 1
     ids: List[str] = []
     blocks: List[str] = []
     for e in entries:

@@ -1,10 +1,11 @@
 """The loop (design §6): preflight, then `while True:` until a typed stop.
 
-Every iteration reloads state from disk, checks the caps and the gates, picks the first ready
-feature of the current milestone, and runs the worker step. It exits only through stop(reason).
-The judgment steps (triage, decide, negotiate), VALIDATE and the pr phase are D3; where the loop
-would need one it stops with `gate-blocked` and names what the human runs instead. A quota stops
-the loop with `provider-quota`; the sleep-and-resume is #7.
+Every iteration reloads state from disk, checks the caps and the gates, sends open issues through
+the triage judgment step, picks the first ready feature of the current milestone, and runs the
+worker step. It exits only through stop(reason) -- steps.stop, re-exported here with EXIT_CODES.
+VALIDATE (scrutiny, blind review, behavior, negotiate) and the pr phase are not driven yet; where
+the loop would need one it stops with `gate-blocked` and names what the human runs instead. A
+quota stops the loop with `provider-quota`; the sleep-and-resume is #7.
 """
 from __future__ import annotations
 
@@ -21,13 +22,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from . import __version__, files, journal, prep, prompts, steps
 from .adapters import NAMES, make_adapter
-from .steps import Context
-
-EXIT_CODES = {
-    "done": 0, "error": 1, "preflight-failed": 2, "limit-reached": 3, "budget": 4,
-    "gate-blocked": 5, "authority": 6, "contract": 7, "provider-quota": 8, "interrupted": 130,
-}
-ALWAYS_HALT = ("budget", "contract", "authority")
+from .steps import EXIT_CODES, Context, stop   # re-exported: cli reads EXIT_CODES from here
 
 
 class LockHeld(Exception):
@@ -149,32 +144,6 @@ def preflight(mission_dir: Path, plugin: Path, harness: Optional[str] = None) ->
     return problems, warnings, cfg
 
 
-# ---------------------------------------------------------------- stop
-
-def stop(ctx: Context, reason: str, detail: str = "", needs: str = "", halt: bool = False,
-         resume_next: Optional[str] = None) -> int:
-    code = EXIT_CODES[reason]
-    mdir = ctx.mission_dir
-    if reason in ALWAYS_HALT:
-        halt = True
-    try:
-        if reason == "done":
-            files.write_state_fields(mdir, phase="done")
-        elif halt:
-            journal.append(mdir, "halt", **{"class": "block"}, reason=("%s: %s" % (reason, detail))[:300],
-                           decision_needed=needs or None)
-            files.write_state_fields(mdir, phase="halted")
-        files.write_state_fields(mdir, resume_next=(resume_next or ("%s: %s" % (reason, needs or detail)))[:240])
-    except files.MissionFileError as e:
-        ctx.log("warning: could not update state.md: %s" % e)
-    journal.append(mdir, "stop", reason=reason, detail=detail or None, needs=needs or None, exit=code,
-                   run_id=ctx.run_id)
-    ctx.log("-- stopped: %s%s" % (reason, (" -- " + detail) if detail else ""))
-    if needs:
-        ctx.log("   next: " + needs)
-    return code
-
-
 # ---------------------------------------------------------------- run
 
 def run(mission_dir: Path, args) -> int:
@@ -269,9 +238,12 @@ def _run_locked(ctx: Context, args) -> int:
             if r is not None:
                 return r
             if st.open_issues:
-                return stop(ctx, "gate-blocked",
-                            detail="%d open issue(s) block the next feature: %s" % (len(st.open_issues), st.open_issues[0][:120]),
-                            needs="resolve each, or defer it to followups.md, then clear it from state.md (the driver's triage step is D3)")
+                # a handoff's issues go through triage before anything new starts: resolved,
+                # deferred or repaired by the driver on a judgment's proposal, or escalated to a halt
+                r = steps.step_triage(ctx, st)
+                if r is not None:
+                    return r
+                continue
             milestone = getattr(args, "milestone", None) or st.milestone
             mfeats = [f for f in feats if f.milestone == milestone]
             if not mfeats:

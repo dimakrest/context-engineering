@@ -17,16 +17,18 @@ PLUGIN = HERE.parent
 sys.path.insert(0, str(PLUGIN / "driver"))
 os.environ.setdefault("MISSIONS_PLUGIN_ROOT", str(PLUGIN))
 
+import re  # noqa: E402
 import subprocess  # noqa: E402
 import time  # noqa: E402
 
-from missions import cli, files, grade as grading, journal, judgment, loop, prep, prompts, verdicts, watchdog  # noqa: E402
+from missions import cli, files, grade as grading, journal, judgment, loop, prep, prompts, steps, verdicts, watchdog  # noqa: E402
 from missions.adapters.claude import ClaudeAdapter, parse_envelope  # noqa: E402
 from missions.adapters.codex import CodexAdapter, parse_events  # noqa: E402
 from missions.adapters.stub import StubAdapter  # noqa: E402
 from missions.outcome import Grade, Outcome, RunRequest, classify  # noqa: E402
 
 BASE = HERE / "traces" / "_base" / "mission"
+STUBS = HERE / "traces" / "_base" / "stub"
 
 
 class Fixture(unittest.TestCase):
@@ -1247,7 +1249,10 @@ class BlindTests(Fixture):
         self.assertEqual(prep.restore_blind(self.m), [])
 
 
-class HostLeaseTests(Fixture):
+class LockEnv:
+    """Points the host lease at a lock under the case's tmp dir, so a test never waits on, or
+    blocks, a real mission. Mix in before the fixture class."""
+
     def setUp(self):
         super().setUp()
         self.lock = self.tmp / "host.lock"
@@ -1261,6 +1266,8 @@ class HostLeaseTests(Fixture):
             os.environ["MISSIONS_HOST_LOCK"] = self.saved
         super().tearDown()
 
+
+class HostLeaseTests(LockEnv, Fixture):
     def try_lock(self):
         """0 when the lock is free, 1 when held -- from another process, as a second driver would be."""
         code = ("import fcntl,sys; f=open(sys.argv[1],'a+')\n"
@@ -1334,6 +1341,433 @@ class CliInitTests(Fixture):
     def test_until_choices(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             cli.main(["run", str(self.m), "--until", "bogus"])
+
+
+class RolePromptTests(Fixture):
+    def test_system_prompt_role_mapping(self):
+        for role, name in (("worker", "mission-worker"), ("reviewer", "mission-reviewer"),
+                           ("scrutiny", "mission-validator-scrutiny"), ("behavior", "mission-validator-behavior")):
+            meta, body = prompts.system_prompt(PLUGIN, role)
+            self.assertEqual(meta.get("name"), name)
+            self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", body)
+        self.assertEqual(prompts.system_prompt(PLUGIN, "mission-worker")[0].get("name"), "mission-worker")   # an agent name still works
+        meta, body = prompts.system_prompt(PLUGIN, "judgment")
+        self.assertEqual((meta["name"], meta["tools"]), ("mission-judgment", ["Read", "Glob", "Grep"]))
+        self.assertIs(body, prompts.JUDGMENT_SYSTEM)
+        self.assertIn("exactly one JSON object", body)
+        self.assertIn("You edit nothing", body)
+        self.assertEqual(sorted(prompts.AGENTS), ["behavior", "judgment", "reviewer", "scrutiny", "worker"])
+
+    def test_skill_section(self):
+        v = prompts.skill_section(PLUGIN, "VALIDATE")
+        self.assertTrue(v.startswith("## VALIDATE \u2014 at every milestone\n"))
+        self.assertIn("**4. Negotiate.**", v)
+        self.assertIn("| Contract turned out to be wrong |", v)
+        self.assertNotIn("## Halts", v)
+        h = prompts.skill_section(PLUGIN, "Halts")
+        self.assertTrue(h.startswith("## Halts"))
+        self.assertIn("**BLOCK**", h)
+        self.assertIn("**ADVISORY**", h)
+        self.assertNotIn("## Terminal steps", h)
+        self.assertTrue(h.endswith("\n"))
+        self.assertEqual(prompts.skill_section(PLUGIN, "No such section"), "")
+
+    def blind_review_hook(self, prompt, agent="mission-reviewer"):
+        """hooks/mission-blind-review.sh's verdict on an Agent call: 0 allows, 2 blocks."""
+        env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(PLUGIN), MISSION_DIR=str(self.m))
+        res = subprocess.run(["bash", str(PLUGIN / "hooks" / "mission-blind-review.sh")], input=json.dumps(
+            {"tool_name": "Agent", "tool_input": {"subagent_type": agent, "prompt": prompt}}),
+            capture_output=True, text=True, env=env)
+        return res.returncode, res.stderr
+
+    def test_reviewer_prompt_passes_the_blind_review_hook(self):
+        feats = files.read_features(self.m)
+        rows = [a for a in files.read_contract(self.m) if a.id in feats[0].assertions]
+        patch = self.m / "patches" / "F001.patch"
+        text = prompts.reviewer_prompt(self.m, feats[0], rows, files.design_section(self.m, "F001"), patch,
+                                       "0123456789abcdef", "fedcba9876543210", files.intelligence_line(self.m))
+        self.assertTrue(text.startswith(
+            "Mission: demo. Feature: F001 \u2014 feature F001.\nReview the patch for F001 against these assertions. "
+            "You have not seen how or why it was\nwritten and you should not go looking.\n"
+            "  A001 \u2014 Omitting the window equals the whole day  proof budget: min: named test; max: 1 pinning feature\n"
+            "  A002 \u2014 Tenant A never sees tenant B  proof budget: min: mutation (tenancy); max: 1 pinning feature\n"
+            "Design guidelines this feature was bound to (pre-code, from design.md):\n  | D001 |"), text)
+        self.assertIn("\nPatch: %s (base 0123456, head fedcba9) \u2014 read this file; it is your only diff, and you do not "
+                      "run git yourself.\nCodebase intelligence: none \u2014 for every public symbol" % patch, text)
+        self.assertTrue(text.endswith("Write nothing to the repository. Your final message is the review, in the format "
+                                      "your instructions give.\n"))
+        # the 0.2 hook's rules, as regexes and as the hook itself
+        for pat in (r"handoffs?/F[0-9]{3}", r"(?m)^#+[ \t]*Handoff", r"Assertions claimed|Procedures followed|Left undone",
+                    r"origin/main\.\.\.|git[ \t\n]+(log|show)([ \t\n]|$)|git[ \t\n]+diff[ \t\n]"):
+            self.assertIsNone(re.search(pat, text), pat)
+        self.assertRegex(text, r"patches/F[0-9]{3}\.patch")
+        rc, err = self.blind_review_hook(text)
+        self.assertEqual(rc, 0, err)
+        # the hook is live: the same prompt with a git command, or without the patch line, is blocked
+        self.assertEqual(self.blind_review_hook(text + "Also run git log -1.\n")[0], 2)
+        self.assertEqual(self.blind_review_hook(text.replace("patches/F001.patch", "diff.txt"))[0], 2)
+        # a repair feature without a design section borrows its origin's
+        fid = files.append_feature(self.m, "M1", "tenancy filter", ["A002"], ["analytics/service.py"], "", "", "C01 (FU001) of F001")
+        repair = next(f for f in files.read_features(self.m) if f.id == fid)
+        self.assertEqual(steps.design_for(self.m, repair), files.design_section(self.m, "F001"))
+        self.assertEqual(steps.design_for(self.m, feats[2]), files.design_section(self.m, "F003"))
+
+    def test_scrutiny_and_behavior_prompts(self):
+        feats = files.read_features(self.m)
+        rows = files.read_contract(self.m)
+        text = prompts.scrutiny_prompt(self.m, "M1", feats[:2], rows[:2], "```mission-state\nphase: validating\n```")
+        self.assertTrue(text.startswith("Mission: demo. Milestone: M1 \u2014 scrutiny.\n"))
+        self.assertIn("  F001 \u2014 feature F001: files `analytics/service.py`, `tests/unit/test_a.py`; procedures: make test-unit\n", text)
+        self.assertIn("  A002 \u2014 Tenant A never sees tenant B  [structural]\n", text)
+        self.assertIn("  phase: validating\n", text)
+        self.assertIn("## Coverage of milestone assertions", text)
+        text = prompts.behavior_prompt(self.m, "M2", [rows[2]], "```mission-state\nphase: validating\n```", 3)
+        self.assertTrue(text.startswith("Mission: demo. Milestone: M2 \u2014 behavior validation.\n"))
+        self.assertIn("  A003 \u2014 The filter chip is visible on the dashboard  [interface]\n", text)
+        self.assertIn("Live-run cap for this milestone: 3 live runs (mission.md).", text)
+        self.assertNotIn("A001", text)
+        self.assertNotIn("ui/src/Filters.tsx", text)
+        self.assertEqual(self.blind_review_hook(text, "mission-validator-behavior")[0], 0)
+        self.assertIn("none set", prompts.behavior_prompt(self.m, "M2", [rows[2]], "", None))
+
+    def test_judgment_prompts_end_with_the_shape(self):
+        rules = prompts.skill_section(PLUGIN, "VALIDATE")
+        text = prompts.negotiate_prompt(self.m, "M1", 2, "A001: satisfied (validation/M1-review-F001.md)",
+                                        {"validation/M1-scrutiny.md": "## Commands\n| make test-unit | 0 | 1s |\n",
+                                         "validation/M1-review-F001.md": "## Assertion verdicts\n| A001 | satisfied | x |\n"},
+                                        "# Follow-ups \u2014 demo\n", rules)
+        self.assertTrue(text.startswith("Mission: demo. Milestone: M1 \u2014 negotiate, validation round 2.\n"))
+        self.assertIn("  A001: satisfied (validation/M1-review-F001.md)\n", text)
+        self.assertIn("--- validation/M1-scrutiny.md ---\n## Commands\n| make test-unit | 0 | 1s |\n--- validation/M1-review-F001.md ---\n", text)
+        self.assertIn("\nfollowups.md as it stands:\n# Follow-ups \u2014 demo\n", text)
+        self.assertIn("\nThe rules (verbatim from the mission-run skill):\n## VALIDATE", text)
+        self.assertTrue(text.endswith("Answer with exactly this JSON shape:\n" + prompts.NEGOTIATE_SHAPE + "\n" + prompts.ANSWER_LINE + "\n"))
+        self.assertEqual(text.count(prompts.ANSWER_LINE), 1)
+        issues = ["F001 handoff: the test stack would not start on port 5435", "F002 handoff: fixture row missing"]
+        text = prompts.triage_prompt(self.m, issues, {"F001": "# Handoff F001\n\nbody\n"}, "", prompts.skill_section(PLUGIN, "Halts"))
+        self.assertTrue(text.startswith("Mission: demo. Triage of 2 open issue(s).\n"))
+        self.assertIn("\nOpen issues:\n- [1] %s\n- [2] %s\n" % tuple(issues), text)
+        self.assertIn("\n--- handoffs/F001.md ---\n# Handoff F001\n\nbody\n", text)
+        self.assertIn("\nfollowups.md as it stands:\n  (empty)\n", text)
+        self.assertIn("\n## Halts", text)
+        self.assertTrue(text.endswith("Answer with exactly this JSON shape:\n" + prompts.TRIAGE_SHAPE + "\n" + prompts.ANSWER_LINE + "\n"))
+        # the shapes are what the schema checks accept, so a model that copies them is not rejected on shape
+        self.assertIn('"disposition": "resolved"|"defer"|"repair"|"escalate"', prompts.TRIAGE_SHAPE)
+        self.assertIn('"contract_wrong": bool', prompts.NEGOTIATE_SHAPE)
+
+
+class RoleRequestTests(Fixture):
+    def test_per_role_resolution(self):
+        feats = files.read_features(self.m)
+        run = self.m / "runs" / "x"
+        rmeta = prompts.system_prompt(PLUGIN, "reviewer")[0]     # model opus, effort xhigh, its tool list
+        claude = make_ctx(self.m, self.tmp, cfg={"roles": {}}, harness="claude")
+        req = steps.build_request(claude, feats[0], "review-F001#1", run, rmeta, "validating", role="reviewer", step="reviewer")
+        self.assertEqual((req.role, req.step, req.model, req.effort, req.timeout_s, req.budget_usd, req.read_only, req.feature),
+                         ("reviewer", "reviewer", "opus", "xhigh", 1500, 6.0, True, "F001"))
+        self.assertIn("mcp__graphify__query_graph", req.tools)
+        self.assertEqual((req.env["MISSIONS_ROLE"], req.env["MISSIONS_FEATURE"], req.env["MISSIONS_TASK"]), ("reviewer", "F001", "review-F001#1"))
+        self.assertNotIn("MISSIONS_FILES", req.env)
+        # driver.json's role model and effort apply under any harness; the frontmatter only under claude
+        cfg = {"roles": {"reviewer": {"model": "opus-4", "effort": "high", "timeout_s": 10, "budget_usd": None}}}
+        req = steps.build_request(make_ctx(self.m, self.tmp, cfg=cfg, harness="codex"), feats[0], "review-F001#1", run, rmeta, "validating", role="reviewer", step="reviewer")
+        self.assertEqual((req.model, req.effort, req.timeout_s, req.budget_usd, req.read_only), ("opus-4", "high", 10, None, True))
+        req = steps.build_request(make_ctx(self.m, self.tmp, cfg={"roles": {}}, harness="codex"), feats[0], "review-F001#1", run, rmeta, "validating", role="reviewer", step="reviewer")
+        self.assertEqual((req.model, req.effort), (None, None))
+        # mission.md's Reviewer seat beats driver.json under claude and is ignored under codex
+        files.write_text(self.m / "mission.md", files.read_text(self.m / "mission.md").replace(
+            "- Autonomy ceiling: advisory\n", "- Autonomy ceiling: advisory\n- Reviewer seat: sonnet \u2014 cheap\n"))
+        req = steps.build_request(make_ctx(self.m, self.tmp, cfg=cfg, harness="claude"), feats[0], "review-F001#1", run, rmeta, "validating", role="reviewer", step="reviewer")
+        self.assertEqual((req.model, req.effort), ("sonnet", "high"))
+        req = steps.build_request(make_ctx(self.m, self.tmp, cfg=cfg, harness="codex"), feats[0], "review-F001#1", run, rmeta, "validating", role="reviewer", step="reviewer")
+        self.assertEqual(req.model, "opus-4")
+        # scrutiny and behavior run things: not read-only, their own tools and defaults, no feature
+        smeta = prompts.system_prompt(PLUGIN, "scrutiny")[0]
+        req = steps.build_request(claude, None, "scrutiny-M1#1", run, smeta, "validating", role="scrutiny", step="scrutiny")
+        self.assertEqual((req.model, req.effort, req.timeout_s, req.budget_usd, req.read_only, req.feature, req.tools),
+                         ("sonnet", None, 1800, 4.0, False, "", ["Read", "Glob", "Grep", "Bash"]))
+        self.assertEqual(req.env["MISSIONS_FEATURE"], "")
+        bmeta = prompts.system_prompt(PLUGIN, "behavior")[0]
+        req = steps.build_request(claude, None, "behavior-M1#1", run, bmeta, "validating", role="behavior", step="behavior")
+        self.assertEqual((req.model, req.timeout_s, req.budget_usd, req.read_only), ("opus", 2400, 10.0, False))
+        self.assertIn("mcp__playwright__browser_click", req.tools)
+        # judgment: read-only, the constant's tools, no model unless driver.json names one
+        jmeta = prompts.system_prompt(PLUGIN, "judgment")[0]
+        req = steps.build_request(claude, None, "triage#1", run, jmeta, "implementing", role="judgment", step="triage")
+        self.assertEqual((req.model, req.effort, req.timeout_s, req.budget_usd, req.read_only, req.tools, req.step),
+                         (None, None, 300, 2.0, True, ["Read", "Glob", "Grep"], "triage"))
+        cfg = {"roles": {"judgment": {"model": "opus"}}}
+        self.assertEqual(steps.build_request(make_ctx(self.m, self.tmp, cfg=cfg, harness="codex"), None, "triage#1", run, jmeta, "implementing", role="judgment", step="triage").model, "opus")
+        # the worker's shape did not move
+        req = steps.build_request(claude, feats[0], "F001#1", run, {"model": "sonnet", "tools": ["Read"]}, "implementing")
+        self.assertEqual((req.role, req.step, req.read_only, req.model, req.timeout_s), ("worker", "", False, "sonnet", 2400))
+        self.assertIn("MISSIONS_FILES", req.env)
+        self.assertEqual(steps.EXECUTOR_ROLES, ("worker", "reviewer", "scrutiny", "behavior"))
+        self.assertEqual(steps.READ_ONLY_ROLES, ("reviewer", "judgment"))
+
+
+class RunRoleTests(LockEnv, RepoFixture):
+    """Runs through the base stubs: what the journal, the locks and validation/ look like after."""
+
+    def setUp(self):
+        super().setUp()
+        files.write_config(self.m, {"harness": "stub", "checkout": ".", "branch": "mission/demo",
+                                    "adapters": {"stub": {"script_dir": str(STUBS)}}})
+        cfg = files.read_config(self.m)
+        self.ctx = make_ctx(self.m, self.repo, cfg=cfg)
+        self.ctx.adapter = StubAdapter(cfg["adapters"]["stub"])
+
+    def test_reviewer_run_is_blind_leased_and_filed(self):
+        feats = files.read_features(self.m)
+        self.handoff("F001")
+        (self.m / "validation").mkdir()
+        files.write_text(self.m / "validation" / "M0-scrutiny.md", "old")
+        (self.m / "runs" / "F001#1").mkdir(parents=True)
+        files.write_text(self.m / "runs" / "F001#1" / "output.md", "the worker's words")
+        prompt = "Mission: demo. Feature: F001 \u2014 x.\n  A001 \u2014 t  proof budget: b\n  A002 \u2014 u\n"
+        outcome, text = steps.run_role(self.ctx, "reviewer", "reviewer", "review-F001#1", prompt, feature=feats[0],
+                                       milestone="M1", validation_file="M1-review-F001.md")
+        self.assertEqual((outcome.cls, outcome.rc), ("ok", 0))
+        self.assertEqual(verdicts.parse_reviewer(text), {"A001": "satisfied", "A002": "satisfied"})
+        run = self.m / "runs" / "review-F001#1"
+        self.assertEqual(files.read_text(run / "handoffs-visible.txt").strip(), "absent")
+        self.assertTrue((self.m / "handoffs" / "F001.md").exists())                     # restored
+        self.assertEqual(files.read_text(self.m / "runs" / "F001#1" / "output.md"), "the worker's words")
+        self.assertFalse((self.m / ".blind").exists())
+        self.assertFalse((self.m / ".lease").exists())
+        self.assertFalse((self.m / ".writer").exists())
+        self.assertTrue(self.lock.exists())                                              # the host lease was taken
+        self.assertEqual(files.read_text(self.m / "validation" / "M0-scrutiny.md"), "old")
+        v = files.read_text(self.m / "validation" / "M1-review-F001.md")
+        self.assertRegex(v, r"^<!-- review-F001#1 \u00b7 mission-reviewer \u00b7 stub \u00b7 \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ -->\n\n## Assertion verdicts\n")
+        self.assertTrue(v.endswith("none\n"))
+        self.assertTrue((run / "prompt.md").exists() and (run / "system.md").exists() and (run / "env-names.txt").exists())
+        self.assertTrue(files.read_text(run / "system.md").startswith("# Mission Reviewer"))
+        self.assertEqual(json.loads(files.read_text(run / "outcome.json"))["cls"], "ok")
+        evs = [r for r in journal.events(self.m)]
+        names = [r["event"] for r in evs]
+        self.assertEqual(names, ["dispatch", "lease_released", "agent_return", "cost", "step_done"])
+        d = evs[0]
+        self.assertEqual((d["agent"], d["class"], d["feature"], d["milestone"], d["dispatch_id"], d["task"], d["harness"], d["step"], d["session_id"]),
+                         ("mission-reviewer", "executor", "F001", "M1", "review-F001#1", "review-F001#1", "stub", "reviewer", "driver:r1"))
+        self.assertTrue(evs[1]["lock"].startswith("agent=mission-reviewer feature=F001 dispatch_id=review-F001#1 session=driver:r1 "))
+        self.assertEqual((evs[2]["agent"], evs[2]["feature"], evs[2]["status"], evs[2]["rc"]), ("mission-reviewer", "F001", "completed", 0))
+        self.assertEqual((evs[3]["task"], evs[3]["unit"]), ("review-F001#1", "unknown"))
+        self.assertEqual((evs[4]["step"], evs[4]["role"], evs[4]["cls"], evs[4]["rc"], evs[4]["milestone"]), ("review-F001#1", "reviewer", "ok", 0, "M1"))
+        self.assertNotIn("feature", evs[4])
+        self.assertIsNone(journal.last_rejection(self.m, "F001"))
+        self.assertEqual(journal.attempts(self.m, "F001"), 0)
+        self.assertEqual(journal.task_attempts(self.m, "review-F001"), 1)
+
+    def test_scrutiny_behavior_and_judgment_runs(self):
+        prompt = "Mission: demo. Milestone: M1 \u2014 scrutiny.\n  A001 \u2014 t  [structural]\n"
+        outcome, text = steps.run_role(self.ctx, "scrutiny", "scrutiny", "scrutiny-M1#1", prompt, milestone="M1",
+                                       validation_file="M1-scrutiny.md")
+        self.assertEqual(outcome.cls, "ok")
+        self.assertEqual(verdicts.parse_scrutiny(text)["commands"][0]["exit"], 0)
+        d = journal.last(self.m, "dispatch")
+        self.assertEqual((d["agent"], d["class"], d["milestone"], d["step"]), ("mission-validator-scrutiny", "executor", "M1", "scrutiny"))
+        self.assertNotIn("feature", d)
+        self.assertTrue(journal.last(self.m, "lease_released")["lock"].startswith("agent=mission-validator-scrutiny feature=M1 "))
+        self.assertTrue((self.m / "validation" / "M1-scrutiny.md").exists())
+        outcome, text = steps.run_role(self.ctx, "behavior", "behavior", "behavior-M2#1",
+                                       "Mission: demo. Milestone: M2 \u2014 behavior validation.\n  A003 \u2014 t  [interface]\n", milestone="M2")
+        self.assertEqual((outcome.cls, verdicts.parse_behavior(text)), ("ok", {"A003": "proven"}))
+        self.assertEqual(journal.dispatches(self.m), 2)
+        # judgment: static, no lease of either kind, read-only, counted by nobody's cap
+        self.lock.unlink()
+        outcome, text = steps.run_role(self.ctx, "judgment", "negotiate", "negotiate-M1#1", "Mission: demo. x\n", milestone="M1")
+        self.assertEqual(outcome.cls, "ok")
+        self.assertEqual(judgment.extract_json(text), {"findings": [], "repairs": [], "contract_wrong": False, "reason": "all proven"})
+        d = journal.last(self.m, "dispatch")
+        self.assertEqual((d["agent"], d["class"], d["step"], d["dispatch_id"]), ("mission-judgment", "static", "negotiate", "negotiate-M1#1"))
+        self.assertFalse(self.lock.exists())
+        self.assertEqual(journal.count(self.m, "lease_released"), 2)
+        self.assertEqual(journal.dispatches(self.m), 2)
+        self.assertIn("MISSIONS_ROLE", files.read_text(self.m / "runs" / "negotiate-M1#1" / "env-names.txt"))
+        self.assertIn("a judgment run does not commit", files.read_text(self.m / "githooks" / "pre-commit"))
+        # no output, and a crash: the classes the caller retries on; no validation file either way
+        d = self.tmp / "stubs2"
+        d.mkdir()
+        files.write_text(d / "scrutiny.sh", "#!/bin/bash\nexit 0\n")
+        files.write_text(d / "behavior.sh", "#!/bin/bash\necho 'half' > \"$MISSIONS_RUN_DIR/output.md\"; exit 3\n")
+        self.ctx.adapter = StubAdapter({"script_dir": str(d)})
+        outcome, text = steps.run_role(self.ctx, "scrutiny", "scrutiny", "scrutiny-M1#2", "x\n", milestone="M1", validation_file="M1-scrutiny-r2.md")
+        self.assertEqual((outcome.cls, text), ("no_output", ""))
+        self.assertFalse((self.m / "validation" / "M1-scrutiny-r2.md").exists())
+        outcome, text = steps.run_role(self.ctx, "behavior", "behavior", "behavior-M2#2", "x\n", milestone="M2", validation_file="M2-behavior-r2.md")
+        self.assertEqual((outcome.cls, outcome.rc, text.strip()), ("error", 3, "half"))
+        self.assertFalse((self.m / "validation" / "M2-behavior-r2.md").exists())
+        self.assertEqual(journal.last(self.m, "step_done")["cls"], "error")
+        self.assertFalse((self.m / ".lease").exists())
+
+
+class TriageTests(LockEnv, Fixture):
+    ISSUES = ["F001 handoff: the test stack would not start on port 5435", "F001 handoff: the fixture row for tenant B is missing"]
+
+    def setUp(self):
+        super().setUp()
+        self.scripts = self.tmp / "stub"
+        self.scripts.mkdir()
+        files.write_config(self.m, {"harness": "stub", "checkout": ".", "branch": "mission/demo",
+                                    "adapters": {"stub": {"script_dir": str(self.scripts)}}})
+        files.add_open_issues(self.m, self.ISSUES)
+        (self.m / "handoffs").mkdir()
+        files.write_text(self.m / "handoffs" / "F001.md", "# Handoff F001\n\n## Issues discovered\n- the test stack would not "
+                                                          "start on port 5435\n- the fixture row for tenant B is missing\n")
+        files.write_text(self.m / "handoffs" / "F002.md", "# Handoff F002\n\n## Issues discovered\nnone\n")
+        cfg = files.read_config(self.m)
+        self.ctx = make_ctx(self.m, self.tmp, cfg=cfg)
+        self.ctx.adapter = StubAdapter(cfg["adapters"]["stub"])
+
+    def script(self, body):
+        files.write_text(self.scripts / "triage.sh", "#!/bin/bash\n" + body)
+
+    def followup(self, **over):
+        fu = {"title": "tenant B fixture row", "assertion": "A002", "severity": "medium", "cluster": "C01",
+              "cluster_label": "test fixtures", "blocking": True}
+        fu.update(over)
+        return fu
+
+    def test_apply_resolved_defer_and_repair(self):
+        st = files.read_state(self.m)
+        obj = {"resolutions": [
+            {"issue": 1, "disposition": "resolved", "why": "the port is documented read-only; the worker used the mocked layer"},
+            {"issue": 2, "disposition": "repair", "why": "the fixture is part of the feature", "followup": self.followup(),
+             "repair": {"title": "add the tenant B fixture", "assertions": ["A002"], "files": ["tests/unit/test_a.py"], "procedures": "make test-unit"}}]}
+        self.assertEqual(judgment.validate_triage(obj), [])
+        self.assertIsNone(steps.apply_triage(self.ctx, st, st.open_issues, "triage#1", obj))
+        self.assertEqual(files.read_state(self.m).open_issues, [])
+        self.assertIn("\n- none\n", files.read_text(self.m / "state.md"))
+        fus = files.read_followups(self.m)
+        self.assertEqual([(f.id, f.source, f.assertion, f.cluster, f.cluster_label, f.repair_as, f.blocking, f.severity) for f in fus],
+                         [("FU001", "M1-triage", "A002", "C01", "test fixtures", "F004", True, "medium")])
+        raw = files.read_text(self.m / "followups.md")
+        self.assertIn("## FU001 \u2014 tenant B fixture row (from M1-triage)\n- **Assertion:** A002\n"
+                      "- **Found by:** F001 handoff, the fixture row for tenant B is missing\n- **Severity:** medium\n"
+                      "- **Cluster:** C01 \u2014 test fixtures\n- **Blocking:** yes\n"
+                      "- **Disposition:** repair as F004 \u2014 the fixture is part of the feature\n", raw)
+        feats = {f.id: f for f in files.read_features(self.m)}
+        self.assertEqual((feats["F004"].milestone, feats["F004"].title, feats["F004"].assertions, feats["F004"].files,
+                          feats["F004"].procedures, feats["F004"].repairs, feats["F004"].status),
+                         ("M1", "add the tenant B fixture", ["A002"], ["tests/unit/test_a.py"], "make test-unit", ["F001"], "pending"))
+        self.assertIn("- **Repairs:** C01 (FU001) of F001\n", files.read_text(self.m / "features.md"))
+        self.assertEqual(next(a for a in files.read_contract(self.m) if a.id == "A002").features, ["F001", "F002", "F004"])
+        rc, out = check_sh(self.m)
+        self.assertEqual(rc, 0, out)
+        dec = journal.last(self.m, "decision")
+        self.assertEqual((dec["step"], dec["task"]), ("triage", "triage#1"))
+        self.assertIn("port 5435", dec["what"])
+        self.assertIn("mocked layer", dec["why"])
+        self.assertEqual(journal.last(self.m, "followups_added")["ids"], ["FU001"])
+        self.assertEqual(journal.last(self.m, "features_added")["ids"], ["F004"])
+        j = journal.last(self.m, "judgment")
+        self.assertEqual((j["step"], j["task"], j["milestone"]), ("triage", "triage#1", "M1"))
+        self.assertEqual(j["summary"], "2 issue(s): 1 resolved, 0 deferred, 1 repaired (FU001), repair feature F004")
+        self.assertIsNone(journal.last(self.m, "stop"))
+        # the repair feature is the loop's next pending feature of M1, with its origin's design section
+        self.assertEqual(steps.design_for(self.m, feats["F004"]), files.design_section(self.m, "F001"))
+
+    def test_defer_then_escalate_then_skipped(self):
+        st = files.read_state(self.m)
+        obj = {"resolutions": [{"issue": 2, "disposition": "defer", "why": "later", "followup": self.followup(assertion=None, blocking=False)},
+                               {"issue": 1, "disposition": "escalate", "why": "port 5435 needs an operator"}]}
+        self.assertEqual(steps.apply_triage(self.ctx, st, st.open_issues, "triage#1", obj), 5)
+        # the deferred one was applied, the escalated one stays, the mission is halted on the why
+        self.assertEqual(files.read_state(self.m).open_issues, [self.ISSUES[0]])
+        self.assertEqual(files.read_state(self.m).phase, "halted")
+        h = journal.last(self.m, "halt")
+        self.assertEqual(h["class"], "block")
+        self.assertIn("port 5435 needs an operator", h["reason"])
+        s = journal.last(self.m, "stop")
+        self.assertEqual((s["reason"], s["exit"]), ("gate-blocked", 5))
+        self.assertIn("triage escalates 1 issue(s): port 5435 needs an operator -- F001 handoff: the test stack", s["detail"])
+        fu = files.read_followups(self.m)[0]
+        self.assertEqual((fu.id, fu.assertion, fu.blocking, fu.disposition), ("FU001", None, False, "accept as known limitation \u2014 deferred by the triage step: later"))
+        self.assertEqual(journal.last(self.m, "judgment")["summary"], "2 issue(s): 0 resolved, 1 deferred, 0 repaired (FU001), 1 escalated")
+        rc, out = check_sh(self.m)
+        self.assertEqual(rc, 0, out)
+        # a reply that skips an issue halts too, naming it; nothing else changes
+        files.write_state_fields(self.m, phase="implementing")
+        st = files.read_state(self.m)
+        self.assertEqual(steps.apply_triage(self.ctx, st, st.open_issues, "triage#2", {"resolutions": []}), 5)
+        s = journal.last(self.m, "stop")
+        self.assertIn("without a resolution: F001 handoff: the test stack would not start on port 5435", s["detail"])
+        self.assertEqual(files.read_state(self.m).open_issues, [self.ISSUES[0]])
+        self.assertEqual(len(files.read_followups(self.m)), 1)
+
+    def test_repair_cap_refuses_before_writing(self):
+        files.write_text(self.m / "mission.md", files.read_text(self.m / "mission.md").replace("Repair rounds per assertion: 2", "Repair rounds per assertion: 1"))
+        files.append_followups(self.m, [{"title": "earlier", "source": "M1-review-F001", "assertion": "A002", "found_by": "mission-reviewer",
+                                         "severity": "high", "cluster": "C01", "blocking": True, "disposition": "repair", "repair_as": "F004"}])
+        before = (files.read_text(self.m / "features.md"), files.read_text(self.m / "contract.md"), files.read_text(self.m / "followups.md"))
+        st = files.read_state(self.m)
+        obj = {"resolutions": [{"issue": 1, "disposition": "resolved", "why": "x"},
+                               {"issue": 2, "disposition": "repair", "why": "y", "followup": self.followup(cluster="C02"),
+                                "repair": {"title": "again", "assertions": ["A002"], "files": ["tests/unit/test_a.py"], "procedures": ""}}]}
+        self.assertEqual(steps.apply_triage(self.ctx, st, st.open_issues, "triage#1", obj), 5)
+        self.assertEqual(before, (files.read_text(self.m / "features.md"), files.read_text(self.m / "contract.md"), files.read_text(self.m / "followups.md")))
+        self.assertEqual(files.read_state(self.m).open_issues, self.ISSUES)          # nothing was cleared either
+        s = journal.last(self.m, "stop")
+        self.assertIn("repair-round cap (1 per assertion) exceeded by a repair of A002, which already has 1 repair feature(s) (F004)", s["detail"])
+        self.assertIn("the diagnosis is wrong", s["detail"])
+        self.assertIn("never a cap raise", s["needs"])
+        self.assertIsNone(journal.last(self.m, "judgment"))
+        self.assertIsNone(steps.repair_cap_problem(self.m, ["A002"], 2))
+        self.assertIsNone(steps.repair_cap_problem(self.m, ["A001"], 1))
+
+    def test_step_triage_retries_a_bad_reply_once_then_errors(self):
+        self.script("echo 'not json at all' > \"$MISSIONS_RUN_DIR/output.md\"\n")
+        st = files.read_state(self.m)
+        self.assertEqual(steps.step_triage(self.ctx, st), 1)
+        self.assertEqual([r["task"] for r in journal.events(self.m) if r["event"] == "dispatch"], ["triage#1", "triage#2"])
+        d = journal.last(self.m, "dispatch")
+        self.assertEqual((d["agent"], d["class"], d["step"], d["milestone"]), ("mission-judgment", "static", "triage", "M1"))
+        first = files.read_text(self.m / "runs" / "triage#1" / "prompt.md")
+        second = files.read_text(self.m / "runs" / "triage#2" / "prompt.md")
+        self.assertNotIn("could not be applied", first)
+        self.assertTrue(second.startswith(first.rstrip("\n") + "\n\nYour previous reply (triage#1) could not be applied: "))
+        self.assertIn("no JSON object in the reply", second)
+        self.assertTrue(second.endswith(prompts.ANSWER_LINE + "\n"))
+        self.assertIn("- [1] %s\n- [2] %s\n" % tuple(self.ISSUES), first)
+        self.assertIn("--- handoffs/F001.md ---", first)
+        self.assertNotIn("Handoff F002", first)                                     # F002 raised nothing
+        self.assertEqual(journal.count(self.m, "note", lambda r: "reply rejected" in r.get("text", "")), 2)
+        self.assertEqual(journal.count(self.m, "step_done", lambda r: r.get("role") == "judgment" and r.get("cls") == "ok"), 2)
+        s = journal.last(self.m, "stop")
+        self.assertEqual((s["reason"], s["exit"]), ("error", 1))
+        self.assertIn("triage: two replies could not be applied", s["detail"])
+        self.assertIn("runs/triage#2/output.md", s["needs"])
+        self.assertEqual(files.read_state(self.m).open_issues, self.ISSUES)        # untouched
+        self.assertEqual(files.read_state(self.m).phase, "implementing")           # an error is not a halt
+        self.assertFalse(self.lock.exists())                                        # no host lease for a judgment run
+        self.assertFalse((self.m / ".lease").exists())
+        self.assertIsNone(journal.last(self.m, "lease_released"))
+        self.assertEqual(journal.dispatches(self.m), 0)
+
+    def test_step_triage_applies_the_corrected_second_reply(self):
+        # attempt 1 names an issue the prompt never listed and a defer without a follow-up; the
+        # complaint goes back verbatim and attempt 2 is applied
+        self.script('case "$MISSIONS_TASK" in\n'
+                    '  "triage#1") echo \'{"resolutions":[{"issue":7,"disposition":"resolved","why":"x"},{"issue":1,"disposition":"defer","why":"later"}]}\' ;;\n'
+                    '  *) echo \'```json\n{"resolutions":[{"issue":1,"disposition":"resolved","why":"documented"},{"issue":2,"disposition":"resolved","why":"present"}]}\n```\' ;;\n'
+                    'esac > "$MISSIONS_RUN_DIR/output.md"\n')
+        st = files.read_state(self.m)
+        self.assertIsNone(steps.step_triage(self.ctx, st))
+        second = files.read_text(self.m / "runs" / "triage#2" / "prompt.md")
+        self.assertIn("could not be applied: resolutions[1]: disposition defer needs a followup; "
+                      "resolutions[0]: issue 7 does not exist; the prompt listed 2 issue(s)\n", second)
+        self.assertEqual(files.read_state(self.m).open_issues, [])
+        self.assertEqual(journal.count(self.m, "decision", lambda r: r.get("step") == "triage"), 2)
+        self.assertEqual(journal.last(self.m, "judgment")["task"], "triage#2")
+        self.assertIsNone(journal.last(self.m, "stop"))
+        self.assertEqual(len(files.read_followups(self.m)), 0)
+        # a crash counts as a bad reply too
+        self.script("exit 9\n")
+        files.add_open_issues(self.m, ["F002 handoff: later"])
+        self.assertEqual(steps.step_triage(self.ctx, files.read_state(self.m)), 1)
+        self.assertIn("could not be applied: the run exited 9 with no reply", files.read_text(self.m / "runs" / "triage#4" / "prompt.md"))
+        self.assertEqual(journal.last(self.m, "step_done")["cls"], "error")
 
 
 if __name__ == "__main__":

@@ -276,11 +276,7 @@ def ingest(ctx: Context, feature: files.Feature, grade: Grade) -> Dict:
 def _refresh_index(ctx: Context) -> None:
     """`graphify update .` after every handoff when state.md's intelligence line names graphify
     (SKILL.md "Ingesting a handoff"): AST-only, no LLM. Best effort; a failure is a note."""
-    try:
-        text = files.read_text(ctx.mission_dir / "state.md")
-    except OSError:
-        return
-    line = next((ln for ln in text.splitlines() if "codebase intelligence:" in ln.lower()), "")
+    line = files.intelligence_line(ctx.mission_dir)
     if "graphify=" not in line or "graphify=none" in line:
         return
     try:

@@ -18,7 +18,7 @@ os.environ.setdefault("MISSIONS_PLUGIN_ROOT", str(PLUGIN))
 import subprocess  # noqa: E402
 import time  # noqa: E402
 
-from missions import files, grade as grading, journal, prompts, watchdog  # noqa: E402
+from missions import files, grade as grading, journal, judgment, prompts, verdicts, watchdog  # noqa: E402
 from missions.adapters.claude import ClaudeAdapter, parse_envelope  # noqa: E402
 from missions.adapters.codex import CodexAdapter, parse_events  # noqa: E402
 from missions.outcome import Grade, Outcome, RunRequest, classify  # noqa: E402
@@ -157,6 +157,13 @@ class HandoffTests(Fixture):
 
 
 class JournalTests(Fixture):
+    def test_task_attempts_by_prefix(self):
+        for task in ("review-F001#1", "review-F001#2", "review-F0011#1", "scrutiny-M1#1"):
+            journal.append(self.m, "dispatch", task=task, agent="x")
+        self.assertEqual(journal.task_attempts(self.m, "review-F001"), 2)
+        self.assertEqual(journal.task_attempts(self.m, "scrutiny-M1"), 1)
+        self.assertEqual(journal.task_attempts(self.m, "triage"), 0)
+
     def test_append_and_spend(self):
         journal.append(self.m, "session_cost", session_id="a", usd=1.5)
         journal.append(self.m, "session_cost", session_id="a", usd=2.5)
@@ -588,6 +595,329 @@ class WatchdogConfigTests(unittest.TestCase):
         # #4: a commit without a handoff is journaled within 2 minutes -- the poll is the bound
         self.assertLessEqual(watchdog.DEFAULTS["poll_s"], 120)
         self.assertIsNotNone(watchdog.DEFAULTS["commit_no_handoff_s"])
+
+
+class MissionLineTests(Fixture):
+    def test_reviewer_seat(self):
+        self.assertIsNone(files.read_reviewer_seat(self.m))
+        files.write_text(self.m / "mission.md", files.read_text(self.m / "mission.md") + "- **Reviewer seat:** fable   # optional — auth boundary\n")
+        self.assertEqual(files.read_reviewer_seat(self.m), "fable")
+        files.write_text(self.m / "mission.md", files.read_text(self.m / "mission.md").replace("fable   #", "claude-opus-5 — because"))
+        self.assertEqual(files.read_reviewer_seat(self.m), "claude-opus-5")
+        files.write_text(self.m / "mission.md", files.read_text(self.m / "mission.md").replace("claude-opus-5 — because", "none"))
+        self.assertIsNone(files.read_reviewer_seat(self.m))
+
+    def test_behavior_cap_and_ceiling(self):
+        self.assertEqual(files.read_behavior_cap(self.m), 3)
+        self.assertEqual(files.read_autonomy_ceiling(self.m), "advisory")
+        text = files.read_text(self.m / "mission.md")
+        files.write_text(self.m / "mission.md", text.replace("- Behavior-validation cap: 3 live runs per milestone\n", ""))
+        self.assertIsNone(files.read_behavior_cap(self.m))
+        # the template's own line names both options; only the head of the line is the choice
+        files.write_text(self.m / "mission.md", text.replace(
+            "- Autonomy ceiling: advisory",
+            "- Autonomy ceiling: advisory (default — the loop proceeds under stated assumptions) | halt at every milestone"))
+        self.assertEqual(files.read_autonomy_ceiling(self.m), "advisory")
+        files.write_text(self.m / "mission.md", text.replace("- Autonomy ceiling: advisory", "- Autonomy ceiling: Halt at every milestone  # ask"))
+        self.assertEqual(files.read_autonomy_ceiling(self.m), "halt at every milestone")
+
+    def test_intelligence_line(self):
+        self.assertEqual(files.intelligence_line(self.m), "none")
+        text = files.read_text(self.m / "state.md")
+        files.write_text(self.m / "state.md", text.replace(
+            "- Codebase intelligence: none", "- Codebase intelligence: graphify=cli+mcp (graphify-out/, 2026-09-01) · repowise=none"))
+        self.assertEqual(files.intelligence_line(self.m), "graphify=cli+mcp (graphify-out/, 2026-09-01) · repowise=none")
+        files.write_text(self.m / "state.md", text.replace("- Codebase intelligence: none\n", ""))
+        self.assertEqual(files.intelligence_line(self.m), "none")
+
+
+class MilestoneTests(Fixture):
+    def test_milestones_and_next(self):
+        self.assertEqual(files.milestones(self.m), ["M1", "M2"])
+        self.assertEqual(files.next_milestone(self.m, "M1"), "M2")
+        self.assertIsNone(files.next_milestone(self.m, "M2"))
+        self.assertIsNone(files.next_milestone(self.m, "M9"))
+
+
+def check_sh(mission_dir):
+    res = subprocess.run(["bash", str(PLUGIN / "scripts" / "check.sh"), str(mission_dir)], capture_output=True, text=True)
+    return res.returncode, res.stdout
+
+
+class FollowupTests(Fixture):
+    def entry(self, **over):
+        e = dict(title="cross-tenant leak", source="M1-review-F001", assertion="A002", found_by="mission-reviewer",
+                 where="`analytics/service.py:3` — no tenant filter", severity="high", cluster="C01",
+                 cluster_label="repository queries missing the tenant predicate", blocking=True,
+                 disposition="accept", why="beyond the proof budget")
+        e.update(over)
+        return e
+
+    def test_append_followups_numbering_and_shape(self):
+        ids = files.append_followups(self.m, [self.entry(), self.entry(
+            title="lint debt", source="M1-scrutiny", assertion=None, found_by="mission-validator-scrutiny", where="",
+            severity="low", cluster="C02", cluster_label="", blocking=False, disposition="waive", why="not in scope")])
+        self.assertEqual(ids, ["FU001", "FU002"])
+        self.assertEqual(files.append_followups(self.m, [self.entry()]), ["FU003"])
+        raw = files.read_text(self.m / "followups.md")
+        self.assertIn("\n\n## FU001 — cross-tenant leak (from M1-review-F001)\n- **Assertion:** A002\n"
+                      "- **Found by:** mission-reviewer, `analytics/service.py:3` — no tenant filter\n- **Severity:** high\n"
+                      "- **Cluster:** C01 — repository queries missing the tenant predicate\n- **Blocking:** yes\n"
+                      "- **Disposition:** accept as known limitation — beyond the proof budget\n\n## FU002", raw)
+        self.assertIn("## FU002 — lint debt (from M1-scrutiny)\n- **Assertion:** —\n- **Found by:** mission-validator-scrutiny\n"
+                      "- **Severity:** low\n- **Cluster:** C02\n- **Blocking:** no\n- **Disposition:** waived by the negotiate step, not in scope\n", raw)
+        self.assertTrue(raw.startswith("# Follow-ups — demo\n\n## FU001"))
+        self.assertTrue(raw.endswith("beyond the proof budget\n"))
+        fus = files.read_followups(self.m)
+        self.assertEqual([f.id for f in fus], ["FU001", "FU002", "FU003"])
+        self.assertEqual((fus[0].cluster, fus[0].cluster_label, fus[0].assertion, fus[0].source, fus[0].blocking, fus[0].repair_as),
+                         ("C01", "repository queries missing the tenant predicate", "A002", "M1-review-F001", True, None))
+        self.assertEqual((fus[1].cluster, fus[1].assertion, fus[1].blocking, fus[1].severity), ("C02", None, False, "low"))
+        rc, out = check_sh(self.m)
+        self.assertEqual(rc, 0, out)
+        # a fresh file gets the template header; a repair needs the feature id it repairs as
+        (self.m / "followups.md").unlink()
+        self.assertEqual(files.append_followups(self.m, [self.entry()]), ["FU001"])
+        self.assertTrue(files.read_text(self.m / "followups.md").startswith("# Follow-ups — demo\n\n## FU001 —"))
+        with self.assertRaises(ValueError):
+            files.append_followups(self.m, [self.entry(disposition="repair")])
+
+    def test_append_feature_and_route_pass_check(self):
+        fid = files.append_feature(self.m, "M1", "tenancy filter", ["A002"], ["analytics/service.py"],
+                                   "make test-unit", "the summary query", "C01 (FU001) of F001")
+        self.assertEqual(fid, "F004")
+        files.append_followups(self.m, [self.entry(disposition="repair", repair_as=fid, why="")])
+        self.assertEqual(files.read_followups(self.m)[0].repair_as, "F004")
+        self.assertIn("- **Disposition:** repair as F004\n", files.read_text(self.m / "followups.md"))
+        feats = {f.id: f for f in files.read_features(self.m)}
+        self.assertEqual((feats["F004"].milestone, feats["F004"].repairs, feats["F004"].status, feats["F004"].assertions,
+                          feats["F004"].files, feats["F004"].out_of_scope), ("M1", ["F001"], "pending", ["A002"],
+                                                                             ["analytics/service.py"], "the summary query"))
+        self.assertEqual(feats["F001"].repairs, [])
+        raw = files.read_text(self.m / "features.md")
+        self.assertIn("- **Depends on:** F001\n- **Status:** pending\n\n### F004 — tenancy filter\n- **Assertions:** A002\n"
+                      "- **Files:** `analytics/service.py`\n- **Procedures:** make test-unit\n- **Depends on:** —\n"
+                      "- **Out of scope:** the summary query\n- **Repairs:** C01 (FU001) of F001\n- **Status:** pending\n\n## M2 — second\n", raw)
+        # the contract routes A002 -> F001, F002 only: check.sh rejects the claim until the row is re-routed
+        rc, out = check_sh(self.m)
+        self.assertEqual(rc, 1)
+        self.assertIn("F004 claims A002", out)
+        self.assertTrue(files.route_assertion(self.m, "A002", "F004"))
+        self.assertFalse(files.route_assertion(self.m, "A002", "F004"))
+        self.assertFalse(files.route_assertion(self.m, "A009", "F004"))
+        self.assertEqual(files.read_contract(self.m)[1].features, ["F001", "F002", "F004"])
+        self.assertIn("| A002 | Tenant A never sees tenant B | structural | F001, F002, F004 | unproven |", files.read_text(self.m / "contract.md"))
+        rc, out = check_sh(self.m)
+        self.assertEqual(rc, 0, out)
+        # ids never reuse: the next feature is F005 even in the last milestone; a missing milestone is refused
+        self.assertEqual(files.append_feature(self.m, "M2", "x", ["A003"], [], "", "", "C02 (FU002) of F003"), "F005")
+        self.assertTrue(files.read_text(self.m / "features.md").endswith("- **Repairs:** C02 (FU002) of F003\n- **Status:** pending\n"))
+        with self.assertRaises(files.MissionFileError):
+            files.append_feature(self.m, "M9", "x", [], [], "", "", "")
+
+    def test_remove_open_issues_restores_none(self):
+        files.add_open_issues(self.m, ["F001 handoff: stack down", "F001 handoff: port busy"])
+        self.assertEqual(files.remove_open_issues(self.m, ["F001 handoff: stack down "]), ["F001 handoff: stack down"])
+        self.assertEqual(files.read_state(self.m).open_issues, ["F001 handoff: port busy"])
+        self.assertNotIn("- none", files.read_text(self.m / "state.md"))
+        self.assertEqual(files.remove_open_issues(self.m, ["nothing like this"]), [])
+        self.assertEqual(files.remove_open_issues(self.m, ["F001 handoff: port busy"]), ["F001 handoff: port busy"])
+        self.assertEqual(files.read_state(self.m).open_issues, [])
+        self.assertIn("## Open issues — these block the next feature\n- none\n\n## Standing constraints", files.read_text(self.m / "state.md"))
+
+
+class ProveTests(Fixture):
+    def test_prove_never_downgrades_or_reattributes(self):
+        files.claim_assertions(self.m, ["A001"])
+        self.assertEqual(files.prove_assertions(self.m, {"A001": "validation/M1-review-F001.md", "A002": "validation/M1-review-F002.md"}),
+                         ["A001", "A002"])
+        rows = {r.id: r for r in files.read_contract(self.m)}
+        self.assertEqual((rows["A001"].status, rows["A001"].evidence), ("proven", "validation/M1-review-F001.md"))
+        self.assertEqual((rows["A002"].status, rows["A003"].status), ("proven", "unproven"))
+        self.assertIn("| A001 | Omitting the window equals the whole day | structural | F001 | proven | validation/M1-review-F001.md |",
+                      files.read_text(self.m / "contract.md"))
+        # a later round cannot move it, re-attribute it, or claim it back down
+        self.assertEqual(files.prove_assertions(self.m, {"A001": "validation/M1-review-F001-r2.md"}), [])
+        self.assertEqual(files.claim_assertions(self.m, ["A001"]), [])
+        self.assertEqual(files.read_contract(self.m)[0].evidence, "validation/M1-review-F001.md")
+        self.assertEqual(files.prove_assertions(self.m, {"A009": "x"}), [])
+
+
+REVIEW = """# Review F001
+
+## Assertion verdicts
+| ID | Verdict | Evidence / breaking case |
+|---|---|---|
+| A001 | satisfied | `analytics/service.py:3` |
+| A002 | **not satisfied** | tenant B rows come back for tenant A |
+| A003 | cannot tell from the diff | needs a live run |
+| A004 | Satisfied — `tests/unit/test_a.py::test_a` | |
+| A005 | probably fine | — |
+
+## Design conformance
+| D-id | Verdict (conforms / deviates / cannot tell) | Evidence |
+|---|---|---|
+| D001 | conforms | pure |
+
+## Defects
+| Severity | file:line | What breaks, and the concrete input that breaks it |
+|---|---|---|
+| high | analytics/service.py:3 | no tenant filter; input: tenant A, rows of B |
+
+## Not covered by any assertion
+A002 is probably fine in practice.
+"""
+BEHAVIOR = """## Assertion results
+| ID | Verdict | Evidence |
+| A012 | proven | call 8f3a, turn 4 |
+| A013 | FAILED | call 8f3a, turn 7 |
+| A014 | not reached | budget cap hit |
+| A015 | ✅ Proven | screenshot |
+| A016 | maybe | |
+
+## Defects
+none
+"""
+SCRUTINY = """## Commands
+| Command | Exit code | Duration |
+|---|---|---|
+| make test-unit | 0 | 12s |
+| ruff check . | 1 | 2s |
+
+## Failures
+tests/unit/test_b.py::test_b — AssertionError: 2 != 3
+
+## Coverage of milestone assertions
+| Assertion | Test that exercises it | Result |
+|---|---|---|
+| A001 | tests/unit/test_a.py::test_a | pass |
+"""
+
+
+class VerdictTests(unittest.TestCase):
+    def test_reviewer(self):
+        self.assertEqual(verdicts.parse_reviewer(REVIEW), {
+            "A001": "satisfied", "A002": "not satisfied", "A003": "cannot tell", "A004": "satisfied", "A005": "cannot tell"})
+        d = verdicts.parse_defects(REVIEW)
+        self.assertEqual(len(d), 1)
+        self.assertEqual((d[0]["severity"], d[0]["location"]), ("high", "analytics/service.py:3"))
+        self.assertEqual(verdicts.parse_reviewer("no table here"), {})
+        # `satisfied` is a substring of `not satisfied`: the order of the two tests decides every failure
+        self.assertEqual(verdicts.reviewer_verdict("satisfied for tenant A, not satisfied for tenant B"), "not satisfied")
+        self.assertEqual(verdicts.reviewer_verdict("NOT SATISFIED"), "not satisfied")
+        self.assertEqual(verdicts.reviewer_verdict("`satisfied`"), "satisfied")
+        self.assertEqual(verdicts.reviewer_verdict("unsatisfied"), "cannot tell")
+        # a level-3 heading and a table with no separator row still parse; the header is not a row
+        text = REVIEW.replace("## Assertion verdicts", "### Assertion Verdicts (final)").replace("|---|---|---|\n| A001", "| A001")
+        self.assertEqual(verdicts.parse_reviewer(text)["A002"], "not satisfied")
+        self.assertNotIn("ID", verdicts.parse_reviewer(text))
+
+    def test_behavior_and_scrutiny(self):
+        self.assertEqual(verdicts.parse_behavior(BEHAVIOR), {
+            "A012": "proven", "A013": "FAILED", "A014": "not reached", "A015": "proven", "A016": "not reached"})
+        self.assertEqual(verdicts.behavior_verdict("Failed at turn 3"), "FAILED")
+        self.assertEqual(verdicts.behavior_verdict("not proven"), "not reached")
+        s = verdicts.parse_scrutiny(SCRUTINY)
+        self.assertEqual(s["commands"], [{"command": "make test-unit", "exit": 0, "duration": "12s"},
+                                         {"command": "ruff check .", "exit": 1, "duration": "2s"}])
+        self.assertTrue(s["failures"].startswith("tests/unit/test_b.py::test_b"))
+        self.assertEqual(verdicts.parse_scrutiny("## Commands\n| Command | Exit code | Duration |\n|---|---|---|\n\n## Failures\nnone\n"),
+                         {"commands": [], "failures": "none"})
+
+
+class LatestVerdictTests(Fixture):
+    def test_latest_verdict_wins_per_validator(self):
+        journal.append(self.m, "verdict", validator="mission-reviewer", feature="F001", milestone="M1", round=1,
+                       assertions={"A001": "satisfied", "A002": "not satisfied"}, file="validation/M1-review-F001.md")
+        journal.append(self.m, "verdict", validator="mission-reviewer", feature="F002", milestone="M1", round=1,
+                       assertions={"A002": "cannot tell"}, file="validation/M1-review-F002.md")
+        journal.append(self.m, "verdict", validator="mission-validator-behavior", milestone="M1", round=1,
+                       assertions={"A002": "proven"}, file="validation/M1-behavior.md")
+        journal.append(self.m, "verdict", validator="mission-reviewer", feature="F004", milestone="M1", round=2,
+                       assertions={"A002": "satisfied"}, file="validation/M1-review-F004-r2.md")
+        journal.append(self.m, "verdict", validator="mission-reviewer", feature="F003", milestone="M2", round=1,
+                       assertions={"A003": "satisfied"}, file="validation/M2-review-F003.md")
+        journal.append(self.m, "verdict", validator="mission-validator-scrutiny", milestone="M1", round=1, assertions="n/a")
+        v = verdicts.latest_verdicts(self.m, "M1")
+        self.assertEqual(v["reviews"], {"A001": ("satisfied", "validation/M1-review-F001.md"),
+                                        "A002": ("satisfied", "validation/M1-review-F004-r2.md")})
+        self.assertEqual(v["behavior"], {"A002": ("proven", "validation/M1-behavior.md")})
+        self.assertEqual(verdicts.latest_verdicts(self.m, "M2")["reviews"], {"A003": ("satisfied", "validation/M2-review-F003.md")})
+        self.assertEqual(verdicts.latest_verdicts(self.m, "M3"), {"reviews": {}, "behavior": {}})
+
+
+NEGOTIATE_OK = {"findings": [
+    {"title": "leak", "assertion": "A002", "found_by": "mission-reviewer", "where": "analytics/service.py:3", "severity": "high",
+     "cluster": "C01", "cluster_label": "tenant predicate", "blocking": True, "disposition": "repair", "why": "defect"},
+    {"title": "debt", "assertion": None, "found_by": "mission-validator-scrutiny", "where": "", "severity": "low",
+     "cluster": "C02", "cluster_label": "lint", "blocking": False, "disposition": "accept", "why": "beyond max"}],
+    "repairs": [{"cluster": "C01", "title": "tenancy filter", "assertions": ["A002"], "files": ["analytics/service.py"],
+                 "procedures": "make test-unit", "out_of_scope": "the summary query"}],
+    "contract_wrong": False, "reason": "one defect"}
+TRIAGE_OK = {"resolutions": [
+    {"issue": 1, "disposition": "resolved", "why": "the stack was down; the tests ran on retry", "followup": None, "repair": None},
+    {"issue": 2, "disposition": "defer", "why": "cosmetic", "followup": {"title": "spacing", "assertion": None, "severity": "low",
+                                                                          "cluster": "C09", "cluster_label": "triage", "blocking": False}},
+    {"issue": 3, "disposition": "repair", "why": "real", "followup": {"title": "leak", "assertion": "A002", "severity": "high",
+                                                                       "cluster": "C01", "cluster_label": "tenant", "blocking": True},
+     "repair": {"title": "tenancy filter", "assertions": ["A002"], "files": ["analytics/service.py"], "procedures": "make test-unit"}}]}
+
+
+class JudgmentTests(unittest.TestCase):
+    def test_extract_json(self):
+        self.assertEqual(judgment.extract_json('Here you go:\n```json\n{"a": 1}\n```\nthanks'), {"a": 1})
+        self.assertEqual(judgment.extract_json('```\n{"a": [1, {"b": 2}]}\n```'), {"a": [1, {"b": 2}]})
+        # unfenced, with a brace inside a string and prose on both sides
+        self.assertEqual(judgment.extract_json('Sure. {"reason": "x}", "n": {"k": 1}} -- done'), {"reason": "x}", "n": {"k": 1}})
+        # a fence that holds something other than the object does not hide the object after it
+        self.assertEqual(judgment.extract_json('```json\n[1]\n```\nthen {"a": 2}'), {"a": 2})
+        for bad in ("not json", "", "[1, 2]", "{\"a\": 1", "```json\n[1]\n```"):
+            with self.assertRaises(judgment.JudgmentError):
+                judgment.extract_json(bad)
+        try:
+            judgment.extract_json("{oops}")
+        except judgment.JudgmentError as e:
+            self.assertIn("Expecting property name", str(e))
+
+    def test_validate_negotiate(self):
+        self.assertEqual(judgment.validate_negotiate(NEGOTIATE_OK), [])
+        self.assertEqual(judgment.validate_negotiate({"findings": [], "repairs": [], "contract_wrong": False}), [])
+        self.assertEqual(judgment.validate_negotiate([]), ["the reply is not a JSON object"])
+        bad = json.loads(json.dumps(NEGOTIATE_OK))
+        bad["findings"][0]["severity"] = "critical"
+        bad["findings"][0]["blocking"] = "yes"
+        bad["findings"][1]["assertion"] = "F001"
+        del bad["repairs"][0]["assertions"]
+        bad["repairs"].append({"cluster": "C03", "title": "x", "assertions": ["A001"], "files": []})
+        bad["contract_wrong"] = True
+        del bad["reason"]
+        problems = judgment.validate_negotiate(bad)
+        for want in ("findings[0]: 'severity' must be one of high, medium, low", "findings[0]: 'blocking' must be bool",
+                     "findings[1]: assertion 'F001' is not an A00n id", "repairs[0]: missing 'assertions'",
+                     "a repair names cluster C03, but no finding", "contract_wrong is true but reason is empty"):
+            self.assertTrue(any(want in p for p in problems), (want, problems))
+        # a finding dispositioned repair without its repair, and two repairs for one cluster
+        bad = json.loads(json.dumps(NEGOTIATE_OK))
+        bad["repairs"] = []
+        self.assertEqual(judgment.validate_negotiate(bad), ["a finding in cluster C01 is dispositioned repair, but no repair names that cluster"])
+        bad = json.loads(json.dumps(NEGOTIATE_OK))
+        bad["repairs"].append(dict(bad["repairs"][0]))
+        self.assertTrue(any("one cluster, one repair feature" in p for p in judgment.validate_negotiate(bad)))
+
+    def test_validate_triage(self):
+        self.assertEqual(judgment.validate_triage(TRIAGE_OK), [])
+        bad = json.loads(json.dumps(TRIAGE_OK))
+        bad["resolutions"][0]["issue"] = True
+        bad["resolutions"][1]["followup"] = None
+        del bad["resolutions"][2]["repair"]
+        bad["resolutions"].append({"issue": 2, "disposition": "escalate"})
+        bad["resolutions"].append({"issue": 0, "disposition": "ignore"})
+        problems = judgment.validate_triage(bad)
+        for want in ("resolutions[0]: 'issue' must be int", "resolutions[1]: disposition defer needs a followup",
+                     "resolutions[2]: disposition repair needs a repair", "resolutions[3]: issue 2 already has a resolution",
+                     "resolutions[4]: issue 0 is not a 1-based index", "resolutions[4]: 'disposition' must be one of"):
+            self.assertTrue(any(want in p for p in problems), (want, problems))
+        self.assertEqual(judgment.validate_triage({}), ["reply: missing 'resolutions'"])
 
 
 if __name__ == "__main__":

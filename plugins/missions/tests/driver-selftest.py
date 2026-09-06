@@ -2,6 +2,8 @@
 """Unit checks for the driver that need no harness: the mission-file parsers and writers against
 the trace base fixture, the claude/codex envelope parsers on captured shapes, and the command
 builders. Run by tests/traces/run.sh; standalone: python3 tests/driver-selftest.py"""
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -18,9 +20,10 @@ os.environ.setdefault("MISSIONS_PLUGIN_ROOT", str(PLUGIN))
 import subprocess  # noqa: E402
 import time  # noqa: E402
 
-from missions import files, grade as grading, journal, judgment, prompts, verdicts, watchdog  # noqa: E402
+from missions import cli, files, grade as grading, journal, judgment, loop, prep, prompts, verdicts, watchdog  # noqa: E402
 from missions.adapters.claude import ClaudeAdapter, parse_envelope  # noqa: E402
 from missions.adapters.codex import CodexAdapter, parse_events  # noqa: E402
+from missions.adapters.stub import StubAdapter  # noqa: E402
 from missions.outcome import Grade, Outcome, RunRequest, classify  # noqa: E402
 
 BASE = HERE / "traces" / "_base" / "mission"
@@ -918,6 +921,419 @@ class JudgmentTests(unittest.TestCase):
                      "resolutions[4]: issue 0 is not a 1-based index", "resolutions[4]: 'disposition' must be one of"):
             self.assertTrue(any(want in p for p in problems), (want, problems))
         self.assertEqual(judgment.validate_triage({}), ["reply: missing 'resolutions'"])
+
+
+# ---------------------------------------------------------------- prep (D3)
+
+def make_ctx(mission_dir, checkout, cfg=None, harness="stub"):
+    from missions.steps import Context
+    return Context(mission_dir=mission_dir, checkout=checkout, plugin=PLUGIN, cfg=cfg if cfg is not None else {"roles": {}},
+                   adapter=None, run_id="r1", harness=harness, log=lambda line: None)
+
+
+DRIVER_ENV = {
+    "PATH": "/bin", "HOME": "/h", "LC_ALL": "C", "XDG_RUNTIME_DIR": "/r", "MISSIONS_TEST": "1", "HTTPS_PROXY": "p",
+    "TMPDIR": "/t", "GH_TOKEN": "t", "GITHUB_TOKEN": "t", "MY_SECRET": "s", "FOO_TOKEN": "f", "AWS_ACCESS_KEY": "k",
+    "DB_PASSWORD": "p", "ANTHROPIC_API_KEY": "a", "OPENAI_API_KEY": "o", "KEEP_ME": "1", "MYAPP_URL": "u",
+    "MYAPP_KEY": "k", "CLAUDECODE": "1", "CLAUDE_CODE_ENTRYPOINT": "cli", "GIT_CONFIG_GLOBAL": "/elsewhere",
+    "GIT_CONFIG_COUNT": "9", "SSH_AUTH_SOCK": "/s", "GIT_SSH_COMMAND": "ssh -i key", "GIT_ASKPASS": "/ask",
+    "MISSIONS_PUSH_TOKEN": "z", "PYTHONPATH": "/x",
+}
+
+
+class PrepEnvTests(Fixture):
+    def env(self, role="worker", harness="stub", passthrough=(), src=DRIVER_ENV):
+        return prep.build_env(self.m, self.m / "runs" / "F001#1", role, "F001", "F001#1", "implementing", harness,
+                              branch="mission/demo", feature_files=["analytics/service.py", "tests/unit/test_a.py"],
+                              passthrough=list(passthrough), base_env=src)
+
+    def test_whitelist_keeps_drops_and_passthrough(self):
+        env = self.env(passthrough=["KEEP_ME", "MYAPP_*", "GH_TOKEN", "CLAUDE_CODE_*", "GIT_CONFIG_COUNT"])
+        for k in ("PATH", "HOME", "LC_ALL", "XDG_RUNTIME_DIR", "MISSIONS_TEST", "HTTPS_PROXY", "TMPDIR",
+                  "KEEP_ME", "MYAPP_URL", "MYAPP_KEY"):
+            self.assertIn(k, env, k)
+        # not on any list: gone, whatever the name pattern
+        for k in ("MY_SECRET", "FOO_TOKEN", "AWS_ACCESS_KEY", "DB_PASSWORD", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "PYTHONPATH"):
+            self.assertNotIn(k, env, k)
+        # the never-list beats the passthrough
+        for k in ("GH_TOKEN", "GITHUB_TOKEN", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "SSH_AUTH_SOCK", "MISSIONS_PUSH_TOKEN"):
+            self.assertNotIn(k, env, k)
+        # ours replace the driver's, never inherit them
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "2")
+        self.assertEqual(env["GIT_CONFIG_GLOBAL"], str(self.m / "githooks" / "gitconfig"))
+        self.assertEqual(env["GIT_CONFIG_VALUE_0"], str(self.m / "githooks"))
+        self.assertEqual((env["GIT_CONFIG_KEY_1"], env["GIT_CONFIG_VALUE_1"]), ("credential.helper", ""))
+        self.assertTrue(env["GIT_SSH_COMMAND"].endswith("/githooks/no-credentials"))
+        self.assertEqual(env["GIT_ASKPASS"], env["GIT_SSH_COMMAND"])
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(env["MISSIONS_FILES"], "analytics/service.py,tests/unit/test_a.py")
+        self.assertEqual((env["MISSIONS_BRANCH"], env["MISSIONS_ROLE"], env["MISSIONS_TASK"]), ("mission/demo", "worker", "F001#1"))
+        self.assertTrue(env["MISSIONS_BIN"].endswith("/bin/missions"))
+        self.assertNotIn("MISSIONS_FILES", self.env(role="reviewer"))
+
+    def test_harness_lists(self):
+        claude = self.env(harness="claude")
+        self.assertIn("ANTHROPIC_API_KEY", claude)
+        self.assertNotIn("OPENAI_API_KEY", claude)
+        codex = self.env(harness="codex")
+        self.assertIn("OPENAI_API_KEY", codex)
+        self.assertNotIn("ANTHROPIC_API_KEY", codex)
+        stub = self.env(harness="stub")
+        self.assertNotIn("ANTHROPIC_API_KEY", stub)
+        self.assertNotIn("OPENAI_API_KEY", stub)
+
+    def test_base_build_env_is_the_same_thing(self):
+        from missions.adapters import base
+        env = base.build_env(self.m, self.m / "runs" / "F001#1", "worker", "F001", "F001#1", "implementing", "stub",
+                             base_env=DRIVER_ENV, passthrough=["KEEP_ME"])
+        self.assertIn("KEEP_ME", env)
+        self.assertNotIn("GH_TOKEN", env)
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "2")
+
+
+class GitFilesTests(RepoFixture):
+    """The gitconfig, the hooks and the no-credentials script as git actually applies them under
+    the built environment -- a real checkout, real commits, a real (local) push."""
+
+    def setUp(self):
+        super().setUp()
+        self.ctx = make_ctx(self.m, self.repo)
+        feats = files.read_features(self.m)
+        self.req = RunRequest(role="worker", task="F001#1", prompt_path=self.m / "p.md", cwd=self.repo,
+                              env=prep.build_env(self.m, self.m / "runs" / "F001#1", "worker", "F001", "F001#1", "implementing",
+                                                 "stub", branch="mission/demo", feature_files=feats[0].files,
+                                                 base_env={"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", "/"),
+                                                           "GH_TOKEN": "x"}),
+                              timeout_s=10, budget_usd=None, model=None, effort=None, read_only=False,
+                              output_path=self.m / "o.md", run_dir=self.m / "runs" / "F001#1", feature="F001", mission_dir=self.m)
+        prep.prepare(self.ctx, self.req)
+
+    def wgit(self, *args, env=None, **kw):
+        return subprocess.run(["git", "-C", str(self.repo), *args], env=env or self.req.env, capture_output=True, text=True, **kw)
+
+    def test_gitconfig_content(self):
+        text = files.read_text(self.m / "githooks" / "gitconfig")
+        self.assertIn("[user]\n\tname = driver\n\temail = driver@test\n", text)
+        self.assertIn("[credential]\n\thelper =\n", text)
+        # no identity anywhere (an empty global config, no system one, a checkout that is no repo): the fallback names
+        other = self.tmp / "nothing"
+        other.mkdir()
+        (self.tmp / "empty-gitconfig").write_text("", encoding="utf-8")
+        saved = {k: os.environ.get(k) for k in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM")}
+        os.environ.update(GIT_CONFIG_GLOBAL=str(self.tmp / "empty-gitconfig"), GIT_CONFIG_NOSYSTEM="1")
+        try:
+            prep.write_gitconfig(self.m, other)
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        text = files.read_text(self.m / "githooks" / "gitconfig")
+        self.assertIn("name = missions-worker\n", text)
+        self.assertIn("email = worker@missions.invalid\n", text)
+
+    def test_hook_scripts_text(self):
+        h = prep.push_hash("tok")
+        worker = prep.hook_scripts("worker", "F001#1", h)
+        chain = 'orig=$(git config --local core.hooksPath); [ -n "$orig" ] || orig="$(git rev-parse --git-common-dir)/hooks"'
+        for name in ("pre-commit", "commit-msg", "pre-push"):
+            self.assertTrue(worker[name].startswith("#!/bin/bash\n"), name)
+            self.assertIn(chain, worker[name], name)
+            self.assertIn('"$orig/%s" "$@" </dev/stdin || exit 1' % name, worker[name], name)
+        self.assertIn(h, worker["pre-push"])
+        self.assertIn("sha256sum", worker["pre-push"])
+        self.assertIn("never push", worker["pre-push"])
+        self.assertIn("$MISSIONS_BRANCH", worker["pre-commit"])
+        self.assertIn('"$MISSIONS_FEATURE:"*', worker["commit-msg"])
+        self.assertTrue(worker["post-checkout"].endswith(
+            chain + '\nif [ -x "$orig/post-checkout" ]; then "$orig/post-checkout" "$@" </dev/stdin || exit 1; fi\nexit 0\n'))
+        reviewer = prep.hook_scripts("reviewer", "review-F001#1", h)
+        self.assertIn("a reviewer run does not commit", reviewer["pre-commit"])
+        self.assertIn("a reviewer run does not commit", reviewer["commit-msg"])
+        self.assertNotIn(chain, reviewer["pre-commit"])
+        self.assertIn(h, reviewer["pre-push"])
+        for name in ("pre-commit", "commit-msg", "pre-push", "no-credentials"):
+            self.assertTrue(os.access(self.m / "githooks" / name, os.X_OK), name)
+        names = files.read_text(self.m / "runs" / "F001#1" / "env-names.txt").split()
+        self.assertIn("MISSIONS_FILES", names)
+        self.assertNotIn("GH_TOKEN", names)
+        self.assertFalse(any("=" in n for n in names))
+
+    def test_env_resolves_our_config(self):
+        self.git("config", "credential.helper", "store")     # the repo-local helper is reset by the env
+        self.assertEqual(self.wgit("config", "credential.helper").stdout.strip(), "")
+        self.assertEqual(self.wgit("config", "core.hooksPath").stdout.strip(), str(self.m / "githooks"))
+        self.assertEqual(self.wgit("config", "user.email").stdout.strip(), "driver@test")
+
+    def test_commit_rules(self):
+        (self.repo / "analytics" / "service.py").open("a", encoding="utf-8").write("# x\n")
+        self.wgit("add", "analytics/service.py")
+        res = self.wgit("commit", "-qm", "wrong subject")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn('must start with "F001:"', res.stderr)
+        res = self.wgit("commit", "-qm", "F001: fine")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(self.git("log", "-1", "--format=%an <%ae>"), "driver <driver@test>")
+        # outside the Files line: a warning on stderr, the commit still lands
+        (self.repo / "analytics" / "other.py").write_text("y\n", encoding="utf-8")
+        self.wgit("add", "analytics/other.py")
+        res = self.wgit("commit", "-qm", "F001: other")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("staged outside F001's Files: analytics/other.py", res.stderr)
+        # off the mission branch: refused
+        self.git("checkout", "-qb", "side")
+        (self.repo / "analytics" / "service.py").open("a", encoding="utf-8").write("# z\n")
+        self.wgit("add", "analytics/service.py")
+        res = self.wgit("commit", "-qm", "F001: on side")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("commits go on the mission branch mission/demo, not side", res.stderr)
+        self.git("checkout", "-q", "--detach")
+        res = self.wgit("commit", "-qm", "F001: detached")
+        self.assertIn("not a detached HEAD", res.stderr)
+
+    def test_push_refused_without_the_token(self):
+        res = self.wgit("push", "origin", "HEAD:refs/heads/mission/demo")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("workers never push; the driver pushes in phase pr", res.stderr)
+        self.assertNotEqual(subprocess.run(["git", "-C", str(self.tmp / "r" / "origin.git"), "show-ref", "mission/demo"],
+                                           capture_output=True).returncode, 0)
+        # the driver's own push subprocess (not built yet) will carry the plain token; a wrong one is refused
+        env = dict(self.req.env, MISSIONS_PUSH_TOKEN="not-it")
+        self.assertNotEqual(self.wgit("push", "origin", "HEAD:refs/heads/mission/demo", env=env).returncode, 0)
+        env = dict(self.req.env, MISSIONS_PUSH_TOKEN=self.ctx.push_token)
+        res = self.wgit("push", "origin", "HEAD:refs/heads/mission/demo", env=env)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(subprocess.run(["git", "-C", str(self.tmp / "r" / "origin.git"), "show-ref", "mission/demo"],
+                                        capture_output=True).returncode, 0)
+
+    def test_repo_hook_runs_first_and_keeps_its_exit_code(self):
+        hooks = self.repo / ".git" / "hooks"
+        marker = self.tmp / "ran"
+        (hooks / "pre-commit").write_text("#!/bin/bash\necho ran >> %s\nexit 1\n" % marker, encoding="utf-8")
+        os.chmod(hooks / "pre-commit", 0o755)
+        (self.repo / "analytics" / "service.py").open("a", encoding="utf-8").write("# x\n")
+        self.wgit("add", "analytics/service.py")
+        res = self.wgit("commit", "-qm", "F001: fine")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertTrue(marker.exists())
+        self.assertNotIn("missions:", res.stderr)      # the repo's verdict, not ours
+        (hooks / "pre-commit").write_text("#!/bin/bash\necho ran >> %s\nexit 0\n" % marker, encoding="utf-8")
+        self.assertEqual(self.wgit("commit", "-qm", "F001: fine").returncode, 0)
+        self.assertEqual(marker.read_text(encoding="utf-8").count("ran"), 2)
+        # a repo that sets its own core.hooksPath: that directory is the original, not .git/hooks
+        custom = self.tmp / "customhooks"
+        custom.mkdir()
+        (custom / "commit-msg").write_text("#!/bin/bash\necho custom >> %s\nexit 0\n" % marker, encoding="utf-8")
+        os.chmod(custom / "commit-msg", 0o755)
+        (custom / "post-commit").write_text("#!/bin/bash\necho post >> %s\n" % marker, encoding="utf-8")
+        os.chmod(custom / "post-commit", 0o755)
+        self.git("config", "core.hooksPath", str(custom))
+        (self.repo / "analytics" / "service.py").open("a", encoding="utf-8").write("# y\n")
+        self.wgit("add", "analytics/service.py")
+        self.assertEqual(self.wgit("commit", "-qm", "F001: again").returncode, 0)
+        self.assertIn("custom", marker.read_text(encoding="utf-8"))
+        self.assertIn("post", marker.read_text(encoding="utf-8"))     # a hook we add nothing to still reaches the repo's
+        self.assertNotEqual(self.wgit("commit", "--allow-empty", "-qm", "nope").returncode, 0)
+
+
+class StubResolutionTests(unittest.TestCase):
+    def test_script_order(self):
+        d = Path(tempfile.mkdtemp())
+        try:
+            for n in ("reviewer-F001.sh", "F001.sh", "reviewer.sh", "negotiate.sh", "judgment.sh", "worker.sh"):
+                (d / n).write_text("", encoding="utf-8")
+            a = StubAdapter({"script_dir": str(d)})
+
+            def req(role, feature="", step=""):
+                return RunRequest(role=role, task="t", prompt_path=d, cwd=d, env={}, timeout_s=1, budget_usd=None, model=None,
+                                  effort=None, read_only=False, output_path=d, feature=feature, step=step)
+            self.assertEqual(a.script_for(req("worker", "F001")).name, "F001.sh")
+            self.assertEqual(a.script_for(req("worker", "F002")).name, "worker.sh")
+            self.assertEqual(a.script_for(req("reviewer", "F001", "reviewer")).name, "reviewer-F001.sh")
+            self.assertEqual(a.script_for(req("reviewer", "F002", "reviewer")).name, "reviewer.sh")   # never F002.sh
+            (d / "F002.sh").write_text("", encoding="utf-8")
+            self.assertEqual(a.script_for(req("reviewer", "F002", "reviewer")).name, "reviewer.sh")
+            self.assertEqual(a.script_for(req("judgment", "", "negotiate")).name, "negotiate.sh")
+            self.assertEqual(a.script_for(req("judgment", "", "triage")).name, "judgment.sh")
+            self.assertEqual(a.script_for(req("scrutiny", "", "scrutiny")).name, "scrutiny.sh")   # the default, absent or not
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class PathsOutsideTests(RepoFixture):
+    def test_paths_outside_and_the_grade(self):
+        base = self.git("rev-parse", "HEAD")
+        (self.repo / "analytics" / "service.py").open("a", encoding="utf-8").write("# F001\n")
+        (self.repo / "analytics" / "other.py").write_text("y\n", encoding="utf-8")
+        (self.repo / "docs").mkdir()
+        (self.repo / "docs" / "note.md").write_text("n\n", encoding="utf-8")
+        (self.m / "scratch.txt").write_text("s\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("add", "-f", ".missions/demo/scratch.txt")
+        self.git("commit", "-qm", "F001: x")
+        head = self.git("rev-parse", "HEAD")
+        self.assertEqual(grading.paths_outside(self.repo, base, head, ["analytics/service.py"]), ["analytics/other.py", "docs/note.md"])
+        self.assertEqual(grading.paths_outside(self.repo, base, head, ["analytics", "docs/"]), [])
+        self.assertEqual(grading.paths_outside(self.repo, base, head, []), ["analytics/other.py", "analytics/service.py", "docs/note.md"])
+        # the driver's verdict (base = HEAD at launch) and the worker's (the commit's parent) agree
+        self.handoff()
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, base, None, ["A001", "A002"], task="F001#1",
+                                  feature_files=["analytics/service.py", "tests/unit/test_a.py"])
+        self.assertEqual(len(g.problems), 1, g.problems)
+        self.assertIn("analytics/other.py, docs/note.md outside the feature's Files and the handoff does not mention them", g.problems[0])
+        self.assertNotIn("name them under", g.problems[0])
+        self.assertEqual(classify(ClassifyTests().out(), g), "malformed_handoff")
+        s = grading.self_check(self.m, "F001", self.repo, PLUGIN)
+        self.assertEqual(len(s.problems), 1, s.problems)
+        self.assertIn("outside the feature's Files", s.problems[0])
+        self.assertIn("-- name them under Completed with the reason, or leave them out", s.problems[0])
+        # named in the handoff (a basename is enough): believed
+        text = files.read_text(files.handoff_path(self.m, "F001")).replace("## Completed\nx", "## Completed\nx; also other.py and docs/note.md for the helper")
+        files.write_text(files.handoff_path(self.m, "F001"), text)
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, base, None, ["A001", "A002"], task="F001#1",
+                                  feature_files=["analytics/service.py"])
+        self.assertEqual(g.problems, [])
+        self.assertEqual(grading.self_check(self.m, "F001", self.repo, PLUGIN).problems, [])
+        # no Files line known: nothing to measure against
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, base, None, ["A001", "A002"], task="F001#1")
+        self.assertEqual(g.problems, [])
+
+
+class BlindTests(Fixture):
+    def test_blind_hides_and_restores(self):
+        ctx = make_ctx(self.m, self.tmp)
+        for rel in ("handoffs/F001.md", "validation/M1-scrutiny.md", "decisions/d.md", "runs/F001#1/prompt.md",
+                    "runs/review-F001#1/prompt.md", "patches/F001.patch"):
+            (self.m / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.m / rel).write_text(rel, encoding="utf-8")
+        with prep.blind(ctx, "review-F001#1"):
+            for gone in ("handoffs", "validation", "decisions", "runs/F001#1"):
+                self.assertFalse((self.m / gone).exists(), gone)
+            self.assertTrue((self.m / "runs" / "review-F001#1" / "prompt.md").exists())
+            self.assertTrue((self.m / "patches" / "F001.patch").exists())
+            cell = self.m / ".blind" / "review-F001#1"
+            self.assertEqual(os.stat(cell).st_mode & 0o777, 0)
+            (self.m / "runs" / "review-F001#1" / "output.md").write_text("review", encoding="utf-8")
+        for rel in ("handoffs/F001.md", "validation/M1-scrutiny.md", "decisions/d.md", "runs/F001#1/prompt.md",
+                    "runs/review-F001#1/prompt.md", "runs/review-F001#1/output.md", "patches/F001.patch"):
+            self.assertTrue((self.m / rel).exists(), rel)
+        self.assertEqual(files.read_text(self.m / "handoffs" / "F001.md"), "handoffs/F001.md")
+        self.assertFalse((self.m / ".blind").exists())
+        # an exception inside the window restores too
+        with self.assertRaises(RuntimeError):
+            with prep.blind(ctx, "review-F002#1"):
+                self.assertFalse((self.m / "handoffs").exists())
+                raise RuntimeError("boom")
+        self.assertTrue((self.m / "handoffs" / "F001.md").exists())
+        self.assertFalse((self.m / ".blind").exists())
+
+    def test_restore_after_a_crash_merges_what_grew_back(self):
+        cell = self.m / ".blind" / "review-F001#1"
+        (cell / "handoffs").mkdir(parents=True)
+        (cell / "handoffs" / "F001.md").write_text("hidden", encoding="utf-8")
+        (cell / "runs" / "F001#1").mkdir(parents=True)
+        (cell / "runs" / "F001#1" / "outcome.json").write_text("{}", encoding="utf-8")
+        os.chmod(cell, 0)
+        (self.m / "handoffs").mkdir()
+        (self.m / "handoffs" / "F002.md").write_text("newer", encoding="utf-8")
+        (self.m / "runs" / "F002#1").mkdir(parents=True)
+        self.assertEqual(prep.restore_blind(self.m), ["review-F001#1"])
+        self.assertEqual(files.read_text(self.m / "handoffs" / "F001.md"), "hidden")
+        self.assertEqual(files.read_text(self.m / "handoffs" / "F002.md"), "newer")
+        self.assertTrue((self.m / "runs" / "F001#1" / "outcome.json").exists())
+        self.assertTrue((self.m / "runs" / "F002#1").is_dir())
+        self.assertFalse((self.m / ".blind").exists())
+        self.assertEqual(prep.restore_blind(self.m), [])
+
+
+class HostLeaseTests(Fixture):
+    def setUp(self):
+        super().setUp()
+        self.lock = self.tmp / "host.lock"
+        self.saved = os.environ.get("MISSIONS_HOST_LOCK")
+        os.environ["MISSIONS_HOST_LOCK"] = str(self.lock)
+
+    def tearDown(self):
+        if self.saved is None:
+            os.environ.pop("MISSIONS_HOST_LOCK", None)
+        else:
+            os.environ["MISSIONS_HOST_LOCK"] = self.saved
+        super().tearDown()
+
+    def try_lock(self):
+        """0 when the lock is free, 1 when held -- from another process, as a second driver would be."""
+        code = ("import fcntl,sys; f=open(sys.argv[1],'a+')\n"
+                "try: fcntl.flock(f, fcntl.LOCK_EX|fcntl.LOCK_NB); sys.exit(0)\n"
+                "except OSError: sys.exit(1)\n")
+        return subprocess.run([sys.executable, "-c", code, str(self.lock)]).returncode
+
+    def test_lease_holder_line_and_opt_out(self):
+        ctx = make_ctx(self.m, self.tmp, cfg={"host_lease": True})
+        with prep.host_lease(ctx, "F001#1"):
+            self.assertEqual(self.try_lock(), 1)
+            line = files.read_text(self.lock).strip()
+            self.assertTrue(line.startswith("mission=%s task=F001#1 pid=%d at=" % (self.m, os.getpid())), line)
+        self.assertEqual(self.try_lock(), 0)
+        self.assertIsNone(journal.last(self.m, "lease_wait"))
+        self.lock.unlink()
+        with prep.host_lease(make_ctx(self.m, self.tmp, cfg={"host_lease": False}), "F001#1"):
+            self.assertFalse(self.lock.exists())
+
+    def test_waits_and_journals_the_holder(self):
+        code = ("import fcntl,sys,time; f=open(sys.argv[1],'a+'); fcntl.flock(f, fcntl.LOCK_EX)\n"
+                "f.write('mission=/elsewhere/.missions/other task=F009#1 pid=1 at=t\\n'); f.flush(); time.sleep(1.5)\n")
+        holder = subprocess.Popen([sys.executable, "-c", code, str(self.lock)])
+        try:
+            for _ in range(50):
+                if self.lock.exists() and self.lock.read_text(encoding="utf-8").strip():
+                    break
+                time.sleep(0.05)
+            t0 = time.monotonic()
+            with prep.host_lease(make_ctx(self.m, self.tmp, cfg={}), "F001#1"):
+                waited = time.monotonic() - t0
+            self.assertGreater(waited, 0.5)
+            rec = journal.last(self.m, "lease_wait")
+            self.assertEqual((rec["task"], rec["holder"]), ("F001#1", "mission=/elsewhere/.missions/other task=F009#1 pid=1 at=t"))
+            self.assertEqual(journal.count(self.m, "lease_wait"), 1)
+        finally:
+            holder.wait()
+
+
+class PreflightPrepTests(RepoFixture):
+    def test_preflight_restores_blind_and_warns_on_no_host_lease(self):
+        files.write_config(self.m, {"harness": "stub", "checkout": ".", "branch": "mission/demo", "host_lease": False,
+                                    "adapters": {"stub": {"script_dir": str(self.tmp)}}})
+        cell = self.m / ".blind" / "review-F001#1"
+        (cell / "handoffs").mkdir(parents=True)
+        (cell / "handoffs" / "F001.md").write_text("hidden", encoding="utf-8")
+        os.chmod(cell, 0)
+        problems, warnings, cfg = loop.preflight(self.m, PLUGIN)
+        self.assertEqual(problems, [])
+        self.assertTrue(any("restored .blind/review-F001#1" in w for w in warnings), warnings)
+        self.assertTrue(any("host_lease is false" in w for w in warnings), warnings)
+        self.assertEqual(files.read_text(self.m / "handoffs" / "F001.md"), "hidden")
+        self.assertFalse((self.m / ".blind").exists())
+        self.assertIn("restored .blind/review-F001#1", journal.last(self.m, "note")["text"])
+
+
+class CliInitTests(Fixture):
+    def test_init_writes_roles_lease_and_env(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(["init", str(self.m), "--harness", "stub", "--stub-dir", str(self.tmp)]), 0)
+        cfg = files.read_config(self.m)
+        self.assertEqual(sorted(cfg["roles"]), ["behavior", "judgment", "reviewer", "scrutiny", "worker"])
+        self.assertEqual(cfg["roles"]["reviewer"], {"timeout_s": 1500, "budget_usd": 6, "model": None, "effort": None})
+        self.assertEqual(cfg["roles"]["judgment"], {"timeout_s": 300, "budget_usd": 2, "model": None})
+        self.assertEqual(files.read_text(self.m / "driver.json").count('"budget_usd": 8,'), 1)
+        self.assertNotIn("effort", cfg["roles"]["worker"])
+        self.assertIs(cfg["host_lease"], True)
+        self.assertEqual(cfg["env"], {"passthrough": []})
+        self.assertEqual(cfg["adapters"]["stub"]["script_dir"], str(self.tmp))
+
+    def test_until_choices(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            cli.main(["run", str(self.m), "--until", "bogus"])
 
 
 if __name__ == "__main__":

@@ -117,6 +117,7 @@ def worker_prompt(mission_dir: Path, feature: files.Feature, digest_text: str,
     parts.append("Deliverables: working code, tests at the layer named above, one commit whose message")
     parts.append("starts with \"%s:\", and .missions/%s/handoffs/%s.md written to the schema in" % (feature.id, slug, feature.id))
     parts.append("%s/templates/MISSIONS_TEMPLATES.md. Do not push." % plugin)
+    parts.append("Changes outside the files named above are allowed only when the handoff names them under Completed with the reason.")
     parts.append("Do not spawn background work or sub-agents; the driver waits only for this process.")
     parts.append("Before you exit, run `bash %s/bin/missions grade %s %s --self` and fix what it reports:" % (
         plugin, mission_dir, feature.id))

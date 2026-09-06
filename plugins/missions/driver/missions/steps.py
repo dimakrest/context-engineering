@@ -1,7 +1,8 @@
 """The worker step and the ingest (design §6).
 
-step_worker: render -> take the 0.2 locks -> journal dispatch -> adapter.run() BLOCKS, with the
-watchdog watching the branch -> journal return and cost -> release locks -> grade after exit,
+step_worker: render -> prep (the env, the git files it points at) -> host lease -> take the 0.2
+locks -> journal dispatch -> adapter.run() BLOCKS, with the watchdog watching the branch -> journal
+return and cost -> release locks and the lease -> grade after exit,
 exactly once, keyed by task -> classify -> journal step_done. A commit without a handoff is
 reconstructed here and graded once more before the loop sees a class.
 ingest: on `done`, range + patch + features.md + contract.md (claimed, never proven) + open issues
@@ -11,17 +12,25 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from . import files, journal, prompts, watchdog
+from . import files, journal, prep, prompts, watchdog
 from .adapters import base
 from .grade import grade_feature, reconstruct
 from .outcome import Grade, Outcome, RunRequest, classify
 
-WORKER_DEFAULTS = {"timeout_s": 2400, "budget_usd": 8.0}
+# design §3: what a role gets when driver.json does not say
+ROLE_DEFAULTS = {
+    "worker": {"timeout_s": 2400, "budget_usd": 8},
+    "reviewer": {"timeout_s": 1500, "budget_usd": 6},
+    "scrutiny": {"timeout_s": 1800, "budget_usd": 4},
+    "behavior": {"timeout_s": 2400, "budget_usd": 10},
+    "judgment": {"timeout_s": 300, "budget_usd": 2},
+}
 
 
 @dataclass
@@ -35,6 +44,8 @@ class Context:
     harness: str
     log: Callable[[str], None] = print
     usd_this_run: float = 0.0
+    # the pre-push hook carries this token's sha256; the plain value never leaves driver memory
+    push_token: str = field(default_factory=lambda: secrets.token_hex(16))
 
     @property
     def slug(self) -> str:
@@ -60,10 +71,13 @@ def build_request(ctx: Context, feature: files.Feature, task: str, run_dir: Path
     claude_vocab = ctx.harness == "claude"
     model = (feature.seat if claude_vocab else None) or rc.get("model") or (meta.get("model") if claude_vocab else None) or None
     effort = rc.get("effort") or (meta.get("effort") if claude_vocab else None) or None
-    timeout = int(rc.get("timeout_s", WORKER_DEFAULTS["timeout_s"]))
-    budget = rc.get("budget_usd", WORKER_DEFAULTS["budget_usd"])
+    timeout = int(rc.get("timeout_s", ROLE_DEFAULTS["worker"]["timeout_s"]))
+    budget = rc.get("budget_usd", ROLE_DEFAULTS["worker"]["budget_usd"])
     budget = float(budget) if budget is not None else None
-    env = base.build_env(ctx.mission_dir, run_dir, "worker", feature.id, task, phase, ctx.harness)
+    branch = ctx.cfg.get("branch") or files.read_state(ctx.mission_dir).branch
+    env = base.build_env(ctx.mission_dir, run_dir, "worker", feature.id, task, phase, ctx.harness,
+                         branch=branch, feature_files=feature.files,
+                         passthrough=list((ctx.cfg.get("env") or {}).get("passthrough") or []))
     return RunRequest(
         role="worker", task=task, prompt_path=run_dir / "prompt.md", cwd=ctx.checkout, env=env,
         timeout_s=timeout, budget_usd=budget, model=model, effort=effort, read_only=False,
@@ -99,6 +113,7 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
     files.write_text(run_dir / "prompt.md", user)
     files.write_text(run_dir / "system.md", system)
     req = build_request(ctx, feature, task, run_dir, meta, state.phase)
+    prep.prepare(ctx, req)
 
     # launch: nothing is graded here -- a launch grades nothing. What is recorded is the identity
     # the grade will be keyed to: HEAD and the handoff's content as they were when this task began.
@@ -106,22 +121,22 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
     handoff_before = files.fingerprint(files.handoff_path(mdir, fid))
     req.watchdog = watchdog.Watchdog(mdir, ctx.checkout, fid, task, head_before, handoff_before, run_dir,
                                      log=ctx.log, **watchdog.config(ctx.cfg))
-    files.set_feature(mdir, fid, status="active")
-    files.write_lock(mdir / ".writer", "mission-worker", fid, task, ctx.session)
-    files.write_lock(mdir / ".lease", "mission-worker", fid, task, ctx.session)
-    journal.append(mdir, "dispatch", agent="mission-worker", **{"class": "writer"}, model=req.model,
-                   feature=fid, dispatch_id=task, session_id=ctx.session, task=task, harness=ctx.harness)
-    ctx.log(">> %s  %s%s  timeout %ds%s  in %s" % (
-        task, ctx.harness, (" " + req.model) if req.model else "", req.timeout_s,
-        (" budget $%g" % req.budget_usd) if req.budget_usd is not None else "", ctx.checkout))
-
-    try:
-        outcome = ctx.adapter.run(req)            # BLOCKS until the process is gone
-    finally:
-        for name, event in ((".writer", "writer_lock_cleared"), (".lease", "lease_released")):
-            line = files.remove_lock(mdir / name)
-            if line is not None:
-                journal.append(mdir, event, reason="returned", lock=line)
+    with prep.host_lease(ctx, task):
+        files.set_feature(mdir, fid, status="active")
+        files.write_lock(mdir / ".writer", "mission-worker", fid, task, ctx.session)
+        files.write_lock(mdir / ".lease", "mission-worker", fid, task, ctx.session)
+        journal.append(mdir, "dispatch", agent="mission-worker", **{"class": "writer"}, model=req.model,
+                       feature=fid, dispatch_id=task, session_id=ctx.session, task=task, harness=ctx.harness)
+        ctx.log(">> %s  %s%s  timeout %ds%s  in %s" % (
+            task, ctx.harness, (" " + req.model) if req.model else "", req.timeout_s,
+            (" budget $%g" % req.budget_usd) if req.budget_usd is not None else "", ctx.checkout))
+        try:
+            outcome = ctx.adapter.run(req)            # BLOCKS until the process is gone
+        finally:
+            for name, event in ((".writer", "writer_lock_cleared"), (".lease", "lease_released")):
+                line = files.remove_lock(mdir / name)
+                if line is not None:
+                    journal.append(mdir, event, reason="returned", lock=line)
 
     if outcome.timed_out:
         status = "timed_out"
@@ -145,7 +160,7 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
     # grade after exit, exactly once, keyed to this task; commits count on the mission branch's ref
     branch = ctx.cfg.get("branch") or state.branch
     grade = grade_feature(mdir, fid, ctx.checkout, ctx.plugin, head_before, handoff_before,
-                          feature.assertions, task=task, outcome=outcome, branch=branch)
+                          feature.assertions, task=task, outcome=outcome, branch=branch, feature_files=feature.files)
     cls = classify(outcome, grade)
     if cls == "handoff_missing":
         # the work is on the branch, the record is not: write the record from the work, then grade
@@ -161,7 +176,7 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
         ctx.log("   %s: commit %s landed without a handoff -- reconstructed it from the commit as %s" % (
             task, commit[:7], "complete" if finished else "partial"))
         grade = grade_feature(mdir, fid, ctx.checkout, ctx.plugin, head_before, handoff_before,
-                              feature.assertions, task=task, outcome=outcome, branch=branch)
+                              feature.assertions, task=task, outcome=outcome, branch=branch, feature_files=feature.files)
         grade.reconstructed = True
         cls = classify(outcome, grade)
     outcome.cls = cls

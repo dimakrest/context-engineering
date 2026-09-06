@@ -2,7 +2,7 @@
 
     missions init      <mission-dir> [--harness stub|claude|codex] [--stub-dir DIR] [--force]
     missions preflight <mission-dir>
-    missions run       <mission-dir> [--harness H] [--milestone M] [--limit N] [--dry-run]
+    missions run       <mission-dir> [--harness H] [--milestone M] [--limit N] [--until validate|milestone] [--dry-run]
     missions grade     <mission-dir> F0nn [--self] [--json]
 
 Exit codes of `run` are the typed stop reasons (design §6.4): 0 done, 1 error, 2 preflight-failed,
@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from . import __version__, files, grade as grading, loop, watchdog
+from . import __version__, files, grade as grading, loop, steps, watchdog
 from .adapters import NAMES
 
 
@@ -35,10 +35,11 @@ def cmd_init(args) -> int:
         "harness": args.harness,
         "checkout": ".",
         "branch": st.branch,
-        "roles": {
-            "worker": {"timeout_s": 2400, "budget_usd": 8, "model": None},
-        },
+        "roles": {role: dict(d, model=None, **({"effort": None} if role == "reviewer" else {}))
+                  for role, d in steps.ROLE_DEFAULTS.items()},
         "watchdog": dict(watchdog.DEFAULTS),
+        "host_lease": True,
+        "env": {"passthrough": []},
         "adapters": {
             "claude": {"bin": "claude", "permission_mode": "acceptEdits"},
             "codex": {"bin": "codex", "sandbox": "workspace-write"},
@@ -138,6 +139,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     r.add_argument("--harness", choices=NAMES)
     r.add_argument("--milestone", help="run only this milestone's features")
     r.add_argument("--limit", type=int, help="stop after N worker runs")
+    r.add_argument("--until", choices=("validate", "milestone"),
+                   help="stop when the milestone's features are done (validate) or after it closes (milestone)")
     r.add_argument("--dry-run", action="store_true", help="print the queue and the commands; touch nothing")
     r.set_defaults(fn=cmd_run)
 

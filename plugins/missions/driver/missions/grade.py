@@ -10,10 +10,11 @@ Beyond the schema the grade checks what a hook at dispatch time never could: tha
 written by THIS attempt (content changed since launch), that its commit is on the mission branch
 (the branch's own ref, not HEAD: a detached checkout cannot make a commit count by sitting on it),
 that the tree is clean, that the checkout is still on the mission branch, that every claimed
-assertion belongs to the feature and that a `complete` handoff claims every one of them, and
-whether the harness reported a quota. When a commit landed and no handoff was written,
-`reconstruct` writes one from the commit, marked as such -- complete when the run ended on its
-own terms, partial when it was cut off.
+assertion belongs to the feature and that a `complete` handoff claims every one of them, that
+every path the commit touches outside the feature's Files is named in the handoff (the pre-commit
+hook only warns about those; this is the gate), and whether the harness reported a quota. When a
+commit landed and no handoff was written, `reconstruct` writes one from the commit, marked as such
+-- complete when the run ended on its own terms, partial when it was cut off.
 """
 from __future__ import annotations
 
@@ -114,6 +115,21 @@ def claimed_ids(handoff_raw: str) -> List[str]:
     return ids
 
 
+def paths_outside(checkout: Path, base: str, head: str, feature_files: List[str]) -> List[str]:
+    """Paths `base..head` touches that are neither under .missions/ nor equal to, or under, a
+    listed Files entry (a directory entry covers its subtree)."""
+    listed = [f.strip().rstrip("/") for f in feature_files if f.strip()]
+    out: List[str] = []
+    for p in files.git_out(checkout, "diff", "--name-only", base, head).splitlines():
+        p = p.strip()
+        if not p or p.startswith(".missions/"):
+            continue
+        if any(p == f or p.startswith(f + "/") for f in listed):
+            continue
+        out.append(p)
+    return out
+
+
 def _tail(path: Path) -> str:
     try:
         with open(path, "rb") as fh:
@@ -141,10 +157,12 @@ def quota_signature(outcome: Outcome) -> Optional[str]:
 
 
 def _check(mission_dir: Path, fid: str, checkout: Path, plugin: Path, h: files.Handoff, g: Grade,
-           feature_assertions: Optional[List[str]], branch: str, advise: bool) -> Grade:
+           feature_assertions: Optional[List[str]], branch: str, advise: bool,
+           feature_files: Optional[List[str]] = None, base: str = "") -> Grade:
     """Every check the driver's verdict and the worker's self-check share, on a handoff that exists
     and counts as the checker's own. `advise` phrases it for the one who can still fix it and adds
-    the problem the driver leaves to `classify`."""
+    the problem the driver leaves to `classify`. `base` is where the run's commits start (the
+    driver knows HEAD at launch; the worker's self-check uses the commit's first parent)."""
     g.problems = handoff_problems(mission_dir, fid, checkout, plugin)
     if h.sha:
         full = files.git_out(checkout, "rev-parse", "--verify", "--quiet", h.sha + "^{commit}")
@@ -152,6 +170,16 @@ def _check(mission_dir: Path, fid: str, checkout: Path, plugin: Path, h: files.H
         g.commit_on_branch = bool(full) and commit_on_branch(checkout, full, branch)
         if advise and full and not g.commit_on_branch:
             g.problems.append("commit %s is not on the mission branch%s" % (h.sha[:7], (" " + branch) if branch else ""))
+        if full and feature_files:
+            since = base or files.git_out(checkout, "rev-parse", "--verify", "--quiet", full + "~1")
+            # mentioned = the path or its basename appears anywhere in the handoff: a worker that
+            # names what it touched is believed; the reason is for the reviewer to weigh
+            unmentioned = [p for p in (paths_outside(checkout, since, full, feature_files) if since else [])
+                           if p not in h.raw and os.path.basename(p) not in h.raw]
+            if unmentioned:
+                g.problems.append("commit touches %s%s outside the feature's Files and the handoff does not mention them%s" % (
+                    ", ".join(unmentioned[:4]), "..." if len(unmentioned) > 4 else "",
+                    " -- name them under Completed with the reason, or leave them out" if advise else ""))
     g.claimed = claimed_ids(h.raw)
     if feature_assertions is not None:
         foreign = [a for a in g.claimed if a not in feature_assertions]
@@ -173,11 +201,13 @@ def _check(mission_dir: Path, fid: str, checkout: Path, plugin: Path, h: files.H
 
 def grade_feature(mission_dir: Path, fid: str, checkout: Path, plugin: Path, head_before: str,
                   handoff_before: Optional[str] = None, feature_assertions: Optional[List[str]] = None,
-                  task: str = "", outcome: Optional[Outcome] = None, branch: str = "") -> Grade:
+                  task: str = "", outcome: Optional[Outcome] = None, branch: str = "",
+                  feature_files: Optional[List[str]] = None) -> Grade:
     """The verdict for one task. `handoff_before` is the handoff's fingerprint at launch (None when
     there was none); the handoff counts as this attempt's only when its content differs. `outcome`,
     when given, is the run the grade is keyed to -- its quota signature belongs to the grade.
-    `branch` is the mission branch; commits count only on its ref."""
+    `branch` is the mission branch; commits count only on its ref. `feature_files` is the
+    feature's Files line; paths outside it are measured from `head_before`."""
     h = files.read_handoff(mission_dir, fid)
     g = Grade(handoff_exists=h.exists, status=h.status, sha=h.sha, issues=list(h.issues),
               undone=list(h.undone), task=task)
@@ -187,7 +217,8 @@ def grade_feature(mission_dir: Path, fid: str, checkout: Path, plugin: Path, hea
     g.new_commit = new_commit_since(checkout, fid, head_before, branch)
     g.quota = quota_signature(outcome) if outcome is not None else None
     if h.exists and g.handoff_written:
-        _check(mission_dir, fid, checkout, plugin, h, g, feature_assertions, branch, advise=False)
+        _check(mission_dir, fid, checkout, plugin, h, g, feature_assertions, branch, advise=False,
+               feature_files=feature_files, base=head_before)
     elif h.exists:
         g.problems.append("handoffs/%s.md is unchanged since launch: written by an earlier attempt, not this one" % fid)
     return g
@@ -287,4 +318,5 @@ def self_check(mission_dir: Path, fid: str, checkout: Path, plugin: Path, branch
         g.problems.append("no handoff at %s" % files.handoff_path(mission_dir, fid))
         return g
     return _check(mission_dir, fid, checkout, plugin, h, g,
-                  feat.assertions if feat is not None else None, branch, advise=True)
+                  feat.assertions if feat is not None else None, branch, advise=True,
+                  feature_files=feat.files if feat is not None else None)

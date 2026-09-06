@@ -1,4 +1,5 @@
-"""The adapter base: environment construction and the blocking process runner.
+"""The adapter base: the blocking process runner (the environment is prep's; `build_env` here
+is the name the callers know).
 
 `run_process` starts exactly one process in its own session, streams stdout/stderr to files in
 the run dir (a file, not a pipe: a grandchild that keeps the descriptor open cannot block the
@@ -17,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-from .. import files
+from .. import prep
 from ..outcome import Outcome, RunRequest
 
 try:
@@ -25,8 +26,6 @@ try:
 except ImportError:  # pragma: no cover - python < 3.8
     Protocol = object  # type: ignore
 
-STRIP_ENV_PREFIXES = ("CLAUDE_CODE_",)
-STRIP_ENV_EXACT = ("CLAUDECODE",)
 TERM_GRACE_S = 60.0
 SWEEP_GRACE_S = 2.0
 POLL_S = 0.5
@@ -43,23 +42,9 @@ class Adapter(Protocol):
 
 
 def build_env(mission_dir: Path, run_dir: Path, role: str, feature: str, task: str,
-              phase: str, harness: str) -> Dict[str, str]:
-    """The run's environment. Inherits the driver's, minus the parent Claude session's plumbing --
-    a child `claude` that sees CLAUDE_CODE_* routes through the parent's socket and hangs. The
-    credential whitelist is D3 (#13)."""
-    env = {k: v for k, v in os.environ.items()
-           if not k.startswith(STRIP_ENV_PREFIXES) and k not in STRIP_ENV_EXACT}
-    env.update({
-        "MISSIONS_ROLE": role,
-        "MISSIONS_FEATURE": feature,
-        "MISSIONS_TASK": task,
-        "MISSIONS_DIR": str(mission_dir),
-        "MISSIONS_RUN_DIR": str(run_dir),
-        "MISSIONS_PHASE": phase,
-        "MISSIONS_HARNESS": harness,
-        "MISSIONS_BIN": str(files.plugin_root() / "bin" / "missions"),
-    })
-    return env
+              phase: str, harness: str, **extra) -> Dict[str, str]:
+    """The run's environment: built by prep from a whitelist, never inherited (design §7)."""
+    return prep.build_env(mission_dir, run_dir, role, feature, task, phase, harness, **extra)
 
 
 @dataclass

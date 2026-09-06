@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from . import __version__, files, journal, prompts, steps
+from . import __version__, files, journal, prep, prompts, steps
 from .adapters import NAMES, make_adapter
 from .steps import Context
 
@@ -85,11 +85,19 @@ def preflight(mission_dir: Path, plugin: Path, harness: Optional[str] = None) ->
     st = files.read_state(mission_dir)
     if not st.has_block:
         problems.append("state.md has no ```mission-state block (legacy header); the driver needs the v2 block")
+    # a driver that died inside a reviewer's blind window left the handoffs hidden under .blind/
+    restored = prep.restore_blind(mission_dir)
+    if restored:
+        journal.append(mission_dir, "note", text="restored .blind/%s left by a crashed driver" % ", .blind/".join(restored))
+        warnings.append("restored .blind/%s (files hidden for a reviewer run by a driver that did not return)" % ", .blind/".join(restored))
     cfg: Optional[Dict] = None
     try:
         cfg = files.read_config(mission_dir)
     except files.MissionFileError as e:
         problems.append(str(e))
+    if cfg is not None and not cfg.get("host_lease", True):
+        warnings.append("host_lease is false in driver.json: executor runs take no host lease, so another mission "
+                        "on this machine may run its tests at the same time")
 
     env = dict(os.environ)
     env["CLAUDE_PLUGIN_ROOT"] = str(plugin)

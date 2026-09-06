@@ -1,11 +1,17 @@
 """A shell script plays the agent (tests, design §9).
 
-    bash <script_dir>/<feature>.sh   if present, else   bash <script_dir>/<role>.sh
+    bash <script_dir>/<script>   -- the first of these that exists:
+        <role>-<feature>.sh   (reviewer-F001.sh: one feature's review)
+        <feature>.sh          (F001.sh; worker runs only -- a reviewer must not pick up the worker's script)
+        <step>.sh             (negotiate.sh, triage.sh, reviewer.sh, scrutiny.sh, behavior.sh)
+        <role>.sh             (worker.sh, judgment.sh)
 
-with MISSIONS_ROLE MISSIONS_FEATURE MISSIONS_TASK MISSIONS_DIR MISSIONS_RUN_DIR MISSIONS_PROMPT
-MISSIONS_STUB_SCRIPT in the environment. The script may commit, write or omit a handoff, sleep,
-spawn a background child, write `$MISSIONS_RUN_DIR/cost.json` ({"unit": "usd", "value": 1.5}) and
-exit with any rc. The driver treats it exactly like a real harness.
+with MISSIONS_ROLE MISSIONS_STEP MISSIONS_FEATURE MISSIONS_TASK MISSIONS_DIR MISSIONS_RUN_DIR
+MISSIONS_PROMPT MISSIONS_STUB_SCRIPT MISSIONS_READ_ONLY MISSIONS_BIN in the environment. The script
+may commit, write or omit a handoff, sleep, spawn a background child, write
+`$MISSIONS_RUN_DIR/cost.json` ({"unit": "usd", "value": 1.5}), write `$MISSIONS_RUN_DIR/output.md`
+as its final message (that is `req.output_path`), and exit with any rc. The driver treats it
+exactly like a real harness.
 """
 from __future__ import annotations
 
@@ -27,10 +33,18 @@ class StubAdapter:
         return {"cost_unit": "unknown", "budget": False, "model": False, "read_only": False}
 
     def script_for(self, req: RunRequest) -> Path:
-        by_feature = self.script_dir / ("%s.sh" % req.feature)
-        if req.feature and by_feature.exists():
-            return by_feature
-        return self.script_dir / ("%s.sh" % req.role)
+        names: List[str] = []
+        if req.feature:
+            names.append("%s-%s.sh" % (req.role, req.feature))
+            if req.role == "worker":
+                names.append("%s.sh" % req.feature)
+        if req.step:
+            names.append("%s.sh" % req.step)
+        names.append("%s.sh" % req.role)
+        for name in names:
+            if (self.script_dir / name).exists():
+                return self.script_dir / name
+        return self.script_dir / names[-1]
 
     def command(self, req: RunRequest) -> List[str]:
         return ["bash", str(self.script_for(req))]
@@ -38,7 +52,7 @@ class StubAdapter:
     def run(self, req: RunRequest) -> Outcome:
         script = self.script_for(req)
         extra = {"MISSIONS_STUB_SCRIPT": str(script), "MISSIONS_PROMPT": str(req.prompt_path),
-                 "MISSIONS_READ_ONLY": "1" if req.read_only else "0"}
+                 "MISSIONS_READ_ONLY": "1" if req.read_only else "0", "MISSIONS_STEP": req.step}
         res = base.run_process(self.command(req), req, extra_env=extra)
         cost = unknown_cost("stub:no-cost.json")
         cost_file = req.run_dir / "cost.json"

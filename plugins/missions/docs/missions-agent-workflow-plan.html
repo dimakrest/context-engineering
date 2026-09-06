@@ -130,7 +130,7 @@
   <a href="#agents">5 · Subagents</a>
   <a href="#hooks">6 · Hooks</a>
   <a href="#models">7 · Model seats</a>
-  <a href="#voice">8 · Missions adaptation</a>
+  <a href="#voice">8 · Voice-platform adaptation</a>
   <a href="#guard">9 · Guardrails</a>
   <a href="#phases">10 · Phasing</a>
   <a href="#testing">11 · Testing strategy</a>
@@ -161,7 +161,7 @@
     <div class="card">
       <h4><span class="dot" style="background:var(--a2)"></span>What we are explicitly not copying</h4>
       <ul>
-        <li><strong>16-day unattended runs.</strong> the host project is a production voice platform with telephony side effects
+        <li><strong>16-day unattended runs.</strong> The host project is a production voice platform with telephony side effects
         and DB migrations. Our autonomy ceiling is a mission that produces a <em>branch and a draft PR</em>, never a merge.</li>
         <li><strong>Cross-provider validation.</strong> He debiases by putting validation on a different model
         provider. Inside Claude Code we can vary <em>model</em> and <em>evidence</em>, not vendor — see §7.</li>
@@ -592,7 +592,7 @@
 
   <p>Voice agent behavior is exactly the class of correctness that unit tests confirm and never catch: the code is
   right, the tests are green, and the agent still says the wrong thing, transfers to the wrong queue, or hangs up
-  early. The repo already has the instrument — <span class="mono">conversation_test</span> MCP (start_call, say, wait_response,
+  early. The repo already has the instrument — a <span class="mono">conversation_test</span> MCP (start_call, say, wait_response,
   play_audio, end_call) plus the <code>pr-voice-test-plan</code> and <code>run-test</code> skills. Missions supplies the
   missing half: <em>a contract written before the code that says what the call must do</em>.</p>
 
@@ -617,7 +617,7 @@
     <line x1="16" y1="124" x2="844" y2="124" stroke="var(--line)"/>
     <text x="16" y="148" class="svgsm" fill="var(--a3)" font-weight="700">WHY THIS IS THE KILLER APP HERE</text>
     <text x="16" y="168" class="svgxs">Green unit tests have never once proven a voice agent behaves. The conversational class is</text>
-    <text x="16" y="184" class="svgxs">where the project’s real defects live — and it is precisely the class a self-grading worker cannot check.</text>
+    <text x="16" y="184" class="svgxs">where a voice platform's real defects live — and it is precisely the class a self-grading worker cannot check.</text>
   </svg>
   <figcaption>The contract spans all three; the loop routes each assertion to the validator that can actually prove it.</figcaption>
   </figure>
@@ -665,7 +665,7 @@
       skills, manually keeping the discipline: fresh session per feature, a second session that only sees the diff
       for review. Record where it hurt and where it helped.</p>
       <p class="exit"><b>Exit:</b> we can say concretely which of the seven mechanisms earned its keep on a real
-      the host project feature — before writing a single skill file. This is the cheapest possible way to be wrong.</p>
+      real feature — before writing a single skill file. This is the cheapest possible way to be wrong.</p>
     </li>
     <li>
       <h4>Phase 1 — Walking skeleton <span class="pill p1">core</span></h4>

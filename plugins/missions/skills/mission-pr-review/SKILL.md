@@ -92,7 +92,7 @@ before doing it if the repo is one where a review request pages someone.
 plausible and are wrong. For each finding that arrives *unassessed*, fan out one agent — read-only,
 told to default to "refuted" when uncertain — to confirm or refute it against the actual code. Do
 not re-assess what arrives already analyzed: an adversarial skill that ships per-finding verdicts
-(as the host repo's `/codex-adversarial-review` does) has done this step for its own findings — reuse those
+(as a repo's own `/codex-adversarial-review` skill may) has done this step for its own findings — reuse those
 verdicts. Findings that survive go to `followups.md`. **You do not fix what they find.**
 
 **5. Report.** A self-contained HTML page at `.missions/<slug>/validation/pr-review-report.html`:

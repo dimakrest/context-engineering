@@ -1,0 +1,18 @@
+# Every assertion proven, but the registry has grown past the feature count: the convergence
+# gate fails (mission-converge.sh exit 2) and that is a BLOCK halt with a re-plan, never a cap
+# raise. The proven marks stand; the milestone does not advance. (#13, SKILL "Convergence gate")
+rc=5
+journal~="event":"dispatch".*"dispatch_id":"negotiate-M1#1"
+journal~="event":"judgment".*"step":"negotiate".*no findings
+journal~="event":"decision".*"step":"proven".*"milestone":"M1".*"assertions":\["A001","A002"\]
+journal~="event":"validate_done".*"milestone":"M1".*"round":1.*"result":"halted"
+journal~="event":"halt".*"class":"block".*follow-ups exceed features: 4 FU vs 3 F
+journal~="event":"stop".*"reason":"gate-blocked".*"detail":"M1: features 3 · follow-ups 4.*CONVERGE FAIL.*follow-ups exceed features: 4 FU vs 3 F \(cumulative\)".*never a cap raise
+journal!~="event":"milestone_closed"
+journal!~="dispatch_id":"F003#1"
+state~=^phase: halted
+state~=^milestone: M1
+state~=^resume_next: gate-blocked: re-plan
+nofile=archive/M1.md
+postcheck=grep -qE '^\| A001 \| .* \| proven \| validation/M1-review-F001.md \|' "$M/contract.md"
+postcheck=[ "$(grep -c '^## FU' "$M/followups.md")" = 4 ]

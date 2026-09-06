@@ -314,15 +314,21 @@ safe answer: all fan-out originates in the `/missions:mission-run` loop, never i
 
 **The driver (0.3, in progress).** Three runs showed that every long stall had one root: the thing
 that should continue the mission was a model deciding whether to take another turn. `bin/missions`
-replaces that with a program — a `while True:` that runs each worker as a blocking subprocess under
-`claude -p` or `codex exec`, grades the handoff after the process exits, and stops only through a
-typed reason. Today (D1 + D2 of #5) it drives the IMPLEMENT phase of a milestone and hands
-VALIDATE back to `/missions:mission-run`. Grading happens once, after exit, keyed to the attempt
-(#4): eight outcome classes, a watchdog that ends a run which committed and then went idle without
-a handoff, reconstruction of that handoff from the commit, and `missions grade --self` so the
-worker checks itself against the same function. Harness-agnostic enforcement (#13),
-`resume`/`status` and the mutation tests (#6) follow. See the README's "Developing" section for the
-commands and the trace tests.
+replaces that with a program — a `while True:` that runs each worker and each validator as a
+blocking subprocess under `claude -p` or `codex exec`, grades what it left behind after the
+process exits, and stops only through a typed reason. With D3 of #5 landed it drives a mission
+from its first feature to its last milestone's close: IMPLEMENT (grading once, after exit, keyed
+to the attempt — #4: eight outcome classes, the watchdog, handoff reconstruction, `missions grade
+--self`), triage of the open issues a handoff raises, and VALIDATE — scrutiny, a blind review per
+feature, behavior validation where the contract needs it, negotiate, `proven` written only from
+validator verdicts, convergence, archive, the next milestone — with follow-ups and repair features
+registered from what a judgment step proposes and the driver applies. Enforcement no longer
+depends on the harness (#13): a run's environment is built from a whitelist, so no push credential
+reaches a worker; git hooks scoped to that environment refuse what is still possible; a reviewer
+runs with the handoffs and the other validators' files out of reach; one executor at a time per
+host. What remains: the terminal steps and the push (the `pr` phase, #10), `resume` / `status` and
+the mutation tests (#6), sleep-and-resume on a provider quota (#7). See the README's "Developing"
+section for the commands, the trace tests and the paid harness smoke.
 
 ---
 

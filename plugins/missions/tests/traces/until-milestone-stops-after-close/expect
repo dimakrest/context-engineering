@@ -1,0 +1,17 @@
+# --until milestone: the run stops after M1 closes -- proven marks written, the milestone's
+# state.md sections archived, M2 current and implementing -- with limit-reached, not a halt.
+# (#13, CLI --until)
+rc=3
+args=--until milestone
+journal~="event":"decision".*"step":"proven".*"milestone":"M1".*"assertions":\["A001","A002"\]
+journal~="event":"milestone_closed".*"milestone":"M1".*"next":"M2".*"archive":"archived 1 section\(s\) of M1
+journal~="event":"validate_done".*"milestone":"M1".*"result":"closed"
+journal~="event":"stop".*"reason":"limit-reached".*milestone M1 closed; --until milestone
+journal!~="dispatch_id":"F003#1"
+journal!~="event":"halt"
+state~=^phase: implementing
+state~=^milestone: M2
+state~=^resume_next: dispatch F003 \(M2 feature 1 of 1\); M1 closed
+file=archive/M1.md
+postcheck=grep -q '^## M1 — planning notes' "$M/archive/M1.md" && ! grep -q 'planning notes' "$M/state.md" && grep -q '^## M1 — archived' "$M/state.md"
+postcheck=bash "$plugin/scripts/mission-state.sh" "$M" >/dev/null

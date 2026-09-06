@@ -1,4 +1,5 @@
-rc=5
+rc=3
+args=--until validate
 journal~="event":"agent_return".*"dispatch_id":"F001#1"
 journal~="event":"orphans_killed".*"task":"F001#1"
 journal~="event":"handoff_ingested".*"feature":"F001"

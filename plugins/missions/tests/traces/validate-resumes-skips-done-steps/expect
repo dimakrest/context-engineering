@@ -1,0 +1,30 @@
+# A driver interrupted between scrutiny and the first review: the next driver starts in phase
+# validating, finds the open round in the journal and resumes it under the same number -- the
+# scrutiny step is not run again (its validate_step is there and its file exists), the reviews
+# are, and the mission runs on to done. (#13, VALIDATE step 1 re-entrancy)
+rc=0
+journal~="event":"driver_start"
+journal~="event":"note".*resuming validation round 1 of M1
+journal~="event":"dispatch".*"dispatch_id":"review-F001#1"
+journal~="event":"dispatch".*"dispatch_id":"review-F002#1"
+journal~="event":"dispatch".*"dispatch_id":"negotiate-M1#1"
+journal~="event":"decision".*"step":"proven".*"milestone":"M1".*"assertions":\["A001","A002"\]
+journal~="event":"milestone_closed".*"milestone":"M1".*"next":"M2"
+journal~="event":"validate_done".*"milestone":"M1".*"round":1.*"result":"closed"
+journal~="event":"dispatch".*"dispatch_id":"F003#1"
+journal~="event":"handoff_ingested".*"feature":"F003"
+journal~="event":"validate_start".*"milestone":"M2".*"round":1
+journal~="event":"validate_done".*"milestone":"M2".*"result":"closed"
+journal~="event":"stop".*"reason":"done"
+journal!~="event":"validate_start".*"milestone":"M1".*"round":2
+journal!~="event":"halt"
+state~=^phase: validating
+state~=^milestone: M2
+nofile=validation/M1-scrutiny-r2.md
+postcheck=[ "$(grep -c '"event":"dispatch".*"dispatch_id":"scrutiny-M1#' "$M/journal.jsonl")" = 1 ]
+postcheck=[ "$(grep -c '"event":"validate_start".*"milestone":"M1"' "$M/journal.jsonl")" = 1 ]
+postcheck=[ "$(grep -c '"event":"validate_step".*"milestone":"M1".*"step":"scrutiny"' "$M/journal.jsonl")" = 1 ]
+postcheck=grep -q 'base 1111111, head 2222222' "$M/runs/review-F001#1/prompt.md" && grep -q 'base 2222222, head 3333333' "$M/runs/review-F002#1/prompt.md"
+postcheck=grep -q '^--- M1-scrutiny.md ---$' "$M/runs/negotiate-M1#1/prompt.md" && grep -q 'scrutiny-M1#1 · mission-validator-scrutiny · stub · 2026-09-01' "$M/runs/negotiate-M1#1/prompt.md"
+postcheck=grep -qE '^\| A002 \| .* \| proven \| validation/M1-review-F002.md \|' "$M/contract.md"
+postcheck=grep -q 'scrutiny: validation/M1-scrutiny.md exists -- skipped' "$TMP/.stdout"

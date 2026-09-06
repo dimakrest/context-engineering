@@ -1,4 +1,5 @@
-rc=5
+rc=3
+args=--until validate
 journal~="event":"dispatch".*"dispatch_id":"F001#1"
 journal~="event":"step_done".*"step":"F001#1".*"cls":"malformed_handoff"
 journal~="event":"dispatch".*"dispatch_id":"F001#2"

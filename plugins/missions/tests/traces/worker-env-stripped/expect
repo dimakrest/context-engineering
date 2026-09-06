@@ -1,0 +1,21 @@
+# The worker's environment is built from a whitelist: tokens and secrets in the driver's env do
+# not reach it (the stub harness has no auth list of its own), the operator's passthrough does,
+# and git resolves the driver-written config and hooks. (#13, design §7)
+rc=3
+args=--limit 1
+env=GH_TOKEN=x
+env=MY_SECRET=y
+env=FOO_TOKEN=z
+env=KEEP_ME=1
+env=ANTHROPIC_API_KEY=k
+journal~="event":"step_done".*"step":"F001#1".*"cls":"done"
+journal~="event":"stop".*"reason":"limit-reached"
+file=runs/F001#1/env-names.txt
+postcheck=! grep -qxE 'GH_TOKEN|MY_SECRET|FOO_TOKEN|ANTHROPIC_API_KEY' "$M/runs/F001#1/env.txt"
+postcheck=grep -qx KEEP_ME "$M/runs/F001#1/env.txt" && grep -qx MISSIONS_BRANCH "$M/runs/F001#1/env.txt"
+postcheck=grep -qx GIT_CONFIG_GLOBAL "$M/runs/F001#1/env.txt" && grep -qx GIT_TERMINAL_PROMPT "$M/runs/F001#1/env.txt"
+postcheck=grep -qx MISSIONS_FILES "$M/runs/F001#1/env.txt" && grep -qx PATH "$M/runs/F001#1/env.txt"
+postcheck=grep -q '^hooksPath=.*/githooks$' "$M/runs/F001#1/git.txt"
+postcheck=grep -q '^helper=$' "$M/runs/F001#1/git.txt" && grep -q '^email=driver@test$' "$M/runs/F001#1/git.txt"
+postcheck=! grep -qxE 'GH_TOKEN|MY_SECRET' "$M/runs/F001#1/env-names.txt" && grep -qx KEEP_ME "$M/runs/F001#1/env-names.txt"
+postcheck=! grep -q '=' "$M/runs/F001#1/env-names.txt"

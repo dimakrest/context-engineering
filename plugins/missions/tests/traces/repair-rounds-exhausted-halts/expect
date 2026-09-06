@@ -1,0 +1,24 @@
+# Repair rounds per assertion: 1. The first repair of A002 is registered and run; when the
+# repair round finds A002 still not satisfied and negotiate proposes a second repair, the
+# cap refuses it before anything is written: a BLOCK halt naming the cap, root-cause
+# classification, never a cap raise. (#13, hooks/mission-serial-guard.sh's rule)
+rc=5
+journal~="event":"features_added".*"ids":\["F004"\]
+journal~="event":"validate_done".*"milestone":"M1".*"round":1.*"result":"repairs"
+journal~="event":"handoff_ingested".*"feature":"F004"
+journal~="event":"validate_start".*"milestone":"M1".*"round":2
+journal~="event":"verdict".*"feature":"F004".*"A002":"not satisfied"
+journal~="event":"dispatch".*"dispatch_id":"negotiate-M1#2"
+journal~="event":"judgment".*"step":"negotiate".*"task":"negotiate-M1#2".*"round":2.*refused: repair-round cap \(1 per assertion\) exceeded by a repair of A002
+journal~="event":"validate_done".*"milestone":"M1".*"round":2.*"result":"halted"
+journal~="event":"halt".*"class":"block".*repair-round cap \(1 per assertion\) exceeded by a repair of A002, which already has 1 repair feature\(s\) \(F004\)
+journal~="event":"stop".*"reason":"gate-blocked".*the diagnosis is wrong, not the code.*root-cause classification.*never a cap raise
+journal!~="ids":\["F005"
+journal!~="ids":\["FU002"
+journal!~="dispatch_id":"F005#1"
+journal!~="event":"milestone_closed"
+state~=^phase: halted
+state~=^milestone: M1
+postcheck=[ "$(grep -c '^## FU' "$M/followups.md")" = 1 ] && ! grep -q '^### F005' "$M/features.md"
+postcheck=grep -qE '^\| A001 \| .* \| proven \|' "$M/contract.md" && grep -qE '^\| A002 \| .* \| F001, F002, F004 \| claimed \|' "$M/contract.md"
+postcheck=bash "$plugin/scripts/check.sh" "$M" >/dev/null

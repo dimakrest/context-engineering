@@ -1,0 +1,15 @@
+# Two missions in two checkouts share the laptop: the second driver waits on the host lease while
+# the first one's worker runs, journals lease_wait naming the holder, then runs. (#13, design §7.1)
+rc=3
+args=--limit 1
+journal~="event":"dispatch".*"dispatch_id":"F001#1"
+journal~="event":"handoff_ingested".*"feature":"F001"
+journal~="event":"stop".*"reason":"limit-reached"
+journal!~="event":"lease_wait"
+postcheck=for i in $(seq 1 300); do grep -q '"event":"stop"' "$TMP/repo2/.missions/demo/journal.jsonl" 2>/dev/null && break; sleep 0.1; done; grep -q '"event":"stop"' "$TMP/repo2/.missions/demo/journal.jsonl"
+postcheck=grep -E '"event":"lease_wait".*"task":"F001#1".*"holder":"mission=[^" ]*/repo/\.missions/demo task=F001#1 pid=[0-9]+ at=' "$TMP/repo2/.missions/demo/journal.jsonl"
+postcheck=[ "$(grep -c '"event":"lease_wait"' "$TMP/repo2/.missions/demo/journal.jsonl")" = 1 ]
+postcheck=grep -q '"event":"handoff_ingested".*"feature":"F001"' "$TMP/repo2/.missions/demo/journal.jsonl"
+postcheck=grep -q '"event":"stop".*"reason":"limit-reached"' "$TMP/repo2/.missions/demo/journal.jsonl"
+postcheck=git -C "$TMP/repo2" log --oneline | grep -q 'F001: stub work'
+postcheck=grep -q 'mission=' "$TMP/host.lock"

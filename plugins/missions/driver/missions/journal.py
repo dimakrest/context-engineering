@@ -117,6 +117,13 @@ def attempts(mission_dir: Path, feature: str) -> int:
                  lambda r: r.get("feature") == feature and r.get("agent") == "mission-worker")
 
 
+def task_attempts(mission_dir: Path, prefix: str) -> int:
+    """How many `<prefix>#<n>` tasks were dispatched, by anyone -- `review-F001`, `scrutiny-M1`,
+    `triage`; the next attempt is this + 1. The `#` belongs to the match, so a prefix never
+    counts a longer task name that merely starts with it."""
+    return count(mission_dir, "dispatch", lambda r: str(r.get("task") or "").startswith(prefix + "#"))
+
+
 def last_rejection(mission_dir: Path, feature: str) -> Optional[Dict[str, Any]]:
     """The most recent step_done for the feature whose class rejects the handoff, if it is also
     the most recent step_done for the feature at all."""

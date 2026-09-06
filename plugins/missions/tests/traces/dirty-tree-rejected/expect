@@ -1,6 +1,7 @@
 # A complete handoff with uncommitted work left in the tree is not done: malformed_handoff naming
 # the paths, and the re-dispatch prompt tells the next attempt what it inherits. (#4, tree state)
-rc=5
+rc=3
+args=--until validate
 journal~="event":"step_done".*"step":"F001#1".*"cls":"malformed_handoff".*uncommitted changes.*leftover.py
 journal~="event":"step_done".*"step":"F001#2".*"cls":"done"
 journal~="event":"handoff_ingested".*"feature":"F002"

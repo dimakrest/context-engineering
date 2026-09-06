@@ -1,0 +1,12 @@
+# The worker tries to push: the pre-push hook the driver installed through the run's environment
+# refuses it, origin never sees the branch, and the feature still lands. (#13, design §7)
+rc=3
+args=--limit 1
+journal~="event":"step_done".*"step":"F001#1".*"cls":"done"
+journal~="event":"handoff_ingested".*"feature":"F001"
+journal~="event":"stop".*"reason":"limit-reached"
+postcheck=[ "$(cat "$M/runs/F001#1/push.rc")" != 0 ]
+postcheck=grep -q 'never push' "$M/runs/F001#1/push.err"
+postcheck=! git -C "$TMP/origin.git" show-ref mission/demo
+postcheck=git -C "$TMP/origin.git" show-ref main
+postcheck=grep -q 'pre-push' "$M/githooks/pre-push" && [ -x "$M/githooks/pre-push" ]

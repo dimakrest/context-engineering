@@ -31,6 +31,7 @@ class RunRequest:
     feature: str = ""
     mission_dir: Path = Path(".")
     watchdog: Any = None                 # watchdog.Watchdog; started and stopped by run_process
+    step: str = ""                       # reviewer | scrutiny | behavior | negotiate | triage; "" for the worker
 
 
 @dataclass

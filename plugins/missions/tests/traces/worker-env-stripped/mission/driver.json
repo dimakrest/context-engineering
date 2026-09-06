@@ -1,0 +1,20 @@
+{
+  "harness": "stub",
+  "checkout": ".",
+  "branch": "mission/demo",
+  "roles": {
+    "worker": {
+      "timeout_s": 60,
+      "budget_usd": null,
+      "model": null
+    }
+  },
+  "env": {
+    "passthrough": ["KEEP_ME"]
+  },
+  "adapters": {
+    "stub": {
+      "script_dir": "@STUB@"
+    }
+  }
+}

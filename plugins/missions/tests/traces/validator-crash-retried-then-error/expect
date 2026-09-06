@@ -1,0 +1,21 @@
+# A validator that crashes is run once more, then the driver stops with error: no verdict was
+# invented, no file written, nothing halted, and the round stays open at scrutiny for the next
+# driver. (#13, VALIDATE step 2)
+rc=1
+journal~="event":"validate_start".*"milestone":"M1".*"round":1
+journal~="event":"dispatch".*"agent":"mission-validator-scrutiny".*"dispatch_id":"scrutiny-M1#1"
+journal~="event":"step_done".*"step":"scrutiny-M1#1".*"role":"scrutiny".*"cls":"error".*"rc":1
+journal~="event":"dispatch".*"dispatch_id":"scrutiny-M1#2"
+journal~="event":"step_done".*"step":"scrutiny-M1#2".*"cls":"error"
+journal~="event":"stop".*"reason":"error".*scrutiny-M1: two runs ended without a report; last: scrutiny-M1#2 exited 1 with no report.*runs/scrutiny-M1#2/stderr
+journal!~="dispatch_id":"scrutiny-M1#3"
+journal!~="dispatch_id":"review-F001#1"
+journal!~="event":"verdict"
+journal!~="event":"validate_step"
+journal!~="event":"validate_done"
+journal!~="event":"halt"
+state~=^phase: validating
+state~=^resume_next: error: look at runs/scrutiny-M1
+nofile=validation/M1-scrutiny.md
+nofile=.lease
+postcheck=grep -q 'the test stack is down' "$M/runs/scrutiny-M1#2/stderr"

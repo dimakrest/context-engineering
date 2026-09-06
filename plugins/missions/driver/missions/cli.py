@@ -2,7 +2,7 @@
 
     missions init      <mission-dir> [--harness stub|claude|codex] [--stub-dir DIR] [--force]
     missions preflight <mission-dir>
-    missions run       <mission-dir> [--harness H] [--milestone M] [--limit N] [--dry-run]
+    missions run       <mission-dir> [--harness H] [--milestone M] [--limit N] [--until validate|milestone] [--dry-run]
     missions grade     <mission-dir> F0nn [--self] [--json]
 
 Exit codes of `run` are the typed stop reasons (design §6.4): 0 done, 1 error, 2 preflight-failed,
@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from . import __version__, files, grade as grading, loop, watchdog
+from . import __version__, files, grade as grading, loop, steps, watchdog
 from .adapters import NAMES
 
 
@@ -31,14 +31,16 @@ def cmd_init(args) -> int:
         return 2
     st = files.read_state(mdir)
     stub_dir = str(Path(args.stub_dir).resolve()) if args.stub_dir else "stub"
+    roles = {role: dict(d, model=None) for role, d in steps.ROLE_DEFAULTS.items()}
+    roles["reviewer"]["effort"] = None        # design §3: the reviewer is the one role with an effort knob
     cfg = {
         "harness": args.harness,
         "checkout": ".",
         "branch": st.branch,
-        "roles": {
-            "worker": {"timeout_s": 2400, "budget_usd": 8, "model": None},
-        },
+        "roles": roles,
         "watchdog": dict(watchdog.DEFAULTS),
+        "host_lease": True,
+        "env": {"passthrough": []},
         "adapters": {
             "claude": {"bin": "claude", "permission_mode": "acceptEdits"},
             "codex": {"bin": "codex", "sandbox": "workspace-write"},
@@ -116,7 +118,7 @@ def _raise_interrupt(signum, frame):  # pragma: no cover - signal path
     raise KeyboardInterrupt()
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="missions", description="the missions driver: a program continues the mission, not a model")
     p.add_argument("--version", action="version", version="missions " + __version__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -138,6 +140,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     r.add_argument("--harness", choices=NAMES)
     r.add_argument("--milestone", help="run only this milestone's features")
     r.add_argument("--limit", type=int, help="stop after N worker runs")
+    r.add_argument("--until", choices=("validate", "milestone"),
+                   help="stop when the milestone's features are done (validate) or after it closes (milestone)")
     r.add_argument("--dry-run", action="store_true", help="print the queue and the commands; touch nothing")
     r.set_defaults(fn=cmd_run)
 
@@ -147,8 +151,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     g.add_argument("--self", action="store_true", help="worker mode: add the 'fix these before you exit' line")
     g.add_argument("--json", action="store_true")
     g.set_defaults(fn=cmd_grade)
+    return p
 
-    args = p.parse_args(argv)
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = parser().parse_args(argv)
     signal.signal(signal.SIGTERM, _raise_interrupt)
     try:
         return int(args.fn(args))

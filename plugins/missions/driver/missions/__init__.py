@@ -8,4 +8,4 @@ exits only through a typed stop reason. Nothing is awaited that the driver did n
 Stdlib only; python >= 3.9 (no `match`, no `X | Y` at runtime).
 """
 
-__version__ = "0.2.4"
+__version__ = "0.2.5"

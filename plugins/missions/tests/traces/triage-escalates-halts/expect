@@ -1,0 +1,19 @@
+# Triage may not decide everything: an `escalate` is a BLOCK halt with the model's why on the
+# decision card, and the issue stays in state.md for the human. Nothing was registered and no
+# feature was dispatched on it. (#13, design §6.3)
+rc=5
+journal~="event":"handoff_ingested".*"feature":"F001"
+journal~="event":"dispatch".*"agent":"mission-judgment".*"dispatch_id":"triage#1"
+journal~="event":"step_done".*"step":"triage#1".*"cls":"ok"
+journal~="event":"judgment".*"step":"triage".*escalated
+journal~="event":"halt".*"class":"block".*port 5435 needs an operator
+journal~="event":"stop".*"reason":"gate-blocked".*port 5435 needs an operator
+journal!~="dispatch_id":"F002#1"
+journal!~="event":"followups_added"
+journal!~="event":"features_added"
+state~=^phase: halted
+state~=^resume_next: gate-blocked
+postcheck=grep -q '^- F001 handoff: the test stack would not start on port 5435' "$M/state.md"
+postcheck=! grep -q '^- none' "$M/state.md"
+postcheck=! grep -q '^## FU' "$M/followups.md"
+postcheck=sed -n '/^### F002/,/^##/p' "$M/features.md" | grep 'Status:\*\* pending' >/dev/null

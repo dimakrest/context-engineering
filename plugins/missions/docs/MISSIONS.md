@@ -4,9 +4,8 @@ A **mission** is a multi-feature agent run whose definition of done is written *
 exists**. It is built entirely from Claude Code primitives already in this repo — skills, subagents,
 files, and git. There is no framework, no daemon, and no new UI.
 
-Adapted from Luke Alvoeiro's (Factory) multi-agent architecture. Design rationale, what we
-deliberately refused to copy, and the phasing live in `docs/plans/missions-agent-workflow-plan.html`
-(local only).
+Adapted from Luke Alvoeiro's (Factory) multi-agent architecture. Design decisions are recorded
+in the repository's issues.
 
 ---
 
@@ -277,8 +276,7 @@ regression suite (`tests/run.sh`), packaged as the `missions` plugin in the
 
 **v0.2 (2026-08-31)** wired the codebase intelligence (graphify / repowise) into the researcher,
 reviewer, scrutiny validator and the loop, made model seats executable and journaled, and moved the
-researcher and scrutiny seats from Haiku / Opus to Sonnet 5. Plan and rationale:
-`docs/plans/missions-codebase-intelligence-and-seats-plan.md`.
+researcher and scrutiny seats from Haiku / Opus to Sonnet 5.
 
 **v2 (2026-08-31)** applied the five fixes from the analytics-hour-filter retro: bounded assurance
 (feature/file gate, proof budgets, finding registry, convergence gate); advisory vs blocking halts
@@ -320,6 +318,5 @@ safe answer: all fan-out originates in the `/missions:mission-run` loop, never i
 
 - `${CLAUDE_PLUGIN_ROOT}/docs/MISSIONS_GETTING_STARTED.html` — the first-run walkthrough
 - `${CLAUDE_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md` — file schema
-- `${CLAUDE_PLUGIN_ROOT}/docs/missions-agent-workflow-plan.html` — the original design record
 - Whatever the current project documents about its own test layers, E2E setup and DB safety — the
   planner reads those and writes the relevant rules into the mission's `state.md`.

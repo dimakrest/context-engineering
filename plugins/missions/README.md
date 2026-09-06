@@ -69,13 +69,14 @@ IMPLEMENT phase of one milestone — select the pending feature, render its prom
 a blocking subprocess under `claude -p` or `codex exec`, grade the handoff after the process exits,
 write `features.md` / `contract.md` / `state.md` / `journal.jsonl`, loop — and stops with a typed
 reason and exit code (`0` done · `1` error · `2` preflight-failed · `3` limit-reached · `4` budget ·
-`5` gate-blocked · `130` interrupted). VALIDATE, the judgment steps, `resume` and `status` follow
-in #4, #13 and #6.
+`5` gate-blocked · `8` provider-quota · `130` interrupted). VALIDATE, the judgment steps, `resume`
+and `status` follow in #13 and #6.
 
 ```
 plugins/missions/bin/missions init      .missions/<slug> --harness claude|codex
 plugins/missions/bin/missions preflight .missions/<slug>
 plugins/missions/bin/missions run       .missions/<slug> [--limit N] [--milestone M] [--dry-run]
+plugins/missions/bin/missions grade     .missions/<slug> F0nn [--self] [--json]
 ```
 
 Run it from the checkout on the mission branch. It writes `driver.json`, `runs/<task>/` and
@@ -83,6 +84,29 @@ Run it from the checkout on the mission branch. It writes `driver.json`, `runs/<
 alongside it (it takes and releases `.writer` / `.lease` in their format). Note that a `codex`
 worker runs your `~/.codex/hooks.json` hooks and gets no dollar budget — cost is reported in
 tokens.
+
+**Grading happens once, after exit (#4).** A launch grades nothing. When the worker process is
+gone the driver grades the handoff — the schema function `hooks/mission-handoff-schema.sh`, the
+commit on the branch, a clean tree, the checkout still on the mission branch, claims within the
+feature's assertions — keyed to the attempt that ran (`F012#2`): a handoff left by an earlier
+attempt is not this one's. The worker is told to run the same check before it exits
+(`missions grade … --self`); the two agree by construction. Every run ends in one of eight
+classes — `done` · `handoff_missing` · `malformed_handoff` · `tests_failed` · `infra_quota` ·
+`infra_crash` · `stalled` · `no_op` — and `runs/<task>/outcome.json` records the class with the
+grade. The old `PostToolUse: Agent` wiring of the schema hook is gone: it graded at dispatch, which
+is the wrong moment, and fired 29 false alarms across the recorded runs.
+
+**The watchdog.** While a worker runs, a thread polls the branch, the handoff, the run's output and
+the tree (`--no-optional-locks`, so it never takes the index lock from under the worker). A commit
+with no handoff is journaled as `commit_observed` the moment it is seen; if nothing then happens
+for `watchdog.commit_grace_s` (default 300) the run is ended, the driver **reconstructs** the
+handoff from the commit — first line `reconstructed by the driver`, no test evidence claimed —
+grades it once, ingests it and moves on. `watchdog.silence_s` ends a run that changes nothing at
+all for that long; it is off by default because `claude -p --output-format json` prints only at
+the end, so silence there is not evidence. Both live in `driver.json`; `null` turns a rule off. A
+quota or rate-limit message from the harness is `infra_quota`: the feature goes back to pending
+and the driver exits `8` without halting the mission — wait for the reset, run again (the
+driver's own sleep-and-resume is #7).
 
 Trace tests run the real driver over a temporary repo with a stub worker (a shell script):
 

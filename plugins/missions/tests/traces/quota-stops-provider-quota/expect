@@ -1,0 +1,11 @@
+# The harness reports a usage limit and exits non-zero with nothing produced: infra_quota, the
+# feature goes back to pending, the driver stops with provider-quota (8) and the phase stays
+# implementing -- nothing for a human to decide, only a clock to wait for. (#4; the sleep is #7)
+rc=8
+journal~="event":"step_done".*"step":"F001#1".*"cls":"infra_quota".*resets 3am
+journal~="event":"stop".*"reason":"provider-quota".*resets 3am
+journal!~="event":"halt"
+journal!~="dispatch_id":"F001#2"
+state~=^phase: implementing
+state~=^resume_next: provider-quota
+postcheck=sed -n '/^### F001/,/^##/p' "$M/features.md" | grep -q 'Status:\*\* pending'

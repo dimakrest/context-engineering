@@ -1,0 +1,22 @@
+{
+  "harness": "stub",
+  "checkout": ".",
+  "branch": "mission/demo",
+  "roles": {
+    "worker": {
+      "timeout_s": 60,
+      "budget_usd": null,
+      "model": null
+    }
+  },
+  "watchdog": {
+    "poll_s": 0.5,
+    "commit_grace_s": 30,
+    "silence_s": null
+  },
+  "adapters": {
+    "stub": {
+      "script_dir": "@STUB@"
+    }
+  }
+}

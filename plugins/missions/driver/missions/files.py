@@ -61,6 +61,17 @@ def git_out(checkout: Path, *args: str) -> str:
     return res.stdout.strip() if res.returncode == 0 else ""
 
 
+def dirty_paths(checkout: Path) -> List[str]:
+    """Uncommitted paths (modified, staged, untracked) outside .missions/ -- the driver rewrites
+    .missions/ constantly, so it never counts."""
+    out: List[str] = []
+    for ln in git_out(checkout, "status", "--porcelain", "--untracked-files=normal").splitlines():
+        p = ln[3:].split(" -> ")[-1].strip().strip('"')
+        if p and not p.startswith(".missions/") and p != ".missions":
+            out.append(p)
+    return out
+
+
 # ---------------------------------------------------------------- state.md
 
 _FENCE_OPEN = re.compile(r"^```mission-state[ \t]*$")

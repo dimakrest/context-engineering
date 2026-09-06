@@ -1,0 +1,10 @@
+# A complete handoff with uncommitted work left in the tree is not done: malformed_handoff naming
+# the paths, and the re-dispatch prompt tells the next attempt what it inherits. (#4, tree state)
+rc=5
+journal~="event":"step_done".*"step":"F001#1".*"cls":"malformed_handoff".*uncommitted changes.*leftover.py
+journal~="event":"step_done".*"step":"F001#2".*"cls":"done"
+journal~="event":"handoff_ingested".*"feature":"F002"
+state~=^phase: validating
+postcheck=grep -q 'uncommitted changes from a previous attempt' "$M/runs/F001#2/prompt.md" && grep -q 'leftover.py' "$M/runs/F001#2/prompt.md"
+postcheck=! grep -q 'previous attempt' "$M/runs/F001#1/prompt.md"
+postcheck=git log --oneline | grep -q 'F001: stub work 2'

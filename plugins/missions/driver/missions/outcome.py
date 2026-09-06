@@ -1,9 +1,8 @@
-"""The adapter contract (design §4) and the post-exit outcome classes (design §5, D1 subset).
+"""The adapter contract (design §4) and the post-exit outcome classes (design §5).
 
 `RunRequest` is what an adapter receives; `Outcome` is what it returns after the process is gone.
-`Grade` is what the driver found on disk and in git afterwards. `classify_minimal` turns the pair
-into exactly one class. D2 (#4) replaces the classifier with the full eight-class version and the
-watchdog's `killed_by` values; the shapes here are the ones it extends.
+`Grade` is what the driver found on disk and in git afterwards, keyed to the task that ran.
+`classify` turns the pair into exactly one of the eight classes.
 """
 from __future__ import annotations
 
@@ -31,6 +30,7 @@ class RunRequest:
     tools: List[str] = field(default_factory=list)
     feature: str = ""
     mission_dir: Path = Path(".")
+    watchdog: Any = None                 # watchdog.Watchdog; started and stopped by run_process
 
 
 @dataclass
@@ -39,7 +39,7 @@ class Outcome:
     rc: int
     elapsed_s: float
     timed_out: bool
-    killed_by: Optional[str]        # "timeout" | None (watchdog values arrive in D2)
+    killed_by: Optional[str]        # "timeout" | "watchdog:commit_no_handoff" | "watchdog:silence" | None
     cost: Dict[str, Any]            # {"unit": "usd"|"tokens"|"unknown", "value": float|None, "source": str}
     harness: str
     model: Optional[str]            # what the harness reports it ran, else None -- never a default
@@ -49,6 +49,10 @@ class Outcome:
     detail: str = ""                # the harness's own words on how it ended, when it said
     session_id: Optional[str] = None
     orphans_killed: bool = False    # something was still alive in the process group after exit
+
+    @property
+    def killed(self) -> bool:
+        return self.timed_out or self.killed_by is not None
 
     def to_json(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -63,32 +67,52 @@ def unknown_cost(source: str = "") -> Dict[str, Any]:
 
 @dataclass
 class Grade:
-    """What the driver could verify after the process exited."""
+    """What the driver could verify after the process exited, keyed to one task.
+
+    `handoff_exists` is the file on disk; `handoff_written` is whether THIS attempt wrote it (its
+    content differs from what was there at launch). A stale handoff from an earlier attempt is
+    evidence about that attempt, not this one."""
     handoff_exists: bool
-    problems: List[str] = field(default_factory=list)   # from the schema function
+    handoff_written: bool = False
+    problems: List[str] = field(default_factory=list)   # from the schema function and the checks below
     status: str = ""                                     # complete | partial | blocked | ""
     sha: Optional[str] = None
     commit_on_branch: bool = False
-    new_commit: Optional[str] = None                     # an `F0nn:` commit that appeared during the run
+    new_commit: Optional[str] = None                     # a commit that appeared on the branch during the run
     issues: List[str] = field(default_factory=list)
+    claimed: List[str] = field(default_factory=list)     # assertion ids the handoff claims
+    tree_dirty: List[str] = field(default_factory=list)  # uncommitted paths outside .missions/ after exit
+    branch_after: str = ""                               # the checkout's branch after exit
+    quota: Optional[str] = None                          # the harness's quota/limit text, when seen
+    reconstructed: bool = False                          # the driver wrote the handoff from the commit
+    task: str = ""
+
+    def to_json(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 CLASSES = ("done", "handoff_missing", "malformed_handoff", "tests_failed",
            "infra_quota", "infra_crash", "stalled", "no_op")
 
 
-def classify_minimal(outcome: Outcome, grade: Grade) -> str:
-    """One class per run. Evidence outranks the claim: a handoff written by a worker that was
-    killed, or that exited non-zero, is not `done`."""
-    if outcome.timed_out:
-        return "stalled"
-    if grade.handoff_exists:
+def classify(outcome: Outcome, grade: Grade) -> str:
+    """One class per run. Evidence outranks the claim: a handoff this attempt did not write is not
+    its handoff; a handoff written by a worker that was killed or exited non-zero is not `done`.
+
+    The order matters. A commit without a handoff is `handoff_missing` however the run ended --
+    the watchdog kill, a crash and a clean exit all leave the same situation on the branch. Quota
+    is recognised only when the run left no handoff: the text alone is not the outcome."""
+    if grade.handoff_written:
         if grade.status in ("partial", "blocked"):
             return "tests_failed"
         if grade.problems:
             return "malformed_handoff"
         if not grade.sha or not grade.commit_on_branch:
             grade.problems.append("commit %s is not on the mission branch" % (grade.sha or "(none)"))
+            return "malformed_handoff"
+        if outcome.killed:
+            grade.problems.append("the run was ended by the driver (%s) after it wrote a complete handoff" % (
+                outcome.killed_by or "timeout"))
             return "malformed_handoff"
         if outcome.rc != 0:
             grade.problems.append("the worker exited %d after writing a complete handoff%s" % (
@@ -97,6 +121,10 @@ def classify_minimal(outcome: Outcome, grade: Grade) -> str:
         return "done"
     if grade.new_commit:
         return "handoff_missing"
+    if grade.quota:
+        return "infra_quota"
+    if outcome.timed_out or (outcome.killed_by or "").startswith("watchdog:"):
+        return "stalled"
     if outcome.rc != 0:
         return "infra_crash"
     return "no_op"

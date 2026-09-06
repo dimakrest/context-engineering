@@ -1,0 +1,8 @@
+# A commit landed, no handoff, and the tree is not clean: the record cannot be reconstructed from
+# the commit alone, so it is a rejection, re-dispatched with the facts. (#4)
+rc=5
+journal~="event":"step_done".*"step":"F001#1".*"cls":"malformed_handoff".*landed with no handoff, and the tree is not clean
+journal~="event":"step_done".*"step":"F001#2".*"cls":"done"
+journal!~="event":"handoff_reconstructed"
+state~=^phase: validating
+postcheck=grep -q 'was rejected' "$M/runs/F001#2/prompt.md" && grep -q 'previous attempt' "$M/runs/F001#2/prompt.md"

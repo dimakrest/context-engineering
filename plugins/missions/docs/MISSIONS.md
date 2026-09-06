@@ -242,7 +242,7 @@ inconvenient.
 | `mission-commit-discipline.sh` | PreToolUse · `Bash` | No push outside phase `pr`, no merge, no `--no-verify`/`--admin`; feature id required in commit messages while implementing. |
 | `mission-crosscheck-seal.sh` | PreToolUse · `Bash` | The crosscheck reviewer's spec package stays sealed — blocks a `codex` invocation referencing `.missions/` or `docs/plans/`. |
 | `mission-shell-guard.sh` | PreToolUse · `Bash` | What an agent's own shell may not do. For the blind reviewer (identified by the harness's `agent_type`, else by a `.lease` held by `mission-reviewer` — the doc promises the field, nothing here has yet recorded it, so the lease is the fallback): no `git log/show/diff/blame`, no `gh`, no `graphify prs`, no handoff paths — `mission-blind-review.sh` polices the brief, this polices the shell. For every caller: no `repowise update`, no `repowise init` without `--index-only`, no `graphify label/extract`, no `cluster-only` without `--no-label` — they call an LLM through the tool's own key, outside every cap. |
-| `mission-handoff-schema.sh` | PostToolUse · `Agent` | A worker's handoff has every section, records exit codes, and cites a commit that actually exists. |
+| `mission-handoff-schema.sh` | not wired — the schema function | A worker's handoff has every section, records exit codes, and cites a commit that actually exists. Called by the driver after the worker exits and by `missions grade --self` before it does; no longer a `PostToolUse` hook (#4: grading at dispatch fired 29 false alarms). |
 | `mission-journal.sh` | PostToolUse · `Agent` | Appends `agent_return` with the measured `duration_s` (joined to `dispatch` by tool id), agent id, the model that ran (the call's override, else the definition's default), status. Never fails a call. |
 | `mission-release.sh` | PostToolUse / PostToolUseFailure · `Agent`, SubagentStop | Releases `.writer` / `.lease` when their holder returns, fails, or is stopped. |
 | `mission-rehydrate.sh` | SessionStart · `startup\|resume\|compact` | Prints the mission digest as session context, so re-entry after a compaction starts from the rulebook and `resume_next`, not from line 1 of `state.md`. |
@@ -316,10 +316,13 @@ safe answer: all fan-out originates in the `/missions:mission-run` loop, never i
 that should continue the mission was a model deciding whether to take another turn. `bin/missions`
 replaces that with a program — a `while True:` that runs each worker as a blocking subprocess under
 `claude -p` or `codex exec`, grades the handoff after the process exits, and stops only through a
-typed reason. Today (D1 of #5) it drives the IMPLEMENT phase of a milestone and hands VALIDATE back
-to `/missions:mission-run`; post-exit grading and the commit watchdog (#4), harness-agnostic
-enforcement (#13), `resume`/`status` and the mutation tests (#6) follow. See the README's
-"Developing" section for the commands and the trace tests.
+typed reason. Today (D1 + D2 of #5) it drives the IMPLEMENT phase of a milestone and hands
+VALIDATE back to `/missions:mission-run`. Grading happens once, after exit, keyed to the attempt
+(#4): eight outcome classes, a watchdog that ends a run which committed and then went idle without
+a handoff, reconstruction of that handoff from the commit, and `missions grade --self` so the
+worker checks itself against the same function. Harness-agnostic enforcement (#13),
+`resume`/`status` and the mutation tests (#6) follow. See the README's "Developing" section for the
+commands and the trace tests.
 
 ---
 

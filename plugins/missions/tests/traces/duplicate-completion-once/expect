@@ -1,0 +1,17 @@
+# Commit first, handoff later, then the handoff rewritten: the watchdog sees the commit (pending),
+# stands down when the handoff appears, and the exit grade runs exactly once. (#4)
+rc=5
+journal~="event":"dispatch".*"dispatch_id":"F001#1"
+journal~="event":"commit_observed".*"task":"F001#1".*"handoff":"pending"
+journal~="event":"agent_return".*"dispatch_id":"F001#1".*"status":"completed"
+journal~="event":"step_done".*"step":"F001#1".*"cls":"done"
+journal~="event":"handoff_ingested".*"feature":"F001"
+journal~="event":"handoff_ingested".*"feature":"F002"
+journal!~="event":"handoff_reconstructed"
+journal!~=killed_by
+journal!~="cls":"malformed_handoff"
+state~=^phase: validating
+postcheck=[ "$(grep -c '"event":"step_done".*"feature":"F001"' "$M/journal.jsonl")" = 1 ]
+postcheck=[ "$(grep -c '"event":"handoff_ingested".*"feature":"F001"' "$M/journal.jsonl")" = 1 ]
+postcheck=[ "$(grep -c '"event":"commit_observed"' "$M/journal.jsonl")" = 1 ]
+postcheck=! grep -q '"reconstructed": true' "$M/runs/F001#1/outcome.json"

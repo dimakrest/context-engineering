@@ -54,11 +54,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/mission-handoff-schema.sh\"",
-            "timeout": 20
-          },
-          {
-            "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/mission-journal.sh\"",
             "timeout": 10
           },

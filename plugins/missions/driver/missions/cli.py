@@ -3,6 +3,7 @@
     missions init      <mission-dir> [--harness stub|claude|codex] [--stub-dir DIR] [--force]
     missions preflight <mission-dir>
     missions run       <mission-dir> [--harness H] [--milestone M] [--limit N] [--dry-run]
+    missions grade     <mission-dir> F0nn [--self] [--json]
 
 Exit codes of `run` are the typed stop reasons (design §6.4): 0 done, 1 error, 2 preflight-failed,
 3 limit-reached, 4 budget, 5 gate-blocked, 6 authority, 7 contract, 8 provider-quota, 130 interrupted.
@@ -10,12 +11,13 @@ Exit codes of `run` are the typed stop reasons (design §6.4): 0 done, 1 error, 
 from __future__ import annotations
 
 import argparse
+import json
 import signal
 import sys
 from pathlib import Path
 from typing import List, Optional
 
-from . import __version__, files, loop
+from . import __version__, files, grade as grading, loop, watchdog
 from .adapters import NAMES
 
 
@@ -36,6 +38,7 @@ def cmd_init(args) -> int:
         "roles": {
             "worker": {"timeout_s": 2400, "budget_usd": 8, "model": None},
         },
+        "watchdog": dict(watchdog.DEFAULTS),
         "adapters": {
             "claude": {"bin": "claude", "permission_mode": "acceptEdits"},
             "codex": {"bin": "codex", "sandbox": "workspace-write"},
@@ -63,6 +66,36 @@ def cmd_preflight(args) -> int:
 
 def cmd_run(args) -> int:
     return loop.run(Path(args.mission_dir), args)
+
+
+def cmd_grade(args) -> int:
+    """The verdict function on demand. `--self` is the worker's pre-exit check: same function,
+    phrased for the one who can still fix it. Writes nothing."""
+    mdir = Path(args.mission_dir).resolve()
+    if not (mdir / "state.md").exists():
+        print("grade: %s has no state.md" % mdir, file=sys.stderr)
+        return 2
+    try:
+        cfg = files.read_config(mdir)
+        checkout = files.checkout_of(mdir, cfg)
+    except files.MissionFileError:
+        checkout = mdir.parent.parent
+    g = grading.self_check(mdir, args.feature, checkout, files.plugin_root())
+    if args.json:
+        print(json.dumps(g.to_json(), indent=2, ensure_ascii=False))
+        return 0 if not g.problems else 2
+    if g.problems:
+        print("%s: the handoff is not valid evidence yet:" % args.feature)
+        for p in g.problems:
+            print("  - " + p)
+        if args.self:
+            print("Fix these before you exit; the driver applies the same checks after exit.")
+        return 2
+    print("%s: handoff valid -- status %s, commit %s on the branch%s%s" % (
+        args.feature, g.status or "?", (g.sha or "")[:7],
+        (", claims " + ", ".join(g.claimed)) if g.claimed else "",
+        (", %d issue(s) listed" % len(g.issues)) if g.issues else ""))
+    return 0
 
 
 def _raise_interrupt(signum, frame):  # pragma: no cover - signal path
@@ -93,6 +126,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     r.add_argument("--limit", type=int, help="stop after N worker runs")
     r.add_argument("--dry-run", action="store_true", help="print the queue and the commands; touch nothing")
     r.set_defaults(fn=cmd_run)
+
+    g = sub.add_parser("grade", help="grade a feature's handoff the way the driver does after exit")
+    g.add_argument("mission_dir")
+    g.add_argument("feature", help="F0nn")
+    g.add_argument("--self", action="store_true", help="worker mode: the same checks, before you exit")
+    g.add_argument("--json", action="store_true")
+    g.set_defaults(fn=cmd_grade)
 
     args = p.parse_args(argv)
     signal.signal(signal.SIGTERM, _raise_interrupt)

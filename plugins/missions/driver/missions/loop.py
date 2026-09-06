@@ -217,7 +217,7 @@ def _run_locked(ctx: Context, args) -> int:
     ctx.log("missions %s  run %s  mission %s  harness %s  checkout %s" % (
         __version__, ctx.run_id, ctx.slug, ctx.harness, ctx.checkout))
     budget = files.read_budget(mdir)
-    repair_rounds = int(budget.get("repair_rounds") or 2)
+    repair_rounds = files.repair_rounds(mdir)
     limit = getattr(args, "limit", None)
     attempts = 0
     crash_streak = 0
@@ -237,12 +237,14 @@ def _run_locked(ctx: Context, args) -> int:
             r = _check_caps(ctx, budget)
             if r is not None:
                 return r
+            milestone = getattr(args, "milestone", None) or st.milestone
             if st.phase in ("validating", "negotiating"):
-                # a round left open by a stop (an error, an interrupt) resumes where it stopped
+                # the one way into VALIDATE, behind the caps: a milestone that just completed
+                # (below) and a round left open by a stop (an error, an interrupt) both come here
                 if until == "validate":
-                    return stop(ctx, "limit-reached", detail="phase %s: VALIDATE %s is next; --until validate" % (st.phase, st.milestone),
+                    return stop(ctx, "limit-reached", detail="phase %s: VALIDATE %s is next; --until validate" % (st.phase, milestone),
                                 needs="re-run missions run without --until validate")
-                r = validate.run_validate(ctx, st.milestone, until=until)
+                r = validate.run_validate(ctx, milestone, until=until)
                 if isinstance(r, int):
                     return r
                 continue
@@ -259,7 +261,6 @@ def _run_locked(ctx: Context, args) -> int:
                 if r is not None:
                     return r
                 continue
-            milestone = getattr(args, "milestone", None) or st.milestone
             mfeats = [f for f in feats if f.milestone == milestone]
             if not mfeats:
                 return stop(ctx, "gate-blocked", detail="features.md has no features under ## %s" % milestone,
@@ -285,10 +286,7 @@ def _run_locked(ctx: Context, args) -> int:
                                 needs="re-run missions run to VALIDATE %s" % milestone,
                                 resume_next="validate %s (all %d features done); --until validate stopped the run" % (
                                     milestone, len(mfeats)))
-                r = validate.run_validate(ctx, milestone, until=until)
-                if isinstance(r, int):
-                    return r
-                continue
+                continue          # the top of the loop drives the round, behind the caps
             pending = [f for f in mfeats if f.status == "pending"]
             ready = [f for f in pending if all(d in done_ids for d in f.depends)]
             if not ready:

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 _FENCE = re.compile(r"```(?:json)?[ \t]*\n(.*?)\n[ \t]*```", re.S)
 _AID = re.compile(r"^A\d{3}[a-z]?$")
@@ -31,55 +31,27 @@ class JudgmentError(Exception):
     prompt quotes back, so it names the candidate and the parser's own words."""
 
 
-def _first_object(text: str) -> Optional[str]:
-    """The first `{` to its matching `}`, string contents skipped -- a brace inside a quoted
-    finding title must not close the object early."""
-    start = text.find("{")
-    if start == -1:
-        return None
-    depth = 0
-    in_str = False
-    esc = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start:i + 1]
-    return None
-
-
 def extract_json(text: str) -> Dict[str, Any]:
-    """The reply's one JSON object: a fenced block when there is one, else the first `{` to its
-    matching `}`. Both are tried in that order, so a fence that holds something other than the
-    object (a list, a snippet) does not hide the object after it. Raises JudgmentError with the
-    parser's own message -- the re-run prompt quotes it."""
-    candidates: List[Tuple[str, str]] = []
+    """The reply's one JSON object: a fenced block when there is one, else the object at the first
+    `{`, decoded in place -- the decoder finds its own end (a brace inside a quoted finding title
+    cannot close it early) and names the delimiter a truncated reply is missing, which is the
+    complaint the re-run can answer. Both are tried in that order, so a fence that holds something
+    other than the object (a list, a snippet) does not hide the object after it. Raises
+    JudgmentError with the parser's own message -- the re-run prompt quotes it."""
     m = _FENCE.search(text)
-    if m:
-        candidates.append(("the fenced block", m.group(1)))
-    span = _first_object(text)
-    if span:
-        candidates.append(("the first {...} span", span))
-    if not candidates:
+    start = text.find("{")
+    if m is None and start == -1:
         head = text.strip().replace("\n", " ")[:80]
         raise JudgmentError("no JSON object in the reply (%d chars, starting %r)" % (len(text), head))
+    candidates: List[Tuple[str, Callable[[], Any]]] = []
+    if m:
+        candidates.append(("the fenced block", lambda: json.loads(m.group(1))))
+    if start != -1:
+        candidates.append(("the first {...} span", lambda: json.JSONDecoder().raw_decode(text, start)[0]))
     errors: List[str] = []
-    for label, cand in candidates:
+    for label, decode in candidates:
         try:
-            obj = json.loads(cand)
+            obj = decode()
         except ValueError as e:
             errors.append("%s: %s" % (label, e))
             continue
@@ -218,11 +190,12 @@ def validate_triage(obj: Any) -> List[str]:
             problems.append(where + ": not an object")
             continue
         issue = _field(problems, r, "issue", (int,), where)
-        if issue is not None and issue < 1:
-            problems.append("%s: issue %d is not a 1-based index" % (where, issue))
-        elif issue in seen:
-            problems.append("%s: issue %d already has a resolution" % (where, issue))
-        seen.add(issue)
+        if issue is not None:      # unusable is already a problem; a None must reach neither %d nor `seen`
+            if issue < 1:
+                problems.append("%s: issue %d is not a 1-based index" % (where, issue))
+            elif issue in seen:
+                problems.append("%s: issue %d already has a resolution" % (where, issue))
+            seen.add(issue)
         d = _field(problems, r, "disposition", (str,), where, choices=TRIAGE_DISPOSITIONS)
         _field(problems, r, "why", (str,), where, required=False)
         fu = _field(problems, r, "followup", (dict,), where, required=False, nullable=True)

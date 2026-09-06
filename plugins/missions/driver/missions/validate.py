@@ -103,8 +103,11 @@ def _round(mission_dir: Path, milestone: str) -> Tuple[int, bool]:
     """(round number, resumed). A validate_start without its validate_done is an interrupted
     round: it is resumed under its own number, not restarted -- a crash between two validators
     must not cost the validators that already answered."""
-    started = journal.count(mission_dir, "validate_start", lambda r: r.get("milestone") == milestone)
-    done = journal.count(mission_dir, "validate_done", lambda r: r.get("milestone") == milestone)
+    started = done = 0
+    for rec in journal.events(mission_dir):      # one pass: the journal grows for the mission's life
+        if rec.get("milestone") == milestone:
+            started += rec.get("event") == "validate_start"
+            done += rec.get("event") == "validate_done"
     if started > done:
         return started, True
     return started + 1, False
@@ -258,12 +261,13 @@ def proposals(obj: Dict, milestone: str, mfeats: List[files.Feature],
 
 
 def _negotiate(ctx: Context, milestone: str, round_no: int, assertions: List[files.Assertion],
-               mfeats: List[files.Feature], cap: int) -> Union[int, List[Tuple[str, str]]]:
+               mfeats: List[files.Feature]) -> Union[int, List[Dict]]:
     """The negotiate judgment and its application: the round's validation files, the verdict
     summary, the registry and the SKILL's VALIDATE rules go in; follow-ups and repair features
-    come out through steps.register. Returns the (repair feature, cluster) pairs it added, or the
-    exit code of the stop that ended the run: the contract found wrong, the repair-round cap, a
-    reply that could not be applied twice."""
+    come out through steps.register. Returns the repairs it applied (proposals' dicts, plus `id`:
+    the repair feature), or the exit code of the stop that ended the run: the contract found
+    wrong, the repair-round cap -- both close the round as halted first -- or a reply that could
+    not be applied twice, which leaves the round open for the next driver to resume."""
     mdir = ctx.mission_dir
     fu_path = mdir / "followups.md"
     prompt = prompts.negotiate_prompt(mdir, milestone, round_no, verdict_summary(mdir, milestone, assertions),
@@ -282,20 +286,17 @@ def _negotiate(ctx: Context, milestone: str, round_no: int, assertions: List[fil
         return stop(ctx, "contract", detail="%s: the negotiate step finds the contract wrong: %s" % (milestone, reason),
                     needs="/missions:mission-amend")
     followups, repairs = proposals(obj, milestone, mfeats, assertions)
-    for rp in repairs:
-        # checked here, before register would: the round must be closed as halted before the stop
-        over = steps.repair_cap_problem(mdir, rp["assertions"], cap)
-        if over:
-            journal.append(mdir, "judgment", step="negotiate", task=task, milestone=milestone, round=round_no,
-                           summary="%d finding(s), %d repair(s) proposed -- refused: %s" % (len(followups), len(repairs), over[:200]))
-            journal.append(mdir, "validate_done", milestone=milestone, round=round_no, result="halted")
-            return stop(ctx, "gate-blocked", halt=True, detail=over, needs=steps.REPAIR_CAP_NEEDS)
     fu_ids: List[str] = []
     fids: List[str] = []
     if followups or repairs:
         r = steps.register(ctx, milestone, followups, repairs)
-        if isinstance(r, int):
-            return r          # the cap was checked above; register keeps its own guard for triage
+        if isinstance(r, str):
+            # the cap refused a repair and nothing was written: the round closes as halted before
+            # the stop, so the next driver does not resume it
+            journal.append(mdir, "judgment", step="negotiate", task=task, milestone=milestone, round=round_no,
+                           summary="%d finding(s), %d repair(s) proposed -- refused: %s" % (len(followups), len(repairs), r[:200]))
+            journal.append(mdir, "validate_done", milestone=milestone, round=round_no, result="halted")
+            return stop(ctx, "gate-blocked", halt=True, detail=r, needs=steps.REPAIR_CAP_NEEDS)
         fu_ids, fids = r
     counts = {d: sum(1 for f in followups if f["disposition"] == d) for d in judgment.NEGOTIATE_DISPOSITIONS}
     summary = ("%d finding(s): %d repair, %d accept, %d waive (%s)%s" % (
@@ -303,7 +304,7 @@ def _negotiate(ctx: Context, milestone: str, round_no: int, assertions: List[fil
         (", repair feature(s) %s" % ", ".join(fids)) if fids else "")) if followups else "no findings; nothing to register"
     journal.append(mdir, "judgment", step="negotiate", task=task, milestone=milestone, round=round_no, summary=summary)
     ctx.log("   negotiate: " + summary)
-    return list(zip(fids, [rp["cluster"] for rp in repairs]))
+    return [dict(rp, id=fid) for fid, rp in zip(fids, repairs)]
 
 
 # ---------------------------------------------------------------- the round
@@ -314,7 +315,7 @@ def run_validate(ctx: Context, milestone: str, until: Optional[str] = None) -> U
     current), or the exit code of the stop that ended the run. `until` is the CLI's --until:
     `milestone` stops after the close."""
     mdir = ctx.mission_dir
-    cap = int(files.read_budget(mdir).get("repair_rounds") or 2)
+    cap = files.repair_rounds(mdir)
     round_no, resumed = _round(mdir, milestone)
     if round_no > cap + 1:
         return stop(ctx, "gate-blocked", halt=True,
@@ -384,14 +385,13 @@ def run_validate(ctx: Context, milestone: str, until: Optional[str] = None) -> U
     # 4. negotiate: the model proposes, the driver applies
     files.write_state_fields(mdir, phase="negotiating",
                              resume_next="negotiate %s round %d: every validator has answered" % (milestone, round_no))
-    r = _negotiate(ctx, milestone, round_no, assertions, mfeats, cap)
+    r = _negotiate(ctx, milestone, round_no, assertions, mfeats)
     if isinstance(r, int):
         return r
     repairs = r
 
     # 5. proven marks, from the verdicts alone -- withheld for what a repair was just scheduled for
-    repair_ids = {fid for fid, _ in repairs}
-    withheld = {aid for f in files.read_features(mdir) if f.id in repair_ids for aid in f.assertions}
+    withheld = {aid for rp in repairs for aid in rp["assertions"]}
     evidence = {aid: f for aid, f in proven_evidence(mdir, milestone).items() if aid not in withheld}
     changed = files.prove_assertions(mdir, evidence)
     if changed:
@@ -404,12 +404,12 @@ def run_validate(ctx: Context, milestone: str, until: Optional[str] = None) -> U
         journal.append(mdir, "halt", **{"class": "advisory"},
                        reason=("first-pass validation failure in %s" % milestone) if round_no == 1
                        else "validation round %d failure in %s" % (round_no, milestone),
-                       assumption="repairs scheduled: %s" % ", ".join(fid for fid, _ in repairs))
+                       assumption="repairs scheduled: %s" % ", ".join(rp["id"] for rp in repairs))
         journal.append(mdir, "validate_done", milestone=milestone, round=round_no, result="repairs")
-        resume = "; ".join("dispatch %s (repair of %s)" % pair for pair in repairs)
+        resume = "; ".join("dispatch %s (repair of %s)" % (rp["id"], rp["cluster"]) for rp in repairs)
         files.write_state_fields(mdir, phase="implementing", resume_next="%s; then validate %s round %d" % (resume, milestone, round_no + 1))
         ctx.log("validate %s: round %d scheduled %s -- back to implementing" % (
-            milestone, round_no, ", ".join(fid for fid, _ in repairs)))
+            milestone, round_no, ", ".join(rp["id"] for rp in repairs)))
         return "repairs"
 
     # 7. unproven with nothing scheduled: a human decides

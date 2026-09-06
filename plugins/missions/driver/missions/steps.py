@@ -455,21 +455,22 @@ def repair_cap_problem(mission_dir: Path, assertions: List[str], cap: int) -> Op
     return None
 
 
-def register(ctx: Context, milestone: str, followups: List[Dict], repairs: List[Dict]) -> Union[int, Tuple[List[str], List[str]]]:
+def register(ctx: Context, milestone: str, followups: List[Dict], repairs: List[Dict]) -> Union[str, Tuple[List[str], List[str]]]:
     """Apply what a judgment step proposed to the registry: `followups` in files.append_followups'
     shape (source set, disposition repair | accept | waive, the cluster), `repairs` as {cluster,
     title, assertions, files, procedures, out_of_scope, origins: [F0nn]}. One cluster, one repair
     feature: every follow-up of a repaired cluster is dispositioned `repair as` that feature, and
     the feature's Repairs line names them -- so the ids are computed before anything is written.
     Each assertion a repair claims is routed to it in contract.md (check.sh's coverage rules). The
-    repair-round cap is checked first: over it, nothing is written and the mission halts. Returns
-    (follow-up ids, feature ids), or the stop's exit code."""
+    repair-round cap is checked first: over it, nothing is written and the problem text comes
+    back -- the caller closes its own books (a validation round, an open-issue list) and then
+    halts on it. Returns (follow-up ids, feature ids), or that text."""
     mdir = ctx.mission_dir
-    cap = int(files.read_budget(mdir).get("repair_rounds") or 2)
+    cap = files.repair_rounds(mdir)
     for r in repairs:
         over = repair_cap_problem(mdir, list(r.get("assertions") or []), cap)
         if over:
-            return stop(ctx, "gate-blocked", halt=True, detail=over, needs=REPAIR_CAP_NEEDS)
+            return over
     first_fu = int(files.next_followup_id(mdir)[2:])
     first_f = int(files.next_feature_id(mdir)[1:])
     feature_of = {r["cluster"]: "F%03d" % (first_f + i) for i, r in enumerate(repairs)}
@@ -509,10 +510,10 @@ def _handoffs_for(mission_dir: Path, issues: List[str]) -> Dict[str, str]:
     hdir = mission_dir / "handoffs"
     if not hdir.is_dir():
         return out
+    tails = [(text, _ISSUE_ORIGIN.sub("", text).strip()) for text in issues]
     for path in sorted(hdir.glob("F*.md")):
         raw = files.read_text(path)
-        for text in issues:
-            tail = _ISSUE_ORIGIN.sub("", text).strip()
+        for text, tail in tails:
             if text.startswith(path.stem + " handoff:") or (tail and tail in raw):
                 out[path.stem] = raw
                 break
@@ -589,8 +590,8 @@ def apply_triage(ctx: Context, state: files.State, issues: List[str], task: str,
     fids: List[str] = []
     if followups:
         r = register(ctx, state.milestone, followups, repairs)
-        if isinstance(r, int):
-            return r
+        if isinstance(r, str):
+            return stop(ctx, "gate-blocked", halt=True, detail=r, needs=REPAIR_CAP_NEEDS)
         fu_ids, fids = r
     if cleared:
         files.remove_open_issues(mdir, cleared)

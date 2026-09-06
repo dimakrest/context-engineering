@@ -684,6 +684,13 @@ def read_budget(mission_dir: Path) -> Dict[str, Optional[float]]:
     return out
 
 
+def repair_rounds(mission_dir: Path) -> int:
+    """`Repair rounds per assertion`, 2 when mission.md does not say: the cap on repair features
+    per assertion (hooks/mission-serial-guard.sh reads the same line) and on re-dispatches of a
+    rejected handoff -- one rule, read here so no caller carries its own default."""
+    return int(read_budget(mission_dir).get("repair_rounds") or 2)
+
+
 def read_reviewer_seat(mission_dir: Path) -> Optional[str]:
     """`- Reviewer seat: <seat>` -- the head token, as check.sh validates it and as a feature's
     Seat is read; None when absent or `none`. A rationale after an em dash, a paren or a `#`

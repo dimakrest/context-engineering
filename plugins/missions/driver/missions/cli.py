@@ -31,12 +31,13 @@ def cmd_init(args) -> int:
         return 2
     st = files.read_state(mdir)
     stub_dir = str(Path(args.stub_dir).resolve()) if args.stub_dir else "stub"
+    roles = {role: dict(d, model=None) for role, d in steps.ROLE_DEFAULTS.items()}
+    roles["reviewer"]["effort"] = None        # design §3: the reviewer is the one role with an effort knob
     cfg = {
         "harness": args.harness,
         "checkout": ".",
         "branch": st.branch,
-        "roles": {role: dict(d, model=None, **({"effort": None} if role == "reviewer" else {}))
-                  for role, d in steps.ROLE_DEFAULTS.items()},
+        "roles": roles,
         "watchdog": dict(watchdog.DEFAULTS),
         "host_lease": True,
         "env": {"passthrough": []},

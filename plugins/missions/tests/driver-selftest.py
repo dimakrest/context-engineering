@@ -130,6 +130,12 @@ class BudgetAndDesignTests(Fixture):
         self.assertEqual(b["wall_cap_h"], 10.0)
         self.assertEqual(b["repair_rounds"], 2.0)
         self.assertEqual(b["terminal_reserve_pct"], 15.0)
+        self.assertEqual(files.repair_rounds(self.m), 2)
+        text = files.read_text(self.m / "mission.md")
+        files.write_text(self.m / "mission.md", text.replace("Repair rounds per assertion: 2", "Repair rounds per assertion: 1"))
+        self.assertEqual(files.repair_rounds(self.m), 1)
+        files.write_text(self.m / "mission.md", text.replace("- Repair rounds per assertion: 2\n", ""))
+        self.assertEqual(files.repair_rounds(self.m), 2)                 # the default when mission.md does not say
 
     def test_design_section(self):
         section, rows = files.design_section(self.m, "F001")
@@ -880,6 +886,10 @@ class JudgmentTests(unittest.TestCase):
             judgment.extract_json("{oops}")
         except judgment.JudgmentError as e:
             self.assertIn("Expecting property name", str(e))
+        # a truncated reply is reported as the delimiter it is missing, not as "no JSON object"
+        with self.assertRaises(judgment.JudgmentError) as cm:
+            judgment.extract_json('{"findings": [{"title": "x"')
+        self.assertIn("the first {...} span: Expecting ',' delimiter", str(cm.exception))
 
     def test_validate_negotiate(self):
         self.assertEqual(judgment.validate_negotiate(NEGOTIATE_OK), [])
@@ -920,6 +930,9 @@ class JudgmentTests(unittest.TestCase):
                      "resolutions[4]: issue 0 is not a 1-based index", "resolutions[4]: 'disposition' must be one of"):
             self.assertTrue(any(want in p for p in problems), (want, problems))
         self.assertEqual(judgment.validate_triage({}), ["reply: missing 'resolutions'"])
+        # two resolutions that both omit `issue` are two problems, never a crash on formatting None
+        self.assertEqual(judgment.validate_triage({"resolutions": [{"disposition": "resolved"}, {"disposition": "resolved"}]}),
+                         ["resolutions[0]: missing 'issue'", "resolutions[1]: missing 'issue'"])
 
 
 # ---------------------------------------------------------------- prep (D3)
@@ -1604,6 +1617,46 @@ class RunRoleTests(LockEnv, RepoFixture):
         self.assertFalse((self.m / "validation" / "M2-behavior-r2.md").exists())
         self.assertEqual(journal.last(self.m, "step_done")["cls"], "error")
         self.assertFalse((self.m / ".lease").exists())
+
+    def test_negotiate_returns_its_repairs_and_the_cap_closes_the_round(self):
+        # the judgment repairs A002 every time; the cap (1) admits one repair feature
+        files.write_text(self.m / "mission.md", files.read_text(self.m / "mission.md").replace("Repair rounds per assertion: 2", "Repair rounds per assertion: 1"))
+        reply = {"findings": [{"title": "leak", "assertion": "A002", "found_by": "mission-reviewer (review-F001)", "where": "analytics/service.py",
+                               "severity": "high", "cluster": "C01", "cluster_label": "tenant", "blocking": True, "disposition": "repair", "why": "x"}],
+                 "repairs": [{"cluster": "C01", "title": "tenancy filter", "assertions": ["A002"], "files": ["analytics/service.py"],
+                              "procedures": "make test-unit", "out_of_scope": ""}],
+                 "contract_wrong": False, "reason": ""}
+        d = self.tmp / "stubs2"
+        d.mkdir()
+        files.write_text(d / "negotiate.sh", "#!/bin/bash\ncat > \"$MISSIONS_RUN_DIR/output.md\" <<'EOF'\n%s\nEOF\n" % json.dumps(reply))
+        self.ctx.adapter = StubAdapter({"script_dir": str(d)})
+        feats = files.read_features(self.m)
+        mfeats = [f for f in feats if f.milestone == "M1"]
+        rows = validate.milestone_assertions(self.m, "M1", feats)
+        # round 1: the repair is registered and comes back with its assertions -- what the proven
+        # marks are withheld for, straight from the reply rather than re-read from features.md
+        self.assertEqual(validate._negotiate(self.ctx, "M1", 1, rows, mfeats),
+                         [{"id": "F004", "cluster": "C01", "title": "tenancy filter", "assertions": ["A002"], "files": ["analytics/service.py"],
+                           "procedures": "make test-unit", "out_of_scope": "", "origins": ["F001"]}])
+        self.assertIn("repair feature(s) F004", journal.last(self.m, "judgment")["summary"])
+        self.assertIsNone(journal.last(self.m, "validate_done"))                # run_validate closes a round that goes on
+        # round 2: the same repair is over the cap -- nothing is written, and the round is closed
+        # as halted BEFORE the stop, so the next driver does not resume it
+        before = tuple(files.read_text(self.m / n) for n in ("features.md", "contract.md", "followups.md"))
+        self.assertEqual(validate._negotiate(self.ctx, "M1", 2, rows, mfeats), 5)
+        self.assertEqual(before, tuple(files.read_text(self.m / n) for n in ("features.md", "contract.md", "followups.md")))
+        j = journal.last(self.m, "judgment")
+        self.assertEqual((j["task"], j["round"]), ("negotiate-M1#2", 2))
+        self.assertIn("1 finding(s), 1 repair(s) proposed -- refused: repair-round cap (1 per assertion) exceeded by a repair of A002, "
+                      "which already has 1 repair feature(s) (F004)", j["summary"])
+        vd = journal.last(self.m, "validate_done")
+        self.assertEqual((vd["milestone"], vd["round"], vd["result"]), ("M1", 2, "halted"))
+        self.assertEqual([r["event"] for r in journal.events(self.m)][-4:], ["judgment", "validate_done", "halt", "stop"])
+        s = journal.last(self.m, "stop")
+        self.assertEqual((s["reason"], s["exit"]), ("gate-blocked", 5))
+        self.assertIn("the diagnosis is wrong", s["detail"])
+        self.assertIn("never a cap raise", s["needs"])
+        self.assertEqual(files.read_state(self.m).phase, "halted")
 
 
 class TriageTests(LockEnv, Fixture):

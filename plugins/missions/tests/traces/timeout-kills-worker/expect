@@ -5,4 +5,4 @@ journal~="event":"step_done".*"cls":"stalled"
 journal~="event":"stop".*"reason":"limit-reached"
 postcheck=[ "$(jq -r 'select(.event=="agent_return") | .duration_s' "$M/journal.jsonl" | head -1)" -lt 15 ]
 postcheck=grep -q '"killed_by": "timeout"' "$M/runs/F001#1/outcome.json"
-postcheck=sed -n '/^### F001/,/^##/p' "$M/features.md" | grep -q 'Status:\*\* pending'
+postcheck=sed -n '/^### F001/,/^##/p' "$M/features.md" | grep 'Status:\*\* pending' >/dev/null

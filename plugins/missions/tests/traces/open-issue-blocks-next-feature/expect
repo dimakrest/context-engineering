@@ -5,4 +5,4 @@ journal!~="dispatch_id":"F002#1"
 state~=^phase: implementing
 postcheck=grep -q '^- F001 handoff: the test stack would not start on port 5435' "$M/state.md"
 postcheck=! grep -q '^- none' "$M/state.md"
-postcheck=sed -n '/^### F002/,/^##/p' "$M/features.md" | grep -q 'Status:\*\* pending'
+postcheck=sed -n '/^### F002/,/^##/p' "$M/features.md" | grep 'Status:\*\* pending' >/dev/null

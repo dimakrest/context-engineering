@@ -21,7 +21,7 @@ postcheck=[ "$(grep -cE '^- \*\*Status:\*\* done · commit `[0-9a-f]{7}`' "$M/fe
 postcheck=[ "$(grep -cE '^- \*\*Range:\*\* `[0-9a-f]{7}`\.\.`[0-9a-f]{7}`' "$M/features.md")" = 2 ]
 postcheck=grep -qE '^\| A001 \|.*\| claimed \|' "$M/contract.md" && grep -qE '^\| A002 \|.*\| claimed \|' "$M/contract.md" && grep -qE '^\| A003 \|.*\| unproven \|' "$M/contract.md"
 postcheck=grep -q '"cls": "done"' "$M/runs/F001#1/outcome.json" && grep -q '"cls": "done"' "$M/runs/F002#1/outcome.json"
-postcheck=head -1 "$M/runs/F002#1/prompt.md" | grep -q '^Mission: demo. Feature: F002 — feature F002.$'
+postcheck=head -1 "$M/runs/F002#1/prompt.md" | grep '^Mission: demo. Feature: F002 — feature F002.$' >/dev/null
 postcheck=grep -q 'D001' "$M/runs/F001#1/prompt.md" && grep -q 'A002 — Tenant A never sees tenant B' "$M/runs/F001#1/prompt.md"
 postcheck=grep -q '^+# F002' "$M/patches/F002.patch" && ! grep -q '^+# F001' "$M/patches/F002.patch"
 postcheck=grep -q '"event":"writer_lock_cleared"' "$M/journal.jsonl" && grep -q '"event":"lease_released"' "$M/journal.jsonl"

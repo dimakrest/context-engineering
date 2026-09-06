@@ -8,4 +8,4 @@ journal!~="event":"halt"
 journal!~="dispatch_id":"F001#2"
 state~=^phase: implementing
 state~=^resume_next: provider-quota
-postcheck=sed -n '/^### F001/,/^##/p' "$M/features.md" | grep -q 'Status:\*\* pending'
+postcheck=sed -n '/^### F001/,/^##/p' "$M/features.md" | grep 'Status:\*\* pending' >/dev/null

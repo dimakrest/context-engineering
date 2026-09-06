@@ -293,6 +293,8 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(classify(self.out(rc=3), self.written()), "malformed_handoff")
         self.assertEqual(classify(self.out(), Grade(False, new_commit="b" * 40)), "handoff_missing")
         self.assertEqual(classify(self.out(rc=1), Grade(False, quota="usage limit")), "infra_quota")
+        # a quota after a WIP commit is still a quota, not a finished feature
+        self.assertEqual(classify(self.out(rc=1), Grade(False, new_commit="b" * 40, quota="usage limit")), "infra_quota")
         self.assertEqual(classify(self.out(rc=1), Grade(False)), "infra_crash")
         self.assertEqual(classify(self.out(timed_out=True), Grade(False)), "stalled")
         self.assertEqual(classify(self.out(), Grade(False)), "no_op")
@@ -304,6 +306,12 @@ class ClassifyTests(unittest.TestCase):
         self.assertIn("ended by the driver", g.problems[0])
         self.assertEqual(classify(self.out(rc=143, killed_by=watchdog.COMMIT_NO_HANDOFF), Grade(False, new_commit="c" * 40)), "handoff_missing")
         self.assertEqual(classify(self.out(rc=143, killed_by=watchdog.SILENCE), Grade(False)), "stalled")
+        # a cut-off run's reconstruction is partial: tests_failed, never done
+        g = self.written(status="partial", reconstructed=True)
+        self.assertEqual(classify(self.out(rc=143, timed_out=True, killed_by="timeout"), g), "tests_failed")
+        # the watchdog's own verdict reconstructs complete, and that kill is not held against it
+        g = self.written(reconstructed=True)
+        self.assertEqual(classify(self.out(rc=143, killed_by=watchdog.COMMIT_NO_HANDOFF), g), "done")
 
     def test_stale_handoff_is_not_this_attempts(self):
         stale = Grade(handoff_exists=True, handoff_written=False, status="complete", sha="a" * 40)
@@ -336,6 +344,16 @@ class QuotaTests(unittest.TestCase):
         self.assertIsNone(grading.quota_signature(o2))
         o2.detail = "error_during_execution: HTTP 429 too many requests"
         self.assertIsNotNone(grading.quota_signature(o2))
+        # the API's own error type, with the underscore
+        o2.detail = "error_during_execution: rate_limit_error"
+        self.assertIsNotNone(grading.quota_signature(o2))
+        # a 529 is transient, not a quota; and the worker's transcript on stdout is never read
+        o2.detail = "error_during_execution: overloaded_error"
+        self.assertIsNone(grading.quota_signature(o2))
+        o3 = Outcome(task="F001#1", rc=1, elapsed_s=1, timed_out=False, killed_by=None, cost={}, harness="claude",
+                     model=None, stdout_path=out, stderr_path=err)
+        out.write_text('{"result": "test_rate_limit_backoff failed: 429 too many requests"}\n', encoding="utf-8")
+        self.assertIsNone(grading.quota_signature(o3))
 
 
 class RepoFixture(Fixture):
@@ -361,7 +379,7 @@ class RepoFixture(Fixture):
         self.git("commit", "-qm", "%s: %s" % (fid, text))
         return self.git("rev-parse", "HEAD")
 
-    def handoff(self, fid="F001", sha=None, status="complete", claims="- A001 \u2014 yes"):
+    def handoff(self, fid="F001", sha=None, status="complete", claims="- A001 \u2014 yes\n- A002 \u2014 yes"):
         (self.m / "handoffs").mkdir(exist_ok=True)
         sha = sha or self.git("rev-parse", "HEAD")
         (self.m / "handoffs" / (fid + ".md")).write_text(
@@ -381,7 +399,7 @@ class GradeTests(RepoFixture):
         self.assertTrue(g.handoff_written)
         self.assertEqual(g.problems, [])
         self.assertTrue(g.commit_on_branch)
-        self.assertEqual(g.claimed, ["A001"])
+        self.assertEqual(g.claimed, ["A001", "A002"])
         self.assertEqual(classify(ClassifyTests().out(), g), "done")
         # the next attempt finds the same file: it is not this attempt's handoff
         head1 = self.git("rev-parse", "HEAD")
@@ -425,6 +443,68 @@ class GradeTests(RepoFixture):
         self.assertTrue(any("not in this repository" in p for p in g.problems))
 
 
+    def test_fingerprint_is_content_not_mtime(self):
+        self.commit()
+        self.handoff()
+        p = files.handoff_path(self.m, "F001")
+        fp = files.fingerprint(p)
+        head1 = self.git("rev-parse", "HEAD")
+        p.touch()                        # a touch is not a write
+        p.write_bytes(p.read_bytes())    # neither is a byte-identical rewrite
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, head1, fp, ["A001", "A002"], task="F001#2")
+        self.assertFalse(g.handoff_written)
+        p.write_text(p.read_text(encoding="utf-8") + "\n<!-- attempt 2 -->\n", encoding="utf-8")
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, head1, fp, ["A001", "A002"], task="F001#2")
+        self.assertTrue(g.handoff_written)
+
+    def test_underclaim_is_rejected_and_self_check_agrees(self):
+        head0 = self.git("rev-parse", "HEAD")
+        self.commit()
+        self.handoff(claims="- A001 \u2014 satisfied\n- A002 \u2014 NOT satisfied; no tenancy test written")
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, head0, None, ["A001", "A002"], task="F001#1")
+        self.assertEqual(g.claimed, ["A001"])
+        self.assertTrue(any("A002 not claimed" in p for p in g.problems))
+        self.assertEqual(classify(ClassifyTests().out(), g), "malformed_handoff")
+        s = grading.self_check(self.m, "F001", self.repo, PLUGIN)
+        self.assertTrue(any("A002 not claimed" in p and "partial" in p for p in s.problems))
+        # a bullet naming two ids claims both; a partial handoff claims what it says and no more is asked
+        self.handoff(claims="- A001, A002 \u2014 both satisfied by `analytics/service.py:1`")
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, head0, None, ["A001", "A002"], task="F001#1")
+        self.assertEqual((g.claimed, g.problems), (["A001", "A002"], []))
+        self.handoff(status="partial", claims="- A001 \u2014 satisfied")
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, head0, None, ["A001", "A002"], task="F001#1")
+        self.assertEqual(g.problems, [])
+        self.assertEqual(classify(ClassifyTests().out(), g), "tests_failed")
+
+    def test_cut_off_run_reconstructs_partial(self):
+        head0 = self.git("rev-parse", "HEAD")
+        sha = self.commit()
+        path = grading.reconstruct(self.m, "F001", self.repo, head0, sha, "F001#1", ["A001", "A002"],
+                                   "was ended by the driver (timeout)", finished=False)
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("## Status\npartial", text)
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, head0, None, ["A001", "A002"], task="F001#1")
+        g.reconstructed = True
+        self.assertEqual(g.claimed, [])
+        self.assertIn("timeout", g.undone[0])
+        self.assertEqual(classify(ClassifyTests().out(rc=143, timed_out=True, killed_by="timeout"), g), "tests_failed")
+        self.assertEqual(grading.self_check(self.m, "F001", self.repo, PLUGIN).problems, [])
+
+    def test_detached_head_never_counts(self):
+        head0 = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "--detach")
+        self.commit()
+        self.handoff()
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, head0, None, ["A001", "A002"], task="F001#1",
+                                  branch="mission/demo")
+        self.assertEqual(g.branch_after, "")
+        self.assertFalse(g.commit_on_branch)
+        self.assertIsNone(g.new_commit)
+        self.assertEqual(classify(ClassifyTests().out(), g), "malformed_handoff")
+        s = grading.self_check(self.m, "F001", self.repo, PLUGIN, branch="mission/demo")
+        self.assertTrue(any("not on the mission branch mission/demo" in p for p in s.problems))
+
+
 class WatchdogTests(RepoFixture):
     def wd(self, **kw):
         head = self.git("rev-parse", "HEAD")
@@ -432,7 +512,7 @@ class WatchdogTests(RepoFixture):
         run_dir.mkdir(parents=True)
         (run_dir / "stdout").write_text("", encoding="utf-8")
         (run_dir / "stderr").write_text("", encoding="utf-8")
-        args = dict(poll_s=0.1, commit_grace_s=0.6, silence_s=None)
+        args = dict(poll_s=0.1, commit_no_handoff_s=0.6, silence_s=None)
         args.update(kw)
         return watchdog.Watchdog(self.m, self.repo, "F001", "F001#1", head, None, run_dir, **args)
 
@@ -474,7 +554,7 @@ class WatchdogTests(RepoFixture):
         self.assertEqual(journal.count(self.m, "commit_observed"), 1)
 
     def test_activity_after_commit_resets_the_grace(self):
-        w = self.wd(commit_grace_s=0.5)
+        w = self.wd(commit_no_handoff_s=0.5)
         w.start()
         try:
             self.commit()
@@ -500,9 +580,14 @@ class WatchdogConfigTests(unittest.TestCase):
     """Pure dict work -- deliberately not a RepoFixture: it needs no checkout and no mission tree."""
 
     def test_config(self):
-        c = watchdog.config({"watchdog": {"poll_s": 1, "commit_grace_s": None, "silence_s": 2, "bogus": 9}})
-        self.assertEqual(c, {"poll_s": 1.0, "commit_grace_s": None, "silence_s": 2.0})
+        c = watchdog.config({"watchdog": {"poll_s": 1, "commit_no_handoff_s": None, "silence_s": 2, "bogus": 9}})
+        self.assertEqual(c, {"poll_s": 1.0, "commit_no_handoff_s": None, "silence_s": 2.0})
         self.assertEqual(watchdog.config({}), watchdog.DEFAULTS)
+
+    def test_defaults_keep_the_two_minute_promise(self):
+        # #4: a commit without a handoff is journaled within 2 minutes -- the poll is the bound
+        self.assertLessEqual(watchdog.DEFAULTS["poll_s"], 120)
+        self.assertIsNotNone(watchdog.DEFAULTS["commit_no_handoff_s"])
 
 
 if __name__ == "__main__":

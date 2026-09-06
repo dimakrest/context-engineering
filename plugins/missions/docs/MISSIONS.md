@@ -270,7 +270,7 @@ suite that was dropped when the machinery moved to user level; add a case for ev
 
 ## Current status and honest limits
 
-**Built:** eight skills, five subagents, ten hooks, eight scripts, the file schema, and a hook
+**Built:** eight skills, five subagents, nine hooks, eight scripts, the file schema, and a hook
 regression suite (`tests/run.sh`), packaged as the `missions` plugin in the
 `dimakrest/context-engineering` marketplace.
 

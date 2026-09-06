@@ -12,7 +12,7 @@ Contract-first, multi-feature agent runs whose definition of done is written bef
   `/missions:mission-crosscheck` · `/missions:mission-pr-review`.
 
 Five agents (`mission-worker`, `mission-reviewer`, `mission-researcher`,
-`mission-validator-scrutiny`, `mission-validator-behavior`), ten hooks, eight scripts.
+`mission-validator-scrutiny`, `mission-validator-behavior`), nine hooks, eight scripts.
 Everything is a file under `.missions/<slug>/` in the project you run it in; the plugin is
 project-agnostic and learns the repo's rules from the mission's `state.md`.
 
@@ -87,10 +87,15 @@ tokens.
 
 **Grading happens once, after exit (#4).** A launch grades nothing. When the worker process is
 gone the driver grades the handoff — the schema function `hooks/mission-handoff-schema.sh`, the
-commit on the branch, a clean tree, the checkout still on the mission branch, claims within the
-feature's assertions — keyed to the attempt that ran (`F012#2`): a handoff left by an earlier
-attempt is not this one's. The worker is told to run the same check before it exits
-(`missions grade … --self`); the two agree by construction. Every run ends in one of eight
+commit on the mission branch's own ref (a detached checkout cannot make a commit count by sitting
+on it), a clean tree, the checkout still on the mission branch, claims within the feature's
+assertions and, for a `complete` handoff, every one of them claimed — keyed to the attempt that
+ran (`F012#2`): a handoff left by an earlier attempt is not this one's. The contract is marked
+`claimed` only for what the handoff claims. A handoff that says `blocked` halts the mission with
+its own reason on the decision card; `partial` is re-dispatched with its "Left undone" as the
+rejection. The worker is told to run the same check before it exits (`missions grade … --self`);
+the two agree by construction, and `--self` says what the driver will do with a partial or
+blocked handoff. Every run ends in one of eight
 classes — `done` · `handoff_missing` · `malformed_handoff` · `tests_failed` · `infra_quota` ·
 `infra_crash` · `stalled` · `no_op` — and `runs/<task>/outcome.json` records the class with the
 grade. The old `PostToolUse: Agent` wiring of the schema hook is gone: it graded at dispatch, which
@@ -99,14 +104,18 @@ is the wrong moment, and fired 29 false alarms across the recorded runs.
 **The watchdog.** While a worker runs, a thread polls the branch, the handoff, the run's output and
 the tree (`--no-optional-locks`, so it never takes the index lock from under the worker). A commit
 with no handoff is journaled as `commit_observed` the moment it is seen; if nothing then happens
-for `watchdog.commit_grace_s` (default 300) the run is ended, the driver **reconstructs** the
+for `watchdog.commit_no_handoff_s` (default 300) the run is ended, the driver **reconstructs** the
 handoff from the commit — first line `reconstructed by the driver`, no test evidence claimed —
-grades it once, ingests it and moves on. `watchdog.silence_s` ends a run that changes nothing at
-all for that long; it is off by default because `claude -p --output-format json` prints only at
-the end, so silence there is not evidence. Both live in `driver.json`; `null` turns a rule off. A
-quota or rate-limit message from the harness is `infra_quota`: the feature goes back to pending
-and the driver exits `8` without halting the mission — wait for the reset, run again (the
-driver's own sleep-and-resume is #7).
+grades it once, ingests it and moves on. Only a run that ended on its own terms (that watchdog
+verdict, or a clean exit) is reconstructed `complete`; one cut off by its deadline or a crash
+after a WIP commit is reconstructed `partial`, claims nothing, and the next attempt is told to
+continue from the commit. `watchdog.silence_s` ends a run that changes nothing at all for that
+long; it is off by default because `claude -p --output-format json` prints only at the end, so
+silence there is not evidence. Both live in `driver.json`; `null` turns a rule off. A quota or
+rate-limit message in the harness's own error text or stderr (never the worker's transcript) is
+`infra_quota`, even after a WIP commit: the feature goes back to pending and the driver exits `8`
+without halting the mission — wait for the reset, run again (the driver's own sleep-and-resume
+is #7). A 529 `overloaded` is a crash and is retried like one.
 
 Trace tests run the real driver over a temporary repo with a stub worker (a shell script):
 

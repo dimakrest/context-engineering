@@ -76,12 +76,19 @@ def cmd_grade(args) -> int:
     if not (mdir / "state.md").exists():
         print("grade: %s has no state.md" % mdir, file=sys.stderr)
         return 2
+    branch = ""
     try:
         cfg = files.read_config(mdir)
         checkout = files.checkout_of(mdir, cfg)
+        branch = str(cfg.get("branch") or "")
     except files.MissionFileError:
         checkout = mdir.parent.parent
-    g = grading.self_check(mdir, args.feature, checkout, files.plugin_root())
+    if not branch:
+        try:
+            branch = files.read_state(mdir).branch
+        except files.MissionFileError:
+            branch = ""
+    g = grading.self_check(mdir, args.feature, checkout, files.plugin_root(), branch=branch)
     if args.json:
         print(json.dumps(g.to_json(), indent=2, ensure_ascii=False))
         return 0 if not g.problems else 2
@@ -96,6 +103,12 @@ def cmd_grade(args) -> int:
         args.feature, g.status or "?", (g.sha or "")[:7],
         (", claims " + ", ".join(g.claimed)) if g.claimed else "",
         (", %d issue(s) listed" % len(g.issues)) if g.issues else ""))
+    if args.self and g.status in ("partial", "blocked"):
+        # valid evidence, but not of a finished feature: say what the driver does with it
+        print("status %s: the driver will %s, citing your Left undone%s" % (
+            g.status,
+            "halt the mission for a human decision" if g.status == "blocked" else "re-dispatch this feature",
+            " -- which is empty: say what remains" if not g.undone else ""))
     return 0
 
 

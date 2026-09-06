@@ -17,7 +17,7 @@ state~=^phase: validating
 git~=F001: stub work
 file=handoffs/F001.md
 file=patches/F001.patch
-postcheck=head -1 "$M/handoffs/F001.md" | grep -q 'reconstructed by the driver (F001#1)'
+postcheck=head -1 "$M/handoffs/F001.md" | grep 'reconstructed by the driver (F001#1)' >/dev/null
 postcheck=[ "$(grep -c '"event":"step_done".*"feature":"F001"' "$M/journal.jsonl")" = 1 ]
 postcheck=[ "$(grep -c '"event":"commit_observed"' "$M/journal.jsonl")" = 1 ]
 postcheck=[ "$(jq -r 'select(.event=="agent_return" and .dispatch_id=="F001#1") | .duration_s' "$M/journal.jsonl")" -lt 20 ]

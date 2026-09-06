@@ -298,15 +298,26 @@ def _run_locked(ctx: Context, args) -> int:
             attempts += 1
             cls, outcome, grade = steps.step_worker(ctx, feat, st)
 
-            if grade.branch_after and grade.branch_after != (ctx.cfg.get("branch") or st.branch or grade.branch_after):
+            mission_branch = ctx.cfg.get("branch") or st.branch
+            if mission_branch and grade.branch_after != mission_branch:
+                # another branch, or none at all: a detached HEAD is not "no change"
                 files.set_feature(mdir, feat.id, status="pending")
+                where = ("on branch " + grade.branch_after) if grade.branch_after else "detached from any branch"
                 return stop(ctx, "gate-blocked",
-                            detail="%s left the checkout on branch %s, not the mission branch" % (outcome.task, grade.branch_after),
+                            detail="%s left the checkout %s, not on the mission branch %s" % (outcome.task, where, mission_branch),
                             needs="check out the mission branch, reconcile the worker's commits, then missions run again")
             if cls == "done":
                 steps.ingest(ctx, feat, grade)
                 crash_streak = noop_streak = 0
                 continue
+            if cls == "tests_failed" and grade.status == "blocked":
+                # design §5: worker says blocked -> blocked. Its own reason goes on the decision card;
+                # a re-dispatch would only buy the same answer again.
+                files.set_feature(mdir, feat.id, status="blocked")
+                return stop(ctx, "gate-blocked", halt=True,
+                            detail="%s reports %s blocked: %s" % (
+                                outcome.task, feat.id, "; ".join(grade.undone[:3]) or "no reason given under Left undone"),
+                            needs="decide: fix the brief or the contract (/missions:mission-amend), or set %s back to pending" % feat.id)
             if cls in ("malformed_handoff", "tests_failed"):
                 n = journal.attempts(mdir, feat.id)
                 if n > repair_rounds:

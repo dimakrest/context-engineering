@@ -1,0 +1,19 @@
+# A run cut off by its deadline after a WIP commit is not done. The driver reconstructs the handoff
+# as partial (nothing claimed), the attempt is tests_failed, and the next attempt is told to
+# continue from the commit. A worker that left less evidence is never graded higher than one
+# killed after a complete handoff. (#4; review of #17)
+rc=5
+journal~="event":"agent_return".*"dispatch_id":"F001#1".*"status":"timed_out"
+journal~="event":"handoff_reconstructed".*"task":"F001#1".*"status":"partial"
+journal~="event":"step_done".*"step":"F001#1".*"cls":"tests_failed".*status partial.*ended by the driver .timeout.*"reconstructed":true
+journal~="event":"dispatch".*"dispatch_id":"F001#2"
+journal~="event":"step_done".*"step":"F001#2".*"cls":"done"
+journal~="event":"handoff_ingested".*"feature":"F001"
+journal~="event":"stop".*"reason":"gate-blocked"
+journal!~="step":"F001#1".*"cls":"done"
+journal!~="event":"halt"
+git~=F001: stub work 2
+git~=F001: stub work 1
+state~=^phase: validating
+postcheck=grep 'ended by the driver (timeout)' "$M/runs/F001#2/prompt.md" >/dev/null
+postcheck=[ "$(grep -c '"event":"handoff_ingested".*"feature":"F001"' "$M/journal.jsonl")" = 1 ]

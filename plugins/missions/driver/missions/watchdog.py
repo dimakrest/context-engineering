@@ -4,7 +4,7 @@ run's output while the worker runs, and hands the process runner a verdict when 
 Two shapes end a run early:
 
 - `watchdog:commit_no_handoff` -- a commit landed on the mission branch and then nothing happened
-  for `commit_grace_s` (no handoff, no further commit, no tree or output change). This is the S3
+  for `commit_no_handoff_s` (no handoff, no further commit, no tree or output change). This is the S3
   shape (F003, F012, F014): the work is on the branch, the record is not, and the worker is idle.
   The first commit is journaled as `commit_observed` the moment it is seen, task-keyed.
 - `watchdog:silence` -- nothing at all changed for `silence_s`. Off by default: `claude -p
@@ -12,8 +12,9 @@ Two shapes end a run early:
 
 The watchdog never signals a process. It observes and sets `verdict`; `run_process` polls it and
 owns the kill (SIGTERM, grace, SIGKILL), so process control stays in one place. Its window is
-exactly the process lifetime: the runner starts it after Popen and stops it after the reap, so a
-`commit_observed` can never be written after the run's grade.
+exactly the process lifetime: the runner starts it after Popen and stops it after the reap, and
+the loop re-checks the stop flag after every observation, so a `commit_observed` is never written
+after the run's grade even when one slow `git status` outlives `stop()`'s join.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ from . import files, journal
 
 COMMIT_NO_HANDOFF = "watchdog:commit_no_handoff"
 SILENCE = "watchdog:silence"
-DEFAULTS: Dict[str, Optional[float]] = {"poll_s": 30, "commit_grace_s": 300, "silence_s": None}
+DEFAULTS: Dict[str, Optional[float]] = {"poll_s": 30, "commit_no_handoff_s": 300, "silence_s": None}
 
 
 def config(cfg: Dict) -> Dict[str, Optional[float]]:
@@ -52,7 +53,7 @@ def _size(path: Path) -> int:
 class Watchdog:
     def __init__(self, mission_dir: Path, checkout: Path, feature: str, task: str, head_before: str,
                  handoff_before: Optional[str], run_dir: Path, poll_s: float = 30.0,
-                 commit_grace_s: Optional[float] = 300.0, silence_s: Optional[float] = None,
+                 commit_no_handoff_s: Optional[float] = 300.0, silence_s: Optional[float] = None,
                  log: Optional[Callable[[str], None]] = None):
         self.mission_dir = mission_dir
         self.checkout = checkout
@@ -63,7 +64,7 @@ class Watchdog:
         self.handoff_path = files.handoff_path(mission_dir, feature)
         self.run_dir = run_dir
         self.poll_s = max(0.05, float(poll_s))
-        self.commit_grace_s = commit_grace_s
+        self.commit_no_handoff_s = commit_no_handoff_s
         self.silence_s = silence_s
         self.log = log or (lambda s: None)
         self.verdict: Optional[str] = None
@@ -81,6 +82,10 @@ class Watchdog:
         self._stop.set()
         if self._thread.is_alive():
             self._thread.join(timeout=15.0)
+        if self._thread.is_alive():
+            # a slow git on a big tree; the loop checks the flag after every observation, so
+            # it writes nothing more, but the grade will not wait for it
+            self.log("   watchdog: still observing after stop (git took longer than 15 s)")
 
     # -- observation
 
@@ -117,6 +122,8 @@ class Watchdog:
                 self.log("   watchdog: observe failed: %s" % e)
                 self._stop.wait(self.poll_s)
                 continue
+            if self._stop.is_set():
+                return  # the run is over and graded: nothing observed now may be journaled after its grade
             now = time.monotonic()
             if last is not None and obs != last:
                 last_change = now
@@ -128,11 +135,11 @@ class Watchdog:
                     journal.append(self.mission_dir, "commit_observed", task=self.task, feature=self.feature,
                                    commit=self.commit[:7], handoff="pending")
                     self.log("   watchdog: commit %s observed, handoff pending" % self.commit[:7])
-            if (self.commit is not None and self.commit_grace_s is not None and not self.handoff_written(obs)
-                    and now - max(self.commit_seen_at or now, last_change) >= self.commit_grace_s):
+            if (self.commit is not None and self.commit_no_handoff_s is not None and not self.handoff_written(obs)
+                    and now - max(self.commit_seen_at or now, last_change) >= self.commit_no_handoff_s):
                 self.verdict = COMMIT_NO_HANDOFF
                 self.log("   watchdog: no handoff %ds after commit %s and no activity since -- ending the run" % (
-                    int(self.commit_grace_s), self.commit[:7]))
+                    int(self.commit_no_handoff_s), self.commit[:7]))
                 return
             if self.silence_s is not None and last is not None and now - last_change >= self.silence_s:
                 self.verdict = SILENCE

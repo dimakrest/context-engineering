@@ -1,0 +1,12 @@
+# A quota hit after a WIP commit is still a quota: infra_quota, no reconstruction, nothing claimed,
+# the feature back to pending and exit 8 -- not a reconstructed "done". (#4; review of #17)
+rc=8
+journal~="event":"step_done".*"step":"F001#1".*"cls":"infra_quota".*resets 3am
+journal~="event":"stop".*"reason":"provider-quota"
+journal!~="event":"handoff_reconstructed"
+journal!~="event":"handoff_ingested"
+journal!~="event":"halt"
+git~=F001: scaffold
+nofile=handoffs/F001.md
+postcheck=sed -n '/^### F001/,/^##/p' "$M/features.md" | grep 'Status:\*\* pending' >/dev/null
+postcheck=grep -E '^\| A001 .*\| unproven \|' "$M/contract.md" >/dev/null

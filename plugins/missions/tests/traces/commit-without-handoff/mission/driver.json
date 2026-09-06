@@ -11,7 +11,7 @@
   },
   "watchdog": {
     "poll_s": 0.5,
-    "commit_grace_s": 2,
+    "commit_no_handoff_s": 2,
     "silence_s": null
   },
   "adapters": {

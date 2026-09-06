@@ -142,22 +142,26 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
                        text="processes were still alive in the run's process group after it exited")
     _write_outcome(run_dir, outcome, None)
 
-    # grade after exit, exactly once, keyed to this task
+    # grade after exit, exactly once, keyed to this task; commits count on the mission branch's ref
+    branch = ctx.cfg.get("branch") or state.branch
     grade = grade_feature(mdir, fid, ctx.checkout, ctx.plugin, head_before, handoff_before,
-                          feature.assertions, task=task, outcome=outcome)
+                          feature.assertions, task=task, outcome=outcome, branch=branch)
     cls = classify(outcome, grade)
     if cls == "handoff_missing":
-        # the work is on the branch, the record is not: write the record from the work, then
-        # grade it like any other -- a reconstructed handoff that fails the grade is malformed
+        # the work is on the branch, the record is not: write the record from the work, then grade
+        # it like any other. A run that ended on its own terms (a clean exit, or the watchdog ending
+        # a worker that went idle after its commit) is recorded complete; one cut off by its
+        # deadline or a crash is recorded partial, and comes back as a re-dispatch, not as done.
         commit = grade.new_commit or ""
-        how = ("was ended by the driver: %s" % outcome.killed_by) if outcome.killed else (
-            "exited %d" % outcome.rc)
-        reconstruct(mdir, fid, ctx.checkout, head_before, commit, task, feature.assertions, how)
+        finished = outcome.killed_by == watchdog.COMMIT_NO_HANDOFF or (not outcome.killed and outcome.rc == 0)
+        how = ("was ended by the driver (%s)" % outcome.killed_by) if outcome.killed else ("exited %d" % outcome.rc)
+        reconstruct(mdir, fid, ctx.checkout, head_before, commit, task, feature.assertions, how, finished=finished)
         journal.append(mdir, "handoff_reconstructed", task=task, feature=fid, commit=commit[:7],
-                       killed_by=outcome.killed_by, rc=outcome.rc)
-        ctx.log("   %s: commit %s landed without a handoff -- reconstructed it from the commit" % (task, commit[:7]))
+                       status="complete" if finished else "partial", killed_by=outcome.killed_by, rc=outcome.rc)
+        ctx.log("   %s: commit %s landed without a handoff -- reconstructed it from the commit as %s" % (
+            task, commit[:7], "complete" if finished else "partial"))
         grade = grade_feature(mdir, fid, ctx.checkout, ctx.plugin, head_before, handoff_before,
-                              feature.assertions, task=task, outcome=outcome)
+                              feature.assertions, task=task, outcome=outcome, branch=branch)
         grade.reconstructed = True
         cls = classify(outcome, grade)
     outcome.cls = cls
@@ -167,6 +171,9 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
         problems.append("the run exited %d but produced no commit and no handoff" % outcome.rc)
     if cls == "infra_quota":
         problems.append("the harness reported a quota or rate limit: %s" % grade.quota)
+    if cls == "tests_failed":
+        problems.append("the handoff reports status %s%s" % (
+            grade.status, (": " + "; ".join(grade.undone[:3])) if grade.undone else " and says nothing under Left undone"))
     journal.append(mdir, "step_done", step=task, feature=fid, cls=cls, elapsed_s=round(outcome.elapsed_s, 1),
                    rc=outcome.rc, problems=problems or None, task=task, killed_by=outcome.killed_by,
                    reconstructed=True if grade.reconstructed else None)
@@ -231,7 +238,8 @@ def ingest(ctx: Context, feature: files.Feature, grade: Grade) -> Dict:
             res.returncode, rng[:15], (res.stderr.strip().splitlines() or ["no output"])[-1][:200]))
 
     files.set_feature(mdir, fid, status="done", commit=head, rng=rng)
-    claimed = files.claim_assertions(mdir, feature.assertions)
+    # what the handoff claims, within the feature's assertions -- never the feature's list wholesale
+    claimed = files.claim_assertions(mdir, [a for a in grade.claimed if a in feature.assertions])
     if grade.issues:
         files.add_open_issues(mdir, ["%s handoff: %s" % (fid, i) for i in grade.issues])
     if grade.reconstructed:

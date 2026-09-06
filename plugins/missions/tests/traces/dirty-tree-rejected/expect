@@ -7,4 +7,4 @@ journal~="event":"handoff_ingested".*"feature":"F002"
 state~=^phase: validating
 postcheck=grep -q 'uncommitted changes from a previous attempt' "$M/runs/F001#2/prompt.md" && grep -q 'leftover.py' "$M/runs/F001#2/prompt.md"
 postcheck=! grep -q 'previous attempt' "$M/runs/F001#1/prompt.md"
-postcheck=git log --oneline | grep -q 'F001: stub work 2'
+postcheck=git log --oneline | grep 'F001: stub work 2' >/dev/null

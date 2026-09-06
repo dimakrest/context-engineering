@@ -4,14 +4,14 @@
   "branch": "mission/demo",
   "roles": {
     "worker": {
-      "timeout_s": 60,
+      "timeout_s": 3,
       "budget_usd": null,
       "model": null
     }
   },
   "watchdog": {
     "poll_s": 0.5,
-    "commit_no_handoff_s": 30,
+    "commit_no_handoff_s": 300,
     "silence_s": null
   },
   "adapters": {

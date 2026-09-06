@@ -1,0 +1,10 @@
+# A worker that reports blocked is not re-dispatched: the feature is set blocked and the mission
+# halts with the handoff's own reason on the decision card, one dispatch in all. (design §5:
+# "worker says blocked -> blocked"; review of #17)
+rc=5
+journal~="event":"step_done".*"step":"F001#1".*"cls":"tests_failed".*status blocked.*tenant column
+journal~="event":"halt"
+journal~="event":"stop".*"reason":"gate-blocked".*tenant column
+journal!~="dispatch_id":"F001#2"
+state~=^phase: halted
+postcheck=sed -n '/^### F001/,/^##/p' "$M/features.md" | grep 'Status:\*\* blocked' >/dev/null

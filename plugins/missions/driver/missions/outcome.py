@@ -80,6 +80,7 @@ class Grade:
     commit_on_branch: bool = False
     new_commit: Optional[str] = None                     # a commit that appeared on the branch during the run
     issues: List[str] = field(default_factory=list)
+    undone: List[str] = field(default_factory=list)      # the handoff's "Left undone" lines
     claimed: List[str] = field(default_factory=list)     # assertion ids the handoff claims
     tree_dirty: List[str] = field(default_factory=list)  # uncommitted paths outside .missions/ after exit
     branch_after: str = ""                               # the checkout's branch after exit
@@ -99,14 +100,17 @@ def classify(outcome: Outcome, grade: Grade) -> str:
     """One class per run. Evidence outranks the claim: a handoff this attempt did not write is not
     its handoff; a handoff written by a worker that was killed or exited non-zero is not `done`.
 
-    The order matters. A commit without a handoff is `handoff_missing` however the run ended --
-    the watchdog kill, a crash and a clean exit all leave the same situation on the branch, unless
-    that tree is also dirty, which is a shape no reconstruction can honestly record. Quota is
-    recognised only when the run left no handoff: the text alone is not the outcome.
+    The order matters. Quota is recognised only when the run left no handoff (the text alone is
+    not the outcome) but before any commit is weighed: a quota after a WIP commit is still a quota,
+    not a finished feature. A commit without a handoff is then `handoff_missing` however the run
+    ended, unless the tree is also dirty, which is a shape no reconstruction can honestly record;
+    how the run ended decides what the reconstruction says (complete or partial), not whether one
+    is made.
 
     `grade.reconstructed` marks a handoff the driver wrote from the commit after the run was
     already over. The kill or the crash that left the record missing is what the reconstruction
-    explains, so it is not also held against it: such a grade is judged on its own evidence."""
+    explains (a cut-off run is reconstructed `partial`, so it lands in `tests_failed` above), so it
+    is not also held against it: such a grade is judged on its own evidence."""
     if grade.handoff_written:
         if grade.status in ("partial", "blocked"):
             return "tests_failed"
@@ -124,14 +128,14 @@ def classify(outcome: Outcome, grade: Grade) -> str:
                 outcome.rc, (" -- " + outcome.detail) if outcome.detail else ""))
             return "malformed_handoff"
         return "done"
+    if grade.quota:
+        return "infra_quota"
     if grade.new_commit:
         if grade.tree_dirty:
             grade.problems.append("commit %s landed with no handoff, and the tree is not clean: %s" % (
                 grade.new_commit[:7], ", ".join(grade.tree_dirty[:4])))
             return "malformed_handoff"
         return "handoff_missing"
-    if grade.quota:
-        return "infra_quota"
     if outcome.timed_out or (outcome.killed_by or "").startswith("watchdog:"):
         return "stalled"
     if outcome.rc != 0:

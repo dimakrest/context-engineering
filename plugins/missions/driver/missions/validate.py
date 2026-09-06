@@ -54,6 +54,12 @@ def milestone_assertions(mission_dir: Path, milestone: str,
     return [a for a in files.read_contract(mission_dir) if any(f in ids for f in a.features)]
 
 
+def _latest_for(latest: Dict[str, Dict[str, Tuple[str, str]]], a: files.Assertion) -> Optional[Tuple[str, str]]:
+    """The latest (verdict, file) on the assertion from the validator that can prove its class
+    (verdicts.latest_verdicts' buckets); None when that validator never graded it."""
+    return latest["behavior" if a.proof_class in TAGGED else "reviews"].get(a.id)
+
+
 def proven_evidence(mission_dir: Path, milestone: str) -> Dict[str, str]:
     """The proven rule: {assertion: validation file} for every assertion of the milestone whose
     latest verdict proves it -- structural when the reviewer's is `satisfied`, interface and
@@ -62,7 +68,7 @@ def proven_evidence(mission_dir: Path, milestone: str) -> Dict[str, str]:
     latest = verdicts.latest_verdicts(mission_dir, milestone)
     out: Dict[str, str] = {}
     for a in milestone_assertions(mission_dir, milestone):
-        got = latest["behavior" if a.proof_class in TAGGED else "reviews"].get(a.id)
+        got = _latest_for(latest, a)
         if got and got[0] == ("proven" if a.proof_class in TAGGED else "satisfied"):
             out[a.id] = got[1]
     return out
@@ -71,7 +77,7 @@ def proven_evidence(mission_dir: Path, milestone: str) -> Dict[str, str]:
 def verdict_of(latest: Dict[str, Dict[str, Tuple[str, str]]], a: files.Assertion) -> str:
     """The latest verdict on one assertion from the validator that can prove its class, in that
     validator's own word; `no verdict` when none was journaled."""
-    got = latest["behavior" if a.proof_class in TAGGED else "reviews"].get(a.id)
+    got = _latest_for(latest, a)
     return got[0] if got else "no verdict"
 
 
@@ -80,14 +86,8 @@ def verdict_summary(mission_dir: Path, milestone: str, assertions: List[files.As
     that graded it -- per reviewed feature, since a review is per feature and two reviews of one
     assertion may disagree -- and the contract's current status."""
     latest: Dict[str, Dict[str, Tuple[str, str]]] = {a.id: {} for a in assertions}
-    for rec in journal.events(mission_dir):
-        if rec.get("event") != "verdict" or rec.get("milestone") != milestone or not isinstance(rec.get("assertions"), dict):
-            continue
-        who = {"mission-reviewer": "reviewer", "mission-validator-behavior": "behavior"}.get(str(rec.get("validator")))
-        if who is None:
-            continue
-        if rec.get("feature"):
-            who += " " + str(rec["feature"])
+    for role, rec in verdicts.assertion_verdicts(mission_dir, milestone):
+        who = role + ((" " + str(rec["feature"])) if rec.get("feature") else "")
         for aid, v in rec["assertions"].items():
             if aid in latest:
                 latest[aid][who] = (str(v), str(rec.get("file") or ""))
@@ -124,13 +124,8 @@ def _done_steps(mission_dir: Path, milestone: str, round_no: int) -> Dict[Tuple[
 
 def _round_files(mission_dir: Path, milestone: str, round_no: int) -> Dict[str, str]:
     """The round's validation files in step order (file name -> text), for the negotiate prompt."""
-    out: Dict[str, str] = {}
-    for rec in journal.events(mission_dir):
-        if rec.get("event") == "validate_step" and rec.get("milestone") == milestone and rec.get("round") == round_no:
-            path = mission_dir / str(rec.get("file") or "")
-            if rec.get("file") and path.exists():
-                out[path.name] = files.read_text(path)
-    return out
+    return {Path(str(rec["file"])).name: files.read_text(mission_dir / str(rec["file"]))
+            for rec in _done_steps(mission_dir, milestone, round_no).values()}
 
 
 def _validator(ctx: Context, role: str, milestone: str, round_no: int, prompt: str,

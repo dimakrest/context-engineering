@@ -12,7 +12,7 @@ zero), `turn.failed`/`error` carry the failure text, `thread.started` the sessio
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from ..outcome import Outcome, RunRequest, unknown_cost
 from . import base

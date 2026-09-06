@@ -99,8 +99,9 @@ def stop(ctx: Context, reason: str, detail: str = "", needs: str = "", halt: boo
         if halt:
             journal.append(mdir, "halt", **{"class": "block"}, reason=("%s: %s" % (reason, detail))[:300],
                            decision_needed=needs or None)
-        if phase or halt:
-            files.write_state_fields(mdir, phase=phase or "halted")
+            files.write_state_fields(mdir, phase="halted")
+        elif phase:
+            files.write_state_fields(mdir, phase=phase)
         files.write_state_fields(mdir, resume_next=(resume_next or ("%s: %s" % (reason, needs or detail)))[:240])
     except files.MissionFileError as e:
         ctx.log("warning: could not update state.md: %s" % e)

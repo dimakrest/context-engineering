@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from . import files, journal
+from . import files, journal, prompts
 
 _HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
 _SEP_CELL = re.compile(r"^:?-+:?$")
@@ -141,20 +141,30 @@ def parse_scrutiny(text: str) -> Dict[str, Any]:
 
 # ---------------------------------------------------------------- journal
 
+# the validators whose `verdict` record carries an assertion table, by the agent name the record
+# names; scrutiny's carries commands and is a verdict on no assertion
+VALIDATOR_ROLES = {prompts.AGENTS["reviewer"]: "reviewer", prompts.AGENTS["behavior"]: "behavior"}
+
+
+def assertion_verdicts(mission_dir: Path, milestone: str) -> Iterator[Tuple[str, Dict[str, Any]]]:
+    """(role, record) for every journal `verdict` of the milestone that carries an assertion
+    table, oldest first -- so a reader that keeps the last one seen holds the latest."""
+    for rec in journal.events(mission_dir):
+        if rec.get("event") != "verdict" or rec.get("milestone") != milestone:
+            continue
+        role = VALIDATOR_ROLES.get(str(rec.get("validator")))
+        if role is not None and isinstance(rec.get("assertions"), dict):
+            yield role, rec
+
+
 def latest_verdicts(mission_dir: Path, milestone: str) -> Dict[str, Dict[str, Tuple[str, str]]]:
     """From the journal's `verdict` events for the milestone, the LATEST verdict per assertion id
     with the file it came from: {"reviews": {A001: (verdict, file)}, "behavior": {...}}. The two
     validators answer different questions, so a behavior `proven` never overwrites a reviewer's
     `not satisfied` or the other way round."""
     out: Dict[str, Dict[str, Tuple[str, str]]] = {"reviews": {}, "behavior": {}}
-    by_validator = {"mission-reviewer": "reviews", "mission-validator-behavior": "behavior"}
-    for rec in journal.events(mission_dir):
-        if rec.get("event") != "verdict" or rec.get("milestone") != milestone:
-            continue
-        key = by_validator.get(str(rec.get("validator")))
-        verdicts = rec.get("assertions")
-        if key is None or not isinstance(verdicts, dict):
-            continue
-        for aid, v in verdicts.items():
-            out[key][str(aid)] = (str(v), str(rec.get("file") or ""))
+    bucket = {"reviewer": "reviews", "behavior": "behavior"}
+    for role, rec in assertion_verdicts(mission_dir, milestone):
+        for aid, v in rec["assertions"].items():
+            out[bucket[role]][str(aid)] = (str(v), str(rec.get("file") or ""))
     return out

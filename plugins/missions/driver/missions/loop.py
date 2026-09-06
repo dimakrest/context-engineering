@@ -17,11 +17,10 @@ import os
 import shutil
 import socket
 import subprocess
-import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from . import __version__, files, journal, prep, prompts, steps, validate
 from .adapters import NAMES, make_adapter

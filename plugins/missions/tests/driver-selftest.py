@@ -343,7 +343,6 @@ class RepoFixture(Fixture):
 
     def setUp(self):
         super().setUp()
-        self.repo = self.tmp
         subprocess.run(["bash", str(HERE / "traces" / "_base" / "repo.sh"), str(self.tmp / "r")], check=True,
                        capture_output=True)
         self.repo = self.tmp / "r" / "repo"
@@ -377,7 +376,7 @@ class GradeTests(RepoFixture):
         head0 = self.git("rev-parse", "HEAD")
         self.commit()
         self.handoff()
-        fp = watchdog.fingerprint(files.handoff_path(self.m, "F001"))
+        fp = files.fingerprint(files.handoff_path(self.m, "F001"))
         g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, head0, None, ["A001", "A002"], task="F001#1")
         self.assertTrue(g.handoff_written)
         self.assertEqual(g.problems, [])
@@ -495,6 +494,10 @@ class WatchdogTests(RepoFixture):
             self.assertEqual(w.verdict, watchdog.SILENCE)
         finally:
             w.stop()
+
+
+class WatchdogConfigTests(unittest.TestCase):
+    """Pure dict work -- deliberately not a RepoFixture: it needs no checkout and no mission tree."""
 
     def test_config(self):
         c = watchdog.config({"watchdog": {"poll_s": 1, "commit_grace_s": None, "silence_s": 2, "bogus": 9}})

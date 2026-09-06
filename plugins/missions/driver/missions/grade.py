@@ -1,8 +1,10 @@
 """Post-exit grading (#4): one verdict per task, after the process is gone.
 
 The schema function is the existing script, hooks/mission-handoff-schema.sh, called with a
-synthetic payload and `MISSION_DIR` pinned; the driver's verdict and the worker's self-check
-(`missions grade <mission-dir> F0nn --self`) call the same function, so the two agree.
+synthetic payload and `MISSION_DIR` pinned. The driver's verdict (`grade_feature`) and the worker's
+self-check (`self_check`, behind `missions grade <mission-dir> F0nn --self`) run the same checks out
+of one body, `_check`, so the two agree by construction rather than by being kept in step; `advise`
+is the only difference, and it only phrases the problems for the one who can still fix them.
 
 Beyond the schema the grade checks what a hook at dispatch time never could: that the handoff was
 written by THIS attempt (content changed since launch), that its commit is on the mission branch,
@@ -123,33 +125,47 @@ def quota_signature(outcome: Outcome) -> Optional[str]:
     return None
 
 
+def _check(mission_dir: Path, fid: str, checkout: Path, plugin: Path, h: files.Handoff, g: Grade,
+           feature_assertions: Optional[List[str]], advise: bool) -> Grade:
+    """Every check the driver's verdict and the worker's self-check share, on a handoff that exists
+    and counts as the checker's own. `advise` phrases it for the one who can still fix it and adds
+    the problem the driver leaves to `classify`."""
+    g.problems = handoff_problems(mission_dir, fid, checkout, plugin)
+    if h.sha:
+        full = files.git_out(checkout, "rev-parse", "--verify", "--quiet", h.sha + "^{commit}")
+        g.sha = full or h.sha
+        g.commit_on_branch = bool(full) and commit_on_branch(checkout, full)
+        if advise and full and not g.commit_on_branch:
+            g.problems.append("commit %s is not on the current branch" % h.sha[:7])
+    g.claimed = claimed_ids(h.raw)
+    if feature_assertions is not None:
+        foreign = [a for a in g.claimed if a not in feature_assertions]
+        if foreign:
+            g.problems.append("claims %s, not among %s's assertions (%s)" % (
+                ", ".join(foreign), fid, ", ".join(feature_assertions) or "none"))
+    if g.tree_dirty and h.status != "blocked":
+        g.problems.append("uncommitted changes %s the tree: %s%s%s" % (
+            "in" if advise else "left in", ", ".join(g.tree_dirty[:4]),
+            "..." if len(g.tree_dirty) > 4 else "",
+            " -- commit them or discard them" if advise else ""))
+    return g
+
+
 def grade_feature(mission_dir: Path, fid: str, checkout: Path, plugin: Path, head_before: str,
                   handoff_before: Optional[str] = None, feature_assertions: Optional[List[str]] = None,
-                  task: str = "") -> Grade:
+                  task: str = "", outcome: Optional[Outcome] = None) -> Grade:
     """The verdict for one task. `handoff_before` is the handoff's fingerprint at launch (None when
-    there was none); the handoff counts as this attempt's only when its content differs."""
-    from .watchdog import fingerprint  # local import: watchdog imports journal, not grade
+    there was none); the handoff counts as this attempt's only when its content differs. `outcome`,
+    when given, is the run the grade is keyed to -- its quota signature belongs to the grade."""
     h = files.read_handoff(mission_dir, fid)
     g = Grade(handoff_exists=h.exists, status=h.status, sha=h.sha, issues=list(h.issues), task=task)
-    g.handoff_written = h.exists and fingerprint(files.handoff_path(mission_dir, fid)) != handoff_before
+    g.handoff_written = h.exists and files.fingerprint(files.handoff_path(mission_dir, fid)) != handoff_before
     g.tree_dirty = files.dirty_paths(checkout)
     g.branch_after = files.git_out(checkout, "branch", "--show-current")
     g.new_commit = new_commit_since(checkout, fid, head_before)
+    g.quota = quota_signature(outcome) if outcome is not None else None
     if h.exists and g.handoff_written:
-        g.problems = handoff_problems(mission_dir, fid, checkout, plugin)
-        if h.sha:
-            full = files.git_out(checkout, "rev-parse", "--verify", "--quiet", h.sha + "^{commit}")
-            g.sha = full or h.sha
-            g.commit_on_branch = bool(full) and commit_on_branch(checkout, full)
-        g.claimed = claimed_ids(h.raw)
-        if feature_assertions is not None:
-            foreign = [a for a in g.claimed if a not in feature_assertions]
-            if foreign:
-                g.problems.append("claims %s, not among %s's assertions (%s)" % (
-                    ", ".join(foreign), fid, ", ".join(feature_assertions) or "none"))
-        if g.tree_dirty and h.status != "blocked":
-            g.problems.append("uncommitted changes left in the tree: %s%s" % (
-                ", ".join(g.tree_dirty[:4]), "..." if len(g.tree_dirty) > 4 else ""))
+        _check(mission_dir, fid, checkout, plugin, h, g, feature_assertions, advise=False)
     elif h.exists:
         g.problems.append("handoffs/%s.md is unchanged since launch: written by an earlier attempt, not this one" % fid)
     return g
@@ -232,22 +248,5 @@ def self_check(mission_dir: Path, fid: str, checkout: Path, plugin: Path) -> Gra
     if not h.exists:
         g.problems.append("no handoff at %s" % files.handoff_path(mission_dir, fid))
         return g
-    g.problems = handoff_problems(mission_dir, fid, checkout, plugin)
-    if h.sha:
-        full = files.git_out(checkout, "rev-parse", "--verify", "--quiet", h.sha + "^{commit}")
-        g.sha = full or h.sha
-        g.commit_on_branch = bool(full) and commit_on_branch(checkout, full)
-        if full and not g.commit_on_branch:
-            g.problems.append("commit %s is not on the current branch" % h.sha[:7])
-    elif h.status != "blocked":
-        g.problems.append("no commit sha under ## Commit")
-    g.claimed = claimed_ids(h.raw)
-    if feat is not None:
-        foreign = [a for a in g.claimed if a not in feat.assertions]
-        if foreign:
-            g.problems.append("claims %s, not among %s's assertions (%s)" % (
-                ", ".join(foreign), fid, ", ".join(feat.assertions) or "none"))
-    if g.tree_dirty and h.status != "blocked":
-        g.problems.append("uncommitted changes in the tree: %s%s -- commit them or discard them" % (
-            ", ".join(g.tree_dirty[:4]), "..." if len(g.tree_dirty) > 4 else ""))
-    return g
+    return _check(mission_dir, fid, checkout, plugin, h, g,
+                  feat.assertions if feat is not None else None, advise=True)

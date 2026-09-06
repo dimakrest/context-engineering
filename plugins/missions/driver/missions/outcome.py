@@ -100,8 +100,13 @@ def classify(outcome: Outcome, grade: Grade) -> str:
     its handoff; a handoff written by a worker that was killed or exited non-zero is not `done`.
 
     The order matters. A commit without a handoff is `handoff_missing` however the run ended --
-    the watchdog kill, a crash and a clean exit all leave the same situation on the branch. Quota
-    is recognised only when the run left no handoff: the text alone is not the outcome."""
+    the watchdog kill, a crash and a clean exit all leave the same situation on the branch, unless
+    that tree is also dirty, which is a shape no reconstruction can honestly record. Quota is
+    recognised only when the run left no handoff: the text alone is not the outcome.
+
+    `grade.reconstructed` marks a handoff the driver wrote from the commit after the run was
+    already over. The kill or the crash that left the record missing is what the reconstruction
+    explains, so it is not also held against it: such a grade is judged on its own evidence."""
     if grade.handoff_written:
         if grade.status in ("partial", "blocked"):
             return "tests_failed"
@@ -110,16 +115,20 @@ def classify(outcome: Outcome, grade: Grade) -> str:
         if not grade.sha or not grade.commit_on_branch:
             grade.problems.append("commit %s is not on the mission branch" % (grade.sha or "(none)"))
             return "malformed_handoff"
-        if outcome.killed:
+        if outcome.killed and not grade.reconstructed:
             grade.problems.append("the run was ended by the driver (%s) after it wrote a complete handoff" % (
                 outcome.killed_by or "timeout"))
             return "malformed_handoff"
-        if outcome.rc != 0:
+        if outcome.rc != 0 and not grade.reconstructed:
             grade.problems.append("the worker exited %d after writing a complete handoff%s" % (
                 outcome.rc, (" -- " + outcome.detail) if outcome.detail else ""))
             return "malformed_handoff"
         return "done"
     if grade.new_commit:
+        if grade.tree_dirty:
+            grade.problems.append("commit %s landed with no handoff, and the tree is not clean: %s" % (
+                grade.new_commit[:7], ", ".join(grade.tree_dirty[:4])))
+            return "malformed_handoff"
         return "handoff_missing"
     if grade.quota:
         return "infra_quota"

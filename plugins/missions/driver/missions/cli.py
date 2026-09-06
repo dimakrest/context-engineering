@@ -69,8 +69,9 @@ def cmd_run(args) -> int:
 
 
 def cmd_grade(args) -> int:
-    """The verdict function on demand. `--self` is the worker's pre-exit check: same function,
-    phrased for the one who can still fix it. Writes nothing."""
+    """The worker's pre-exit check on demand: the checks the driver applies after exit, minus the
+    two only a finished run can answer (was this attempt's handoff written, did a commit land), and
+    phrased for the one who can still fix them. `--self` adds that closing advice. Writes nothing."""
     mdir = Path(args.mission_dir).resolve()
     if not (mdir / "state.md").exists():
         print("grade: %s has no state.md" % mdir, file=sys.stderr)
@@ -127,10 +128,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     r.add_argument("--dry-run", action="store_true", help="print the queue and the commands; touch nothing")
     r.set_defaults(fn=cmd_run)
 
-    g = sub.add_parser("grade", help="grade a feature's handoff the way the driver does after exit")
+    g = sub.add_parser("grade", help="check a feature's handoff the way the worker should before it exits")
     g.add_argument("mission_dir")
     g.add_argument("feature", help="F0nn")
-    g.add_argument("--self", action="store_true", help="worker mode: the same checks, before you exit")
+    g.add_argument("--self", action="store_true", help="worker mode: add the 'fix these before you exit' line")
     g.add_argument("--json", action="store_true")
     g.set_defaults(fn=cmd_grade)
 

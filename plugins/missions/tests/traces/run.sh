@@ -91,11 +91,12 @@ run_case() {
   done
   for re in "${g_re[@]:-}"; do
     [ -n "$re" ] || continue
-    git -C "$tmp/repo" log --oneline | grep -qE -- "$re" || { ok=0; why+=("git~=$re"); }
+    # not grep -q: under pipefail a producer killed by SIGPIPE fails the pipeline even when grep matched
+    git -C "$tmp/repo" log --oneline | grep -E -- "$re" >/dev/null || { ok=0; why+=("git~=$re"); }
   done
   for re in "${s_re[@]:-}"; do
     [ -n "$re" ] || continue
-    awk '/^```mission-state[[:space:]]*$/{on=1;next} on&&/^```/{exit} on{print}' "$m/state.md" | grep -qE -- "$re" \
+    awk '/^```mission-state[[:space:]]*$/{on=1;next} on&&/^```/{exit} on{print}' "$m/state.md" | grep -E -- "$re" >/dev/null \
       || { ok=0; why+=("state~=$re"); }
   done
   for re in "${o_re[@]:-}"; do

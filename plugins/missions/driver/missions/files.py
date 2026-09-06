@@ -7,6 +7,7 @@ not a new format (design §2). Edits are line-surgical: the surrounding prose is
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -59,6 +60,15 @@ def git(checkout: Path, *args: str, check: bool = True) -> subprocess.CompletedP
 def git_out(checkout: Path, *args: str) -> str:
     res = git(checkout, *args, check=False)
     return res.stdout.strip() if res.returncode == 0 else ""
+
+
+def fingerprint(path: Path) -> Optional[str]:
+    """Content hash of a file, None when it does not exist. The handoff's identity for one run:
+    a file identical to the one present at launch was not written by this attempt."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def dirty_paths(checkout: Path) -> List[str]:

@@ -9,7 +9,6 @@ ingest: on `done`, range + patch + features.md + contract.md (claimed, never pro
 """
 from __future__ import annotations
 
-import dataclasses
 import json
 import os
 import subprocess
@@ -19,7 +18,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from . import files, journal, prompts, watchdog
 from .adapters import base
-from .grade import grade_feature, quota_signature, reconstruct
+from .grade import grade_feature, reconstruct
 from .outcome import Grade, Outcome, RunRequest, classify
 
 WORKER_DEFAULTS = {"timeout_s": 2400, "budget_usd": 8.0}
@@ -104,11 +103,9 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
     # launch: nothing is graded here -- a launch grades nothing. What is recorded is the identity
     # the grade will be keyed to: HEAD and the handoff's content as they were when this task began.
     head_before = files.git_out(ctx.checkout, "rev-parse", "HEAD")
-    handoff_before = watchdog.fingerprint(files.handoff_path(mdir, fid))
-    wd_cfg = watchdog.config(ctx.cfg)
+    handoff_before = files.fingerprint(files.handoff_path(mdir, fid))
     req.watchdog = watchdog.Watchdog(mdir, ctx.checkout, fid, task, head_before, handoff_before, run_dir,
-                                     poll_s=wd_cfg["poll_s"] or 30.0, commit_grace_s=wd_cfg["commit_grace_s"],
-                                     silence_s=wd_cfg["silence_s"], log=ctx.log)
+                                     log=ctx.log, **watchdog.config(ctx.cfg))
     files.set_feature(mdir, fid, status="active")
     files.write_lock(mdir / ".writer", "mission-worker", fid, task, ctx.session)
     files.write_lock(mdir / ".lease", "mission-worker", fid, task, ctx.session)
@@ -147,32 +144,22 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
 
     # grade after exit, exactly once, keyed to this task
     grade = grade_feature(mdir, fid, ctx.checkout, ctx.plugin, head_before, handoff_before,
-                          feature.assertions, task=task)
-    grade.quota = quota_signature(outcome)
+                          feature.assertions, task=task, outcome=outcome)
     cls = classify(outcome, grade)
     if cls == "handoff_missing":
         # the work is on the branch, the record is not: write the record from the work, then
         # grade it like any other -- a reconstructed handoff that fails the grade is malformed
         commit = grade.new_commit or ""
-        if grade.tree_dirty:
-            grade.problems.append("commit %s landed with no handoff, and the tree is not clean: %s" % (
-                commit[:7], ", ".join(grade.tree_dirty[:4])))
-            cls = "malformed_handoff"
-        else:
-            how = ("was ended by the driver: %s" % outcome.killed_by) if outcome.killed else (
-                "exited %d" % outcome.rc)
-            reconstruct(mdir, fid, ctx.checkout, head_before, commit, task, feature.assertions, how)
-            journal.append(mdir, "handoff_reconstructed", task=task, feature=fid, commit=commit[:7],
-                           killed_by=outcome.killed_by, rc=outcome.rc)
-            ctx.log("   %s: commit %s landed without a handoff -- reconstructed it from the commit" % (task, commit[:7]))
-            regrade = grade_feature(mdir, fid, ctx.checkout, ctx.plugin, head_before, handoff_before,
-                                    feature.assertions, task=task)
-            regrade.reconstructed = True
-            regrade.quota = grade.quota
-            grade = regrade
-            # the kill or the crash that left the handoff missing is explained by the reconstruction;
-            # the reconstructed record is graded on its own evidence
-            cls = classify(dataclasses.replace(outcome, rc=0, timed_out=False, killed_by=None), grade)
+        how = ("was ended by the driver: %s" % outcome.killed_by) if outcome.killed else (
+            "exited %d" % outcome.rc)
+        reconstruct(mdir, fid, ctx.checkout, head_before, commit, task, feature.assertions, how)
+        journal.append(mdir, "handoff_reconstructed", task=task, feature=fid, commit=commit[:7],
+                       killed_by=outcome.killed_by, rc=outcome.rc)
+        ctx.log("   %s: commit %s landed without a handoff -- reconstructed it from the commit" % (task, commit[:7]))
+        grade = grade_feature(mdir, fid, ctx.checkout, ctx.plugin, head_before, handoff_before,
+                              feature.assertions, task=task, outcome=outcome)
+        grade.reconstructed = True
+        cls = classify(outcome, grade)
     outcome.cls = cls
     _write_outcome(run_dir, outcome, grade)
     problems = list(grade.problems)

@@ -160,8 +160,6 @@ def run_process(cmd: Sequence[str], req: RunRequest, stdin_path: Optional[Path] 
             # interrupt or any driver failure: nothing outlives the driver
             _end_group(proc, pgid, 5.0)
             _sweep_group(pgid, 1.0)
-            if watchdog is not None:
-                watchdog.stop()
             raise
         finally:
             if watchdog is not None:

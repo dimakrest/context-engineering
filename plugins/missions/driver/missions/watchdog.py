@@ -42,15 +42,6 @@ def config(cfg: Dict) -> Dict[str, Optional[float]]:
     return out
 
 
-def fingerprint(path: Path) -> Optional[str]:
-    """Content hash of a file, None when it does not exist. The handoff's identity for one run:
-    a file identical to the one present at launch was not written by this attempt."""
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except OSError:
-        return None
-
-
 def _size(path: Path) -> int:
     try:
         return path.stat().st_size
@@ -107,7 +98,7 @@ class Watchdog:
         tree.update((diff.stdout or "").encode("utf-8", "replace"))
         return {
             "head": files.git_out(self.checkout, "rev-parse", "HEAD"),
-            "handoff": fingerprint(self.handoff_path),
+            "handoff": files.fingerprint(self.handoff_path),
             "stdout": _size(self.run_dir / "stdout"),
             "stderr": _size(self.run_dir / "stderr"),
             "tree": tree.hexdigest(),
@@ -137,8 +128,6 @@ class Watchdog:
                     journal.append(self.mission_dir, "commit_observed", task=self.task, feature=self.feature,
                                    commit=self.commit[:7], handoff="pending")
                     self.log("   watchdog: commit %s observed, handoff pending" % self.commit[:7])
-            if self._stop.is_set():
-                break
             if (self.commit is not None and self.commit_grace_s is not None and not self.handoff_written(obs)
                     and now - max(self.commit_seen_at or now, last_change) >= self.commit_grace_s):
                 self.verdict = COMMIT_NO_HANDOFF

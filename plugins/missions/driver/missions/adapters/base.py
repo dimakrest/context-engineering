@@ -41,10 +41,9 @@ class Adapter(Protocol):
     def run(self, req: RunRequest) -> Outcome: ...
 
 
-def build_env(mission_dir: Path, run_dir: Path, role: str, feature: str, task: str,
-              phase: str, harness: str, **extra) -> Dict[str, str]:
-    """The run's environment: built by prep from a whitelist, never inherited (design §7)."""
-    return prep.build_env(mission_dir, run_dir, role, feature, task, phase, harness, **extra)
+# The run's environment is prep's -- built from a whitelist, never inherited (design §7). This is
+# the name the adapters' callers know.
+build_env = prep.build_env
 
 
 @dataclass

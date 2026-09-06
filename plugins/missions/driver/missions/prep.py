@@ -85,12 +85,13 @@ def build_env(mission_dir: Path, run_dir: Path, role: str, feature: str, task: s
             continue
         if k in allowed or k.startswith(KEEP_PREFIXES) or _passthrough(k, passthrough):
             env[k] = v
-    hooks = githooks_dir(mission_dir.resolve())
+    mdir = mission_dir.resolve()      # git needs an absolute hooksPath; the child sees one mission dir
+    hooks = githooks_dir(mdir)
     env.update({
         "MISSIONS_ROLE": role,
         "MISSIONS_FEATURE": feature,
         "MISSIONS_TASK": task,
-        "MISSIONS_DIR": str(mission_dir),
+        "MISSIONS_DIR": str(mdir),
         "MISSIONS_RUN_DIR": str(run_dir),
         "MISSIONS_PHASE": phase,
         "MISSIONS_HARNESS": harness,
@@ -254,17 +255,11 @@ def _merge_move(src: Path, dst: Path) -> None:
     src.unlink()
 
 
-def _restore_cell(cell: Path) -> None:
-    mdir = cell.parent.parent
+def _restore_cell(mission_dir: Path, cell: Path) -> None:
     os.chmod(cell, 0o755)
     for child in list(cell.iterdir()):
-        if child.name == "runs":
-            (mdir / "runs").mkdir(exist_ok=True)
-            for run in list(child.iterdir()):
-                _merge_move(run, mdir / "runs" / run.name)
-            os.rmdir(child)
-        else:
-            _merge_move(child, mdir / child.name)
+        # runs/ merges like any other directory: the current task's run dir stayed behind, so it exists
+        _merge_move(child, mission_dir / child.name)
     os.rmdir(cell)
     blind = cell.parent
     if blind.is_dir() and not any(blind.iterdir()):
@@ -279,7 +274,7 @@ def restore_blind(mission_dir: Path) -> List[str]:
     restored: List[str] = []
     for cell in sorted(blind.iterdir()):
         if cell.is_dir():
-            _restore_cell(cell)
+            _restore_cell(mission_dir, cell)
             restored.append(cell.name)
     return restored
 
@@ -305,7 +300,7 @@ def blind(ctx, task: str) -> Iterator[None]:
     try:
         yield
     finally:
-        _restore_cell(cell)
+        _restore_cell(mdir, cell)
 
 
 # ---------------------------------------------------------------- host lease

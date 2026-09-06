@@ -40,11 +40,12 @@ class StubAdapter:
                 names.append("%s.sh" % req.feature)
         if req.step:
             names.append("%s.sh" % req.step)
-        names.append("%s.sh" % req.role)
+        by_role = self.script_dir / ("%s.sh" % req.role)   # the last candidate, and the fallback
+        names.append(by_role.name)
         for name in names:
             if (self.script_dir / name).exists():
                 return self.script_dir / name
-        return self.script_dir / names[-1]
+        return by_role
 
     def command(self, req: RunRequest) -> List[str]:
         return ["bash", str(self.script_for(req))]
@@ -53,7 +54,7 @@ class StubAdapter:
         script = self.script_for(req)
         extra = {"MISSIONS_STUB_SCRIPT": str(script), "MISSIONS_PROMPT": str(req.prompt_path),
                  "MISSIONS_READ_ONLY": "1" if req.read_only else "0", "MISSIONS_STEP": req.step}
-        res = base.run_process(self.command(req), req, extra_env=extra)
+        res = base.run_process(["bash", str(script)], req, extra_env=extra)
         cost = unknown_cost("stub:no-cost.json")
         cost_file = req.run_dir / "cost.json"
         if cost_file.exists():

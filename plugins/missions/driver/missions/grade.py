@@ -170,11 +170,12 @@ def _check(mission_dir: Path, fid: str, checkout: Path, plugin: Path, h: files.H
         g.commit_on_branch = bool(full) and commit_on_branch(checkout, full, branch)
         if advise and full and not g.commit_on_branch:
             g.problems.append("commit %s is not on the mission branch%s" % (h.sha[:7], (" " + branch) if branch else ""))
-        if full and feature_files:
-            since = base or files.git_out(checkout, "rev-parse", "--verify", "--quiet", full + "~1")
+        # empty only at a root commit, which has no first parent to be outside of
+        since = (base or files.git_out(checkout, "rev-parse", "--verify", "--quiet", full + "~1")) if full else ""
+        if since and feature_files:
             # mentioned = the path or its basename appears anywhere in the handoff: a worker that
             # names what it touched is believed; the reason is for the reviewer to weigh
-            unmentioned = [p for p in (paths_outside(checkout, since, full, feature_files) if since else [])
+            unmentioned = [p for p in paths_outside(checkout, since, full, feature_files)
                            if p not in h.raw and os.path.basename(p) not in h.raw]
             if unmentioned:
                 g.problems.append("commit touches %s%s outside the feature's Files and the handoff does not mention them%s" % (

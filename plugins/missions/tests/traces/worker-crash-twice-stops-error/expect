@@ -1,0 +1,10 @@
+rc=1
+journal~="event":"dispatch".*"dispatch_id":"F001#1"
+journal~="event":"step_done".*"step":"F001#1".*"cls":"infra_crash"
+journal~="event":"dispatch".*"dispatch_id":"F001#2"
+journal~="event":"step_done".*"step":"F001#2".*"cls":"infra_crash"
+journal~="event":"stop".*"reason":"error"
+journal!~="dispatch_id":"F001#3"
+state~=^phase: implementing
+postcheck=sed -n '/^### F001/,/^##/p' "$M/features.md" | grep -q 'Status:\*\* pending'
+postcheck=grep -q boom "$M/runs/F001#2/stderr"

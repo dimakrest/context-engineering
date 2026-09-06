@@ -312,6 +312,15 @@ a weaker guarantee than the original, just in a narrower place than before.
 **Unconfirmed.** Whether a Claude Code subagent can itself spawn subagents. The design assumes the
 safe answer: all fan-out originates in the `/missions:mission-run` loop, never inside a validator.
 
+**The driver (0.3, in progress).** Three runs showed that every long stall had one root: the thing
+that should continue the mission was a model deciding whether to take another turn. `bin/missions`
+replaces that with a program — a `while True:` that runs each worker as a blocking subprocess under
+`claude -p` or `codex exec`, grades the handoff after the process exits, and stops only through a
+typed reason. Today (D1 of #5) it drives the IMPLEMENT phase of a milestone and hands VALIDATE back
+to `/missions:mission-run`; post-exit grading and the commit watchdog (#4), harness-agnostic
+enforcement (#13), `resume`/`status` and the mutation tests (#6) follow. See the README's
+"Developing" section for the commands and the trace tests.
+
 ---
 
 ## Related

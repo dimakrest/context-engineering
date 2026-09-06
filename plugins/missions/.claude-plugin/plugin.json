@@ -1,6 +1,6 @@
 {
   "name": "missions",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Contract-first multi-feature agent missions: /missions:mission-plan writes the definition of done, /missions:mission-run executes it with serial workers, blind reviewers and behaviour validators, enforced by hooks (writer lock, execution lease, spend and dispatch caps, blindness, commit discipline).",
   "author": { "name": "Dima Krest" },
   "keywords": ["missions", "agents", "workflow", "contract-first", "hooks", "review"]

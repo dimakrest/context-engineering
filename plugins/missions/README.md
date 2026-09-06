@@ -60,3 +60,37 @@ mission tree, and an `expect` of `rc=`, `stderr~=`, `stdout~=`, `postcheck=`); `
 receives from the harness, run a session with `MISSION_HOOK_DEBUG=1` and read
 `.missions/<slug>/.hook-debug.log`. Bump `.claude-plugin/plugin.json` on every behaviour change; the
 marketplace fetches by version.
+
+### The driver (0.3, in progress — #5)
+
+`bin/missions` is the out-of-process driver: a Python program (stdlib only, ≥ 3.9) that owns the run
+loop instead of a Claude session deciding whether to take another turn. Today it drives the
+IMPLEMENT phase of one milestone — select the pending feature, render its prompt, run a worker as
+a blocking subprocess under `claude -p` or `codex exec`, grade the handoff after the process exits,
+write `features.md` / `contract.md` / `state.md` / `journal.jsonl`, loop — and stops with a typed
+reason and exit code (`0` done · `1` error · `2` preflight-failed · `3` limit-reached · `4` budget ·
+`5` gate-blocked · `130` interrupted). VALIDATE, the judgment steps, `resume` and `status` follow
+in #4, #13 and #6.
+
+```
+plugins/missions/bin/missions init      .missions/<slug> --harness claude|codex
+plugins/missions/bin/missions preflight .missions/<slug>
+plugins/missions/bin/missions run       .missions/<slug> [--limit N] [--milestone M] [--dry-run]
+```
+
+Run it from the checkout on the mission branch. It writes `driver.json`, `runs/<task>/` and
+`.driver.lock` into the mission directory and nothing else new; the 0.2 hooks keep working
+alongside it (it takes and releases `.writer` / `.lease` in their format). Note that a `codex`
+worker runs your `~/.codex/hooks.json` hooks and gets no dollar budget — cost is reported in
+tokens.
+
+Trace tests run the real driver over a temporary repo with a stub worker (a shell script):
+
+```
+bash plugins/missions/tests/traces/run.sh            # all traces + tests/driver-selftest.py
+bash plugins/missions/tests/traces/run.sh 'two-*'    # one case
+```
+
+A case is a directory under `tests/traces/` that overlays `_base/` (the fixture repo, mission and
+stub) and an `expect` of `rc=`, `journal~=` (in order), `git~=`, `state~=`, `file=`, `postcheck=`;
+`run.sh`'s header documents every key. A failed case keeps its tmp dir under `tests/traces/.out/`.

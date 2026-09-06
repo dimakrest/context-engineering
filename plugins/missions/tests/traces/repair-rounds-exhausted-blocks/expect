@@ -1,0 +1,11 @@
+rc=5
+journal~="event":"dispatch".*"dispatch_id":"F001#1"
+journal~="event":"step_done".*"cls":"malformed_handoff"
+journal~="event":"dispatch".*"dispatch_id":"F001#2"
+journal~="event":"step_done".*"cls":"malformed_handoff"
+journal~="event":"halt".*"class":"block"
+journal~="event":"stop".*"reason":"gate-blocked"
+journal!~="dispatch_id":"F001#3"
+journal!~="dispatch_id":"F002#1"
+state~=^phase: halted
+postcheck=grep -qE '^- \*\*Status:\*\* blocked' "$M/features.md"

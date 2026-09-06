@@ -1,0 +1,4 @@
+rc=5
+journal~="event":"stop".*"reason":"gate-blocked".*halted
+journal!~="event":"dispatch"
+state~=^phase: halted

@@ -90,6 +90,13 @@ mission_warn_phase() {
 # at a time, and guessing between two is worse than being predictable.
 mission_active_dir() {
   local d phase
+  # MISSION_DIR pins the mission: the driver sets it when it calls a hook or script as a
+  # function. When set and real it wins unconditionally, phase included -- grading a halted
+  # mission must still grade, not report "no active mission" and pass.
+  if [ -n "${MISSION_DIR:-}" ] && [ -f "${MISSION_DIR%/}/state.md" ]; then
+    printf '%s' "${MISSION_DIR%/}"
+    return 0
+  fi
   [ -d "$MISSION_ROOT" ] || return 1
   for d in "$MISSION_ROOT"/*/; do
     [ -f "${d}state.md" ] || continue

@@ -1,0 +1,4 @@
+rc=5
+journal~="event":"stop".*"reason":"gate-blocked".*F001 is marked active
+journal!~="event":"dispatch"
+state~=^phase: implementing

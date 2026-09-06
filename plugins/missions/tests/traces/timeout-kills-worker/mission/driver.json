@@ -1,0 +1,7 @@
+{
+  "harness": "stub",
+  "checkout": ".",
+  "branch": "mission/demo",
+  "roles": {"worker": {"timeout_s": 2, "budget_usd": null, "model": null}},
+  "adapters": {"stub": {"script_dir": "@STUB@"}}
+}

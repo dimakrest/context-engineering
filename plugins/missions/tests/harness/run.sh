@@ -218,14 +218,20 @@ log = subprocess.run(["git", "-C", repo, "log", "--oneline", "main..mission/demo
 
 # Could the harness run here at all? Two ways it could not, neither of them the driver's fault.
 # A definite failure above DOMINATES: exit 2 says "nothing was established", which would be a lie
-# if something already failed. Reading the harness's transcript for this is the same technique
-# grade.py's quota_signature uses on the harness's error text -- but note the honest limit: under
-# codex, stdout IS the agent's own messages, so an agent that merely QUOTES a sandbox error trips
-# this. That is tolerable only because the consequence is downgrading a paid smoke to "not
-# established", never a driver decision, and only in combination with no commit at all.
+# if something already failed.
+#
+# stderr ONLY, deliberately. The case this was written for -- codex's bubblewrap refusing to start
+# -- is now caught structurally by CodexAdapter.preflight_problems() before a token is spent, so
+# this is only a backstop for a harness that fails a way preflight did not predict. And stdout
+# would be a bad backstop: measured over three codex runs, every `bwrap:` occurrence was inside an
+# `agent_message` item and none in any other channel or in stderr, so reading stdout buys no
+# detection codex does not already give the agent's prose -- it only adds the way this check can
+# LIE, an agent that quotes a sandbox error into a false "nothing was established". grade.py's
+# quota_signature draws the same line for the same reason: "a test named after a rate limit is not
+# a rate limit".
 TAIL = 2_000_000        # adapters.base.read_output's cap, for the same reason
 blob = "\n".join((run_dir / n).read_text(encoding="utf-8", errors="replace")[-TAIL:]
-                 for n in ("stderr", "stdout") if (run_dir / n).exists())
+                 for n in ("stderr",) if (run_dir / n).exists())
 blocked = re.search(r"(bwrap: [^\n\"`\\]{0,70}|landlock[^\n\"`]{0,40}not permitted|"
                     r"seccomp[^\n\"`]{0,40}not permitted|"
                     r"sandbox[^\n\"`]{0,40}(?:failed to start|startup failure))", blob, re.I)

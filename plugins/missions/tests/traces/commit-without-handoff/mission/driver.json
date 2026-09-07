@@ -4,7 +4,7 @@
   "branch": "mission/demo",
   "roles": {
     "worker": {
-      "timeout_s": 60,
+      "timeout_s": 15,
       "budget_usd": null,
       "model": null
     }

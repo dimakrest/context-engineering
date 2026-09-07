@@ -12,7 +12,9 @@
 #   claude | codex   one adapter
 #   both             both, then the two runs are compared: same journal shape, same outcome class,
 #                    same evidence. This is the harness-agnostic claim (#6) as a test rather than
-#                    a promise; the cost unit is the one difference and is exempt.
+#                    a promise; the cost unit is the one difference and is exempt. `both` pays for
+#                    both runs -- up to $2.00 of claude plus an unbudgeted codex run bounded only
+#                    by the deadline -- and runs them in sequence, which the host lease requires.
 #
 # What it asserts, beyond the shape:
 #   - the outcome class is one that means the worker did the work (never no_op, infra_crash,
@@ -47,7 +49,7 @@ esac
 
 # One adapter: $1 harness, $2 tmp dir. Leaves $2/summary.json for the comparison.
 smoke_one() {
-  local h="$1" tmp="$2" m rc start fail=0
+  local h="$1" tmp="$2" m rc start fail
   command -v "$h" >/dev/null 2>&1 || { echo "smoke: $h is not on PATH" >&2; return 2; }
   echo "smoke: harness $h  tmp $tmp"
   bash "$here/../traces/_base/repo.sh" "$tmp" || { echo "smoke: repo.sh failed" >&2; return 1; }
@@ -60,9 +62,10 @@ smoke_one() {
   mkdir -p "$tmp/bin"
   cat > "$tmp/bin/$h-shim" <<SHIM
 #!/bin/bash
-# missions smoke: dump this process's own environment, then become the real harness.
-[ -n "\${MISSIONS_RUN_DIR:-}" ] && python3 -c 'import os,sys; open(sys.argv[1],"w").write("\n".join(sorted(os.environ))+"\n")' \\
-  "\$MISSIONS_RUN_DIR/child-env-names.txt"
+# missions smoke: dump this process's own environment, then become the real harness. The file is
+# named env.txt because tests/traces/worker-env-stripped's stub writes the same thing under the
+# same name -- the stub trace and the live smoke assert one property on one kind of evidence.
+[ -n "\${MISSIONS_RUN_DIR:-}" ] && compgen -e | sort > "\$MISSIONS_RUN_DIR/env.txt"
 exec $(command -v "$h") "\$@"
 SHIM
   chmod +x "$tmp/bin/$h-shim"
@@ -86,11 +89,17 @@ EOF
   rc=${PIPESTATUS[0]}
   echo "smoke: missions run exited $rc after $(( $(date +%s) - start ))s"
 
-  python3 - "$m" "$h" "$tmp/repo" "$tmp/summary.json" <<'EOF'
+  python3 - "$m" "$h" "$tmp/repo" "$tmp/summary.json" "$plugin" <<'EOF'
 
 import json, re, subprocess, sys
 from pathlib import Path
-mdir, harness, repo, summary_path = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+mdir, harness, repo, summary_path, plugin = (Path(sys.argv[1]), sys.argv[2], sys.argv[3],
+                                             sys.argv[4], sys.argv[5])
+# the driver's own vocabulary, so a renamed or added class cannot leave this judging by a stale
+# literal. The complement is what the check is for: these four mean nothing happened.
+sys.path.insert(0, str(Path(plugin) / "driver"))
+from missions.outcome import CLASSES
+NOTHING_HAPPENED = ("no_op", "infra_crash", "stalled", "infra_quota")
 want_unit = {"claude": "usd", "codex": "tokens"}[harness]
 recs = [json.loads(ln) for ln in (mdir / "journal.jsonl").read_text(encoding="utf-8").splitlines() if ln.strip()]
 mine = [r for r in recs if r.get("task") == "F001#1"
@@ -121,27 +130,35 @@ log = subprocess.run(["git", "-C", repo, "log", "--oneline", "main..mission/demo
 
 # before judging the verdict: did the harness's own sandbox refuse to start? Then nothing about
 # the driver was established, and saying so is the only honest result (exit 2, not a failure).
+# `output.md` is deliberately NOT read: it is the agent's own last message, and grade.py's
+# quota_signature refuses that channel ("a test named after a rate limit is not a rate limit").
+# stderr and the harness's structured stdout are where the tool speaks for itself.
 run_dir = mdir / "runs" / "F001#1"
 blob = "\n".join((run_dir / n).read_text(encoding="utf-8", errors="replace")
-                 for n in ("stderr", "output.md") if (run_dir / n).exists())
-blocked = re.search(r"(bwrap:[^\n]*|landlock[^\n]*not permitted|seccomp[^\n]*not permitted|"
-                    r"sandbox[^\n]{0,40}(?:failed to start|startup failure))", blob, re.I)
+                 for n in ("stderr", "stdout") if (run_dir / n).exists())
+# kept tight on purpose: these are the tool's own error forms, not prose about them. The
+# character class stops at the quote or backtick that ends the message inside codex's JSON.
+blocked = re.search(r"(bwrap: [^\n\"`\\]{0,70}|landlock[^\n\"`]{0,40}not permitted|"
+                    r"seccomp[^\n\"`]{0,40}not permitted|"
+                    r"sandbox[^\n\"`]{0,40}(?:failed to start|startup failure))", blob, re.I)
 if blocked and not log:
     print("  --   %s could not run here: %s" % (harness, blocked.group(0).strip()[:120]))
     print("smoke: NOT ESTABLISHED -- the harness's sandbox refused to start; nothing was proved "
           "about the driver")
     sys.exit(2)
 
-check("outcome class %r means the worker did the work" % cls,
-      cls in ("done", "malformed_handoff", "tests_failed"))
+check("outcome class %r is one the driver defines" % cls, cls in CLASSES)
+check("outcome class %r means the worker did the work" % cls, cls not in NOTHING_HAPPENED)
 check("a commit landed on mission/demo (%s)" % (log.splitlines()[0] if log else "none"), bool(log))
 
 # the credential canary, read from the environment the child process itself had
-child = mdir / "runs" / "F001#1" / "child-env-names.txt"
+child = run_dir / "env.txt"
 names = child.read_text(encoding="utf-8").split() if child.exists() else None
 check("the child's own environment was captured (%s)" % child.name, names is not None)
 if names is not None:
-    leaked = [n for n in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "SMOKE_SECRET_TOKEN") if n in names]
+    # the names tests/traces/worker-env-stripped asserts on the stub, plus this script's canary
+    leaked = [n for n in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+                          "MY_SECRET", "FOO_TOKEN", "ANTHROPIC_API_KEY", "SMOKE_SECRET_TOKEN") if n in names]
     check("no credential in the child's %d environment names (%s)" % (
         len(names), ", ".join(leaked) or "none leaked"), not leaked)
     # GH_CONFIG_DIR must be PRESENT: the driver sets it to an empty config dir of its own, which
@@ -174,8 +191,8 @@ echo
 tmp_x=$(mktemp -d); smoke_one codex "$tmp_x" || rc_x=$?
 echo
 if [ "$rc_c" = 2 ] || [ "$rc_x" = 2 ]; then
-  { [ "$rc_c" = 2 ] && printf 'claude '; [ "$rc_x" = 2 ] && printf 'codex '; } | \
-    xargs -r echo "smoke: not comparing -- could not run on this host:"
+  echo "smoke: not comparing -- could not run on this host:$(
+    [ "$rc_c" = 2 ] && printf ' claude'; [ "$rc_x" = 2 ] && printf ' codex')"
   echo "smoke: the harness-agnostic claim is UNTESTED here, not disproved."
   exit 2
 fi
@@ -187,10 +204,10 @@ a, b = (json.loads(Path(p).read_text(encoding="utf-8")) if Path(p).exists() else
 if a is None or b is None:
     print("  FAIL one of the runs produced no summary; nothing to compare"); sys.exit(1)
 ok = True
-def same(field, why=""):
+def same(field):
     global ok
     hit = a[field] == b[field]
-    print("  %s %s: claude %r · codex %r%s" % ("ok  " if hit else "FAIL", field, a[field], b[field], why))
+    print("  %s %s: claude %r · codex %r" % ("ok  " if hit else "FAIL", field, a[field], b[field]))
     ok = ok and hit
 same("seq")          # the journal shape
 same("cls")          # the verdict

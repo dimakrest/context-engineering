@@ -48,7 +48,7 @@ PY
 }
 
 run_mutant() {
-  local case_dir="$1" name tmp category="" file="" breaks="" control="" line ok=1
+  local case_dir="$1" name tmp mod category="" file="" breaks="" control="" line ok=1
   name=$(basename "$case_dir")
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
@@ -65,9 +65,13 @@ run_mutant() {
   done
 
   tmp=$(mktemp -d)
-  cp -R "$plugin/." "$tmp/plugin/" 2>/dev/null || { cp -R "$plugin" "$tmp/plugin"; }
-  rm -rf "$tmp/plugin/tests/traces/.out" "$tmp/plugin/tests/mutants/.out"
-  find "$tmp/plugin" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null
+  # exclude rather than copy-then-delete: keep() leaves a whole plugin copy under .out on every
+  # failure, so copying it would grow with each red mutant
+  mkdir -p "$tmp/plugin"
+  if ! tar -C "$plugin" --exclude=./tests/traces/.out --exclude=./tests/mutants/.out \
+          --exclude=__pycache__ -cf - . | tar -C "$tmp/plugin" -xf -; then
+    echo "FAIL $name [$category]: could not copy the plugin"; rm -rf "$tmp"; return 1
+  fi
   if [ ! -f "$tmp/plugin/$file" ]; then
     echo "FAIL $name [$category]: $file does not exist"; rm -rf "$tmp"; return 1
   fi
@@ -76,12 +80,13 @@ run_mutant() {
     echo "      the driver moved under this mutant; re-anchor tests/mutants/$name/old.txt"
     rm -rf "$tmp"; return 1
   fi
-  # the driver must still be importable: a mutant is a behaviour change, not a syntax error
-  if ! (cd "$tmp/plugin/driver" && python3 -c "import missions.$(basename "${file%.py}")" ) >"$tmp/.import.log" 2>&1; then
-    if ! (cd "$tmp/plugin/driver" && python3 -c "import missions.loop, missions.steps, missions.prep, missions.grade, missions.watchdog") >"$tmp/.import.log" 2>&1; then
-      echo "FAIL $name [$category]: the mutated driver does not import:"
-      sed 's/^/      /' "$tmp/.import.log" | tail -5; keep "$name" "$tmp"; return 1
-    fi
+  # the mutated file must still be importable: a mutant is a behaviour change, not a syntax error.
+  # The dotted name comes from the path, so a mutant on an adapter (missions.adapters.codex) is
+  # checked too -- `import missions.loop` alone reaches 14 of the 15 modules but no concrete adapter.
+  mod="${file#driver/}"; mod="${mod%.py}"; mod="${mod//\//.}"
+  if ! (cd "$tmp/plugin/driver" && python3 -c "import $mod") >"$tmp/.import.log" 2>&1; then
+    echo "FAIL $name [$category]: the mutated driver does not import:"
+    sed 's/^/      /' "$tmp/.import.log" | tail -5; keep "$name" "$tmp"; return 1
   fi
 
   local -a why=()

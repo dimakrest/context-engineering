@@ -17,6 +17,20 @@ write_handoff() {  # $1 = sha, $2 = 1 to omit "## Left undone"
   } > "$MISSIONS_DIR/handoffs/$f.md"
 }
 
+# write_behavior encodes the behavior report SCHEMA -- keep it in step with
+# agents/mission-validator-behavior.md, in this one place. Same shape as write_review: $1 = a
+# verdict function, called with an assertion id, printing the row's Verdict and Evidence cells;
+# $2 = extra `## Defects` rows, one per line, when the run found any.
+write_behavior() {
+  local a
+  printf '## Assertion results\n| ID | Verdict | Evidence |\n|---|---|---|\n'
+  for a in $(prompt_assertions); do printf '| %s | %s |\n' "$a" "$("$1" "$a")"; done
+  printf '\n## Defects\n'
+  if [ -z "${2:-}" ]; then printf 'none\n'; else
+    printf '| Severity | file:line | What breaks, and the concrete input that breaks it |\n|---|---|---|\n%s\n' "$2"
+  fi
+}
+
 # The assertion ids the prompt lists, one per line (the `  A00n — text` rows prompts.py writes).
 prompt_assertions() { sed -n 's/^  \(A[0-9]\{3\}[a-z]\{0,1\}\) .*/\1/p' "$MISSIONS_PROMPT"; }
 

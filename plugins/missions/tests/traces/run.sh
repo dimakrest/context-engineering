@@ -55,7 +55,9 @@ run_case() {
   stubs="$tmp/stub"; mkdir -p "$stubs"; cp -R "$here/_base/stub/." "$stubs/"
   [ -d "$case_dir/stub" ] && cp -R "$case_dir/stub/." "$stubs/"
   if [ -f "$m/driver.json" ]; then
-    sed -i "s|@STUB@|$stubs|g" "$m/driver.json"
+    # not `sed -i`: the in-place suffix differs between GNU and BSD sed (tests/run.sh carries the
+    # same note); bash's own expansion is portable and needs no subprocess
+    local cfg; cfg=$(<"$m/driver.json"); printf '%s' "${cfg//@STUB@/$stubs}" > "$m/driver.json"
   elif ! drv "$tmp" bash "$plugin/bin/missions" init "$m" --harness stub --stub-dir "$stubs" >"$tmp/.init.log" 2>&1; then
     echo "FAIL $name: missions init failed:"; sed 's/^/      /' "$tmp/.init.log"; keep "$name" "$tmp"; return 1
   fi
@@ -141,4 +143,5 @@ done
 echo
 echo "passed $pass · failed $fail · $(( $(date +%s) - start ))s"
 for f in "${failed[@]:-}"; do [ -n "$f" ] && echo "  - $f"; done
-[ "$fail" = 0 ]
+# `pass` must be non-zero too: a glob that matches no case is a typo, not a green suite
+[ "$fail" = 0 ] && [ "$pass" -gt 0 ]

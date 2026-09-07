@@ -50,7 +50,9 @@ run_case() {
   done < "$case_dir/expect"
   args="${args//\$TMP/$tmp}"
   local stdin="$tmp/stdin.json"; [ -f "$stdin" ] || printf '{}' > "$stdin"
-  sed -i '' "s#\\\$TMP#$tmp#g" "$stdin" 2>/dev/null || true
+  # not `sed -i`: the in-place suffix differs between GNU and BSD sed, and the BSD spelling
+  # silently substitutes nothing on GNU -- fixtures that name $TMP would then never see it
+  python3 -c 'import io,sys; p=sys.argv[1]; t=io.open(p,encoding="utf-8").read(); io.open(p,"w",encoding="utf-8").write(t.replace("$TMP",sys.argv[2]))' "$stdin" "$tmp"
   for s in "${setups[@]:-}"; do [ -n "$s" ] && (cd "$tmp" && eval "$s") >/dev/null 2>&1; done
   local -a argv=(); eval "argv=($args)"
   out=$(cd "$tmp" && env -i HOME="$HOME" PATH="$PATH" TMPDIR="$tmp" CLAUDE_PROJECT_DIR="$tmp" CLAUDE_PLUGIN_ROOT="$plugin" "${envs[@]:-MISSIONS_TEST=1}" \

@@ -1,0 +1,3 @@
+                files.set_feature(mdir, feat.id, status="pending")
+                ctx.log("   re-dispatching %s with the rejection (%d of %d)" % (feat.id, n, repair_rounds + 1))
+                continue

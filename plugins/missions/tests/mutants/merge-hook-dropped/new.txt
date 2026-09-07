@@ -1,0 +1,1 @@
+REFUSED_HOOKS = {}  # MUTANT: merging and rebasing are allowed for every role

@@ -1,0 +1,6 @@
+# Approval scope: the push authority belongs to the driver in phase pr, not to a worker. The
+# pre-push hook still says no and lets the push through -- the refusal that only prints.
+category=approval
+file=driver/missions/prep.py
+breaks=worker-cannot-push
+control=two-feature-happy-path

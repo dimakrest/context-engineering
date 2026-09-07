@@ -265,6 +265,10 @@ behaves exactly as it did before.
 **Regression net:** `bash "${CLAUDE_PLUGIN_ROOT}/tests/run.sh"` runs every hook and script against
 crafted stdin and fixture missions, inertness cases first. It is the replacement for the 99-case
 suite that was dropped when the machinery moved to user level; add a case for every new block.
+`tests/traces/run.sh` drives the real driver over a temporary repo with a stub worker, and
+`tests/mutants.sh` breaks one driver rule at a time and asserts that the trace defending it fails
+— a suite that stays green under a mutant is not testing what it claims to. `tests/harness/run.sh
+claude|codex|both` is the paid live smoke; the suites never run it.
 
 ---
 
@@ -330,8 +334,8 @@ stays readable); git hooks scoped to that environment refuse a cooperating worke
 the branch or without the prefix, a merge, a rebase, a push), and `--no-verify` bypasses them;
 the post-exit grade is the gate that does not depend on the worker. A reviewer runs with the
 handoffs and the other validators' files out of reach; one executor at a time per host. What
-remains: the terminal steps and the push (the `pr` phase, #10), `resume` / `status` and
-the mutation tests (#6), sleep-and-resume on a provider quota (#7). See the README's "Developing"
+remains: the terminal steps and the push (the `pr` phase, #10), `status` (#19), the mutation
+tests (#6), and `resume` with sleep-and-resume on a provider quota (#7). See the README's "Developing"
 section for the commands, the trace tests and the paid harness smoke.
 
 ---

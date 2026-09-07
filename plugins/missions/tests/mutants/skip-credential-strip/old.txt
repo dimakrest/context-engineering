@@ -1,0 +1,4 @@
+        if k in NEVER_EXACT or k.startswith(NEVER_PREFIXES):
+            continue
+        if k in allowed or k.startswith(KEEP_PREFIXES) or _passthrough(k, passthrough):
+            env[k] = v

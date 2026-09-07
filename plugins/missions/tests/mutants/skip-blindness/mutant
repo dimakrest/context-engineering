@@ -1,0 +1,7 @@
+# Enforcement: a reviewer is blind by having nothing to look at -- the handoffs and the other
+# runs move out of reach for the process lifetime. Leaving them in place is a review of the
+# worker's own account of itself.
+category=enforcement
+file=driver/missions/prep.py
+breaks=reviewer-cannot-see-handoffs
+control=two-feature-happy-path

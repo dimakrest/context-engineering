@@ -1,0 +1,1 @@
+    return "reviews"  # MUTANT: the reviewer's word settles every class, tagged or not

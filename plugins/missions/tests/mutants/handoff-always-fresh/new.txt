@@ -1,0 +1,1 @@
+    g.handoff_written = h.exists  # MUTANT: an earlier attempt's handoff counts as this attempt's

@@ -1,0 +1,6 @@
+# Evidence freshness: a handoff counts only when its content changed since this attempt launched.
+# Dropping the launch fingerprint lets an earlier attempt's file be graded as this one's evidence.
+category=freshness
+file=driver/missions/grade.py
+breaks=stale-handoff-not-reattributed
+control=two-feature-happy-path

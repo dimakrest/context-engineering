@@ -1,0 +1,6 @@
+# Identity: every attempt at a feature is its own task (F0nn#k). Collapsing the attempt number
+# makes two runs indistinguishable in the journal, in runs/ and to the grade.
+category=identity
+file=driver/missions/steps.py
+breaks=worker-crash-twice-stops-error
+control=two-feature-happy-path

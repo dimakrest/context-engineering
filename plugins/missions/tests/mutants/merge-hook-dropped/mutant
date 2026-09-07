@@ -1,0 +1,6 @@
+# Approval scope: no role merges or rebases on the mission branch -- the grade cannot measure a
+# range across a merge commit. Dropping the refusing hooks widens the authority of every run.
+category=approval
+file=driver/missions/prep.py
+breaks=worker-merge-refused
+control=two-feature-happy-path

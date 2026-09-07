@@ -1,0 +1,6 @@
+# Enforcement: the child's environment is a whitelist, so the operator's tokens never reach a
+# run. Inheriting the driver's environment whole is the failure this ticket's canary watches for.
+category=enforcement
+file=driver/missions/prep.py
+breaks=worker-env-stripped
+control=two-feature-happy-path

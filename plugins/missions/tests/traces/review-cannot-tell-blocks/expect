@@ -1,0 +1,22 @@
+# A reviewer that will not commit either way: F001's review says A002 `cannot tell`, F002's says
+# `satisfied`. A `cannot tell` among a round's verdicts settles nothing -- A002 is not proven (not
+# every verdict is positive) and not re-opened (nothing negative, and it was never proven), so it
+# stays claimed with no evidence and the round halts naming the word that blocked it. A001, which
+# the same review settled, is proven. (#6: no trace reached a `cannot tell` round)
+rc=5
+journal~="event":"verdict".*"validator":"mission-reviewer".*"feature":"F001".*"A002":"cannot tell".*"file":"validation/M1-review-F001.md"
+journal~="event":"verdict".*"validator":"mission-reviewer".*"feature":"F002".*"A002":"satisfied"
+journal~="event":"judgment".*"step":"negotiate".*"task":"negotiate-M1#1".*no findings
+journal~="event":"decision".*"step":"proven".*"milestone":"M1".*"round":1.*"assertions":\["A001"\]
+journal~="event":"validate_done".*"milestone":"M1".*"round":1.*"result":"halted"
+journal~="event":"halt".*"class":"block".*M1: A002 cannot tell and no repair proposed
+journal~="event":"stop".*"reason":"gate-blocked".*M1: A002 cannot tell and no repair proposed.*"exit":5
+journal!~="event":"decision".*"step":"reopened"
+journal!~="event":"milestone_closed"
+journal!~="step":"proven".*"assertions":\[[^]]*"A002"
+state~=^phase: halted
+state~=^milestone: M1
+postcheck=grep -qE '^\| A001 \| .* \| structural \| F001 \| proven \| validation/M1-review-F001.md \|' "$M/contract.md"
+postcheck=grep -qE '^\| A002 \| .* \| structural \| F001, F002 \| claimed \| — \|' "$M/contract.md"
+postcheck=grep -q '^  A002 \[structural\] — reviewer F001: cannot tell (validation/M1-review-F001.md); reviewer F002: satisfied (validation/M1-review-F002.md) — contract: claimed$' "$M/runs/negotiate-M1#1/prompt.md"
+postcheck=bash "$plugin/scripts/check.sh" "$M" >/dev/null

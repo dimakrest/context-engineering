@@ -1,0 +1,2 @@
+    def start(self) -> None:
+        return  # MUTANT: the watchdog never observes; a commit with no handoff runs to the deadline

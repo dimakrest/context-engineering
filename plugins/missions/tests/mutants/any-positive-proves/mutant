@@ -1,0 +1,6 @@
+# Evidence: an assertion is proven only when EVERY verdict of the round is positive. One
+# `satisfied` beside a `cannot tell` is not proof -- the round did not settle it.
+category=evidence
+file=driver/missions/validate.py
+breaks=review-cannot-tell-blocks
+control=two-feature-happy-path

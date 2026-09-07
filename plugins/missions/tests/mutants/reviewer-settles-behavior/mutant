@@ -1,0 +1,7 @@
+# Evidence: only the validator that can prove an assertion's class settles it -- a reviewer's
+# `satisfied` on an `interface` assertion proves nothing, because a diff cannot show a chip on a
+# dashboard. Routing every class to the reviews bucket is that rule deleted.
+category=evidence
+file=driver/missions/validate.py
+breaks=behavior-failed-blocks-close
+control=two-feature-happy-path

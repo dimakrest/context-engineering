@@ -53,8 +53,13 @@ def write_text(path: Path, text: str) -> None:
 # ---------------------------------------------------------------- git
 
 def git(checkout: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(checkout), *args], text=True, capture_output=True,
-                          check=check, encoding="utf-8", errors="replace")
+    """The driver's git call, and every one of them runs with `core.quotePath=false`: git
+    otherwise prints a path holding a non-ASCII byte quoted and octal-escaped
+    (`"analytics/caf\\303\\251.py"`), and the readers here -- dirty_paths, grade.paths_outside, the
+    range readers -- compare git's paths against the ones features.md and the handoff spell
+    verbatim. A `-c` option is git's own, so it sits before whatever subcommand the caller names."""
+    return subprocess.run(["git", "-C", str(checkout), "-c", "core.quotePath=false", *args], text=True,
+                          capture_output=True, check=check, encoding="utf-8", errors="replace")
 
 
 def git_out(checkout: Path, *args: str) -> str:
@@ -293,6 +298,7 @@ class Feature:
     depends: List[str] = field(default_factory=list)
     out_of_scope: str = ""
     repairs: List[str] = field(default_factory=list)   # origin feature ids on a `- **Repairs:**` line
+    cluster: str = ""                                   # the `C01` the same line names
     status: str = "pending"
     commit: Optional[str] = None
     range: Optional[str] = None
@@ -330,11 +336,28 @@ def section(text: str, title: str, keep_heading: bool = False, level: str = r"#{
     return "\n".join(out)
 
 
+# check.sh rule 1c's idea of a path on a Files line without backticks: a token that holds a `/`
+# or ends in one of these
+_FILE_SUFFIXES = (".py", ".ts", ".tsx", ".md", ".sh", ".json")
+
+
 def _split_files(value: str) -> List[str]:
+    """The paths of a `- **Files:**` line. Backticked entries are read verbatim, spaces and all:
+    the template's shape, and what append_feature writes. A line without backticks is split the
+    way check.sh rule 1c splits it -- on commas and whitespace, keeping a token that holds a `/`
+    or ends in a source suffix -- so `alerting/service.py (new), alerting/repository.py` is two
+    paths and `(new)` is nothing. The feature/file gate counts those tokens; the grade's
+    paths-outside check must measure against the same ones, or a path check.sh accepted is
+    reported as outside the feature's Files."""
     quoted = re.findall(r"`([^`]+)`", value)
     if quoted:
         return [q.strip() for q in quoted if q.strip()]
-    return [p.strip() for p in value.split(",") if p.strip() and p.strip() not in ("—", "-")]
+    out: List[str] = []
+    for tok in re.split(r"[,\s]+", value):
+        tok = tok.strip("` ")
+        if tok and ("/" in tok or tok.endswith(_FILE_SUFFIXES)):
+            out.append(tok)
+    return out
 
 
 def read_features(mission_dir: Path) -> List[Feature]:
@@ -377,6 +400,8 @@ def read_features(mission_dir: Path) -> List[Feature]:
         elif key == "repairs":
             # `C01 (FU001, FU002) of F001, F002` -- `F\d{3}` never matches inside `FU001`
             cur.repairs = re.findall(r"F\d{3}", val)
+            m2 = re.search(r"\bC\d{2}\b", val)
+            cur.cluster = m2.group(0) if m2 else ""
         elif key == "status":
             first = val.split()[0].lower() if val.split() else "pending"
             cur.status = re.sub(r"[^a-z]", "", first) or "pending"
@@ -465,8 +490,11 @@ def append_feature(mission_dir: Path, milestone: str, title: str, assertions: Li
                    file_list: List[str], procedures: str, out_of_scope: str, repairs_line: str) -> str:
     """Add `### F0nn — <title>` at the end of the milestone's section, in the template's shape,
     with the `- **Repairs:**` line that marks a repair feature (check.sh's feature/file gate skips
-    those: a repair re-touches files its origin feature already lists). The id is
-    `next_feature_id`'s. Returns the new id."""
+    those: a repair re-touches files its origin feature already lists). A feature with no
+    assertion gets no `- **Assertions:**` line at all: check.sh rule 3 splits that line on commas
+    and would read a `\u2014` placeholder as a claimed id that is not in the contract; read_features
+    gives such a feature `[]` and the worker prompt says the contract names nothing for it. The
+    id is `next_feature_id`'s. Returns the new id."""
     path = mission_dir / "features.md"
     text = read_text(path)
     fid = "F%03d" % (_max_id(text, _FEATURE_RE, "F") + 1)
@@ -482,7 +510,10 @@ def append_feature(mission_dir: Path, milestone: str, title: str, assertions: Li
     block = [
         "",
         "### %s %s %s" % (fid, dash, title.strip() or fid),
-        "- **Assertions:** %s" % (", ".join(assertions) or dash),
+    ]
+    if assertions:
+        block.append("- **Assertions:** %s" % ", ".join(assertions))
+    block += [
         "- **Files:** %s" % (", ".join("`%s`" % f for f in file_list) or dash),
         "- **Procedures:** %s" % (procedures.strip() or dash),
         "- **Depends on:** " + dash,
@@ -493,6 +524,34 @@ def append_feature(mission_dir: Path, milestone: str, title: str, assertions: Li
     lines[end:end] = block
     write_text(path, "\n".join(lines))
     return fid
+
+
+_REPAIRS_FUS_RE = re.compile(r"^(-\s+\*\*Repairs:\*\*\s*C\d{2,3}\s*)\(([^)]*)\)(.*)$")
+
+
+def extend_repairs_line(mission_dir: Path, fid: str, fu_ids: List[str]) -> bool:
+    """Add follow-up ids to the parenthesis of the feature's `- **Repairs:** C01 (FU001) of F001`
+    line: a second finding of a cluster whose repair feature is still pending joins that
+    feature (one cluster, one repair feature), and the line is where the feature names what it
+    repairs. Ids already there are kept in place; a `\u2014` placeholder is replaced. False when the
+    feature has no such line, or nothing was new."""
+    path = mission_dir / "features.md"
+    lines = read_text(path).split("\n")
+    feat = next((f for f in read_features(mission_dir) if f.id == fid), None)
+    if feat is None:
+        return False
+    for i in range(feat.start + 1, feat.end):
+        m = _REPAIRS_FUS_RE.match(lines[i])
+        if not m:
+            continue
+        have = re.findall(r"FU\d{3}", m.group(2))
+        new = [x for x in fu_ids if x not in have]
+        if not new:
+            return False
+        lines[i] = "%s(%s)%s" % (m.group(1), ", ".join(have + new), m.group(3))
+        write_text(path, "\n".join(lines))
+        return True
+    return False
 
 
 # ---------------------------------------------------------------- contract.md
@@ -556,6 +615,11 @@ def _cell(cells: List[str], cols: Dict[str, int], key: str) -> str:
 
 
 def read_contract(mission_dir: Path) -> List[Assertion]:
+    """Every `| A0nn |` row below the header, wherever it sits: check.sh and mission-converge.sh
+    read the whole file, so a note between two rows or a second table further down ends nothing
+    here either -- an assertion they count and the driver does not is one the driver never
+    proves. A row's id must be a bare `A0nn`; a retired `~~A005~~` and a second table's own
+    header are skipped, as check.sh skips them."""
     lines = read_text(mission_dir / "contract.md").split("\n")
     header, cols = _contract_columns(lines)
     if header is None:
@@ -564,8 +628,6 @@ def read_contract(mission_dir: Path) -> List[Assertion]:
     for i in range(header + 1, len(lines)):
         ln = lines[i]
         if not ln.lstrip().startswith("|"):
-            if rows:
-                break
             continue
         cells = table_cells(ln)
         aid = _cell(cells, cols, "id")
@@ -612,7 +674,8 @@ def prove_assertions(mission_dir: Path, evidence: Dict[str, str]) -> List[str]:
     """`unproven`/`claimed` -> `proven`, the Evidence cell set to the validation file that showed
     it. Written only from a validator verdict (design §6.1): the caller is the VALIDATE step,
     never a worker's handoff. A row already `proven` is left as it is, evidence included -- a
-    later round never re-attributes earlier proof, and nothing here moves a status down.
+    later round never re-attributes earlier proof, and nothing here moves a status down:
+    reopen_assertions is the one thing that does, from a validator's negative verdict.
     Returns what changed."""
     path = mission_dir / "contract.md"
     lines = read_text(path).split("\n")
@@ -622,6 +685,27 @@ def prove_assertions(mission_dir: Path, evidence: Dict[str, str]) -> List[str]:
         if row.id not in evidence or row.status == "proven":
             continue
         if _set_cell(lines, cols, row, "status", "proven"):
+            _set_cell(lines, cols, row, "evidence", evidence[row.id])
+            changed.append(row.id)
+    if changed:
+        write_text(path, "\n".join(lines))
+    return changed
+
+
+def reopen_assertions(mission_dir: Path, evidence: Dict[str, str]) -> List[str]:
+    """`proven` -> `claimed`, the Evidence cell set to the validation file whose verdict refuted
+    it. The one writer that moves a status down, and it too is written only from a validator
+    verdict: a negative one, in a later round or a later milestone, on a row an earlier round
+    proved -- the next round's repair proves it again, or the run halts on it. A row that is
+    not `proven` is left alone (its claim was never proof). Returns what changed."""
+    path = mission_dir / "contract.md"
+    lines = read_text(path).split("\n")
+    _, cols = _contract_columns(lines)
+    changed: List[str] = []
+    for row in read_contract(mission_dir):
+        if row.id not in evidence or row.status != "proven":
+            continue
+        if _set_cell(lines, cols, row, "status", "claimed"):
             _set_cell(lines, cols, row, "evidence", evidence[row.id])
             changed.append(row.id)
     if changed:

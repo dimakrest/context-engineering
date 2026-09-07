@@ -1,0 +1,20 @@
+{"ts":"2026-09-01T00:00:00Z","event":"validate_start","milestone":"M1","round":1,"features":["F001","F002"],"assertions":["A001","A002"],"via":"driver"}
+{"ts":"2026-09-01T00:00:01Z","event":"dispatch","agent":"mission-validator-scrutiny","class":"executor","milestone":"M1","dispatch_id":"scrutiny-M1#1","session_id":"driver:old","task":"scrutiny-M1#1","harness":"stub","step":"scrutiny","via":"driver"}
+{"ts":"2026-09-01T00:00:04Z","event":"agent_return","agent":"mission-validator-scrutiny","dispatch_id":"scrutiny-M1#1","duration_s":3,"status":"completed","rc":0,"task":"scrutiny-M1#1","via":"driver"}
+{"ts":"2026-09-01T00:00:04Z","event":"verdict","validator":"mission-validator-scrutiny","milestone":"M1","round":1,"file":"validation/M1-scrutiny.md","commands":1,"failed":[],"via":"driver"}
+{"ts":"2026-09-01T00:00:04Z","event":"validate_step","milestone":"M1","round":1,"step":"scrutiny","task":"scrutiny-M1#1","file":"validation/M1-scrutiny.md","via":"driver"}
+{"ts":"2026-09-01T00:00:05Z","event":"dispatch","agent":"mission-reviewer","class":"executor","feature":"F001","milestone":"M1","dispatch_id":"review-F001#1","session_id":"driver:old","task":"review-F001#1","harness":"stub","step":"reviewer","via":"driver"}
+{"ts":"2026-09-01T00:00:10Z","event":"agent_return","agent":"mission-reviewer","feature":"F001","dispatch_id":"review-F001#1","duration_s":5,"status":"completed","rc":0,"task":"review-F001#1","via":"driver"}
+{"ts":"2026-09-01T00:00:10Z","event":"verdict","validator":"mission-reviewer","feature":"F001","milestone":"M1","round":1,"assertions":{"A001":"satisfied","A002":"not satisfied"},"file":"validation/M1-review-F001.md","via":"driver"}
+{"ts":"2026-09-01T00:00:10Z","event":"validate_step","milestone":"M1","round":1,"step":"reviewer","feature":"F001","task":"review-F001#1","file":"validation/M1-review-F001.md","via":"driver"}
+{"ts":"2026-09-01T00:00:11Z","event":"dispatch","agent":"mission-reviewer","class":"executor","feature":"F002","milestone":"M1","dispatch_id":"review-F002#1","session_id":"driver:old","task":"review-F002#1","harness":"stub","step":"reviewer","via":"driver"}
+{"ts":"2026-09-01T00:00:20Z","event":"agent_return","agent":"mission-reviewer","feature":"F002","dispatch_id":"review-F002#1","duration_s":9,"status":"completed","rc":0,"task":"review-F002#1","via":"driver"}
+{"ts":"2026-09-01T00:00:20Z","event":"verdict","validator":"mission-reviewer","feature":"F002","milestone":"M1","round":1,"assertions":{"A002":"satisfied"},"file":"validation/M1-review-F002.md","via":"driver"}
+{"ts":"2026-09-01T00:00:20Z","event":"validate_step","milestone":"M1","round":1,"step":"reviewer","feature":"F002","task":"review-F002#1","file":"validation/M1-review-F002.md","via":"driver"}
+{"ts":"2026-09-01T00:00:21Z","event":"dispatch","agent":"mission-judgment","class":"static","milestone":"M1","dispatch_id":"negotiate-M1#1","session_id":"driver:old","task":"negotiate-M1#1","harness":"stub","step":"negotiate","via":"driver"}
+{"ts":"2026-09-01T00:00:25Z","event":"agent_return","agent":"mission-judgment","dispatch_id":"negotiate-M1#1","duration_s":4,"status":"completed","rc":0,"task":"negotiate-M1#1","via":"driver"}
+{"ts":"2026-09-01T00:00:25Z","event":"step_done","step":"negotiate-M1#1","role":"judgment","cls":"ok","elapsed_s":4.0,"rc":0,"task":"negotiate-M1#1","milestone":"M1","via":"driver"}
+{"ts":"2026-09-01T00:00:25Z","event":"followups_added","ids":["FU001"],"milestone":"M1","via":"driver"}
+{"ts":"2026-09-01T00:00:25Z","event":"features_added","ids":["F004"],"milestone":"M1","round":1,"via":"driver"}
+{"ts":"2026-09-01T00:00:25Z","event":"judgment","step":"negotiate","task":"negotiate-M1#1","milestone":"M1","round":1,"summary":"1 finding(s): 1 repair, 0 accept, 0 waive (FU001), repair feature(s) F004","via":"driver"}
+{"ts":"2026-09-01T00:00:26Z","event":"stop","reason":"interrupted","detail":"interrupted","exit":130,"run_id":"old","via":"driver"}

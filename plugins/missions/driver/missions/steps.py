@@ -15,9 +15,14 @@ validator's message says is the caller's to parse (verdicts.py).
 run_judgment: a judgment run whose reply must be one JSON object the step's schema accepts --
 re-run once with the error appended, then stop("error"). The model proposes, the driver applies.
 step_triage / apply_triage / register: the open issues a handoff raised, dispositioned by a
-judgment run and applied here to state.md, followups.md, features.md and contract.md.
+judgment run and applied here to state.md, followups.md, features.md and contract.md. register
+keeps the registry's one-cluster-one-repair rule for negotiate and triage alike: a cluster whose
+repair feature is still pending takes the new follow-ups into it, one whose repair is already
+done gets a fresh cluster id, so check.sh never sees a cluster split across features.
 stop: the typed stops (design §6.4). They live here, next to Context, because every step that
 can end the run needs one and the loop imports the steps.
+check_caps: mission.md's caps, asked before every dispatch -- the loop's workers and VALIDATE's
+validators alike, so a round that runs out stops between two validators and resumes there.
 """
 from __future__ import annotations
 
@@ -113,6 +118,34 @@ def stop(ctx: Context, reason: str, detail: str = "", needs: str = "", halt: boo
     return code
 
 
+def check_caps(ctx: Context, budget: Dict) -> Optional[int]:
+    """mission.md's caps (files.read_budget): the exit code of stop("budget") when one is reached,
+    else None. Asked before every dispatch that costs something -- the loop's, and VALIDATE's
+    between validators -- so a cap reached inside a round stops the round where it stands; the
+    round stays open in the journal and the next driver resumes it after the cap is raised."""
+    mdir = ctx.mission_dir
+    cap = budget.get("dollar_cap")
+    if cap:
+        spend = journal.spend_usd(mdir) or 0.0
+        reserve = budget.get("terminal_reserve_pct") or 0.0
+        if spend + cap * reserve / 100.0 >= cap:
+            return stop(ctx, "budget", detail="dollar cap $%g reached: spent $%.2f, terminal reserve %g%%" % (cap, spend, reserve),
+                        needs="a cap raise in mission.md, journaled as cap_raised with the reason -- or stop here")
+    dcap = budget.get("dispatch_cap")
+    if dcap:
+        n = journal.dispatches(mdir)
+        if n >= dcap:
+            return stop(ctx, "budget", detail="dispatch cap reached: %d of %g" % (n, dcap),
+                        needs="re-plan the remaining milestones or raise the cap in mission.md (cap_raised)")
+    wcap = budget.get("wall_cap_h")
+    if wcap:
+        used = journal.wall_hours(mdir)
+        if used > wcap:
+            return stop(ctx, "budget", detail="active wall-clock cap reached: %.1f h of %g h" % (used, wcap),
+                        needs="re-plan or raise the cap in mission.md (cap_raised)")
+    return None
+
+
 # ---------------------------------------------------------------- requests
 
 def role_cfg(cfg: Dict, role: str) -> Dict:
@@ -178,11 +211,14 @@ def plugin_script(ctx: Context, name: str, *args: str) -> subprocess.CompletedPr
                           capture_output=True, text=True, env=env, encoding="utf-8", errors="replace")
 
 
-def materialise_patch(ctx: Context, fid: str, base: str, head: str, paths: List[str]) -> Optional[str]:
-    """`mission-patch.sh` for the blind reviewer's packet: the path it wrote, or None with a `note`
-    journaled. The reviewer then gets no diff and answers `cannot tell` -- never a git command of
-    its own, which would show it the whole branch and the author's commit bodies."""
-    res = plugin_script(ctx, "mission-patch.sh", str(ctx.mission_dir), fid, base, head, "--", *paths)
+def materialise_patch(ctx: Context, fid: str, base: str, head: str) -> Optional[str]:
+    """`mission-patch.sh` over the feature's whole range for the blind reviewer's packet: the path
+    it wrote, or None with a `note` journaled. The range is the feature's own commits (base = the
+    previous feature's head), so the patch shows everything the run changed -- the paths outside
+    its Files line that the handoff declared included -- not a slice of it. A reviewer without a
+    patch answers `cannot tell`; it never runs a git command of its own, which would show it the
+    whole branch and the author's commit bodies."""
+    res = plugin_script(ctx, "mission-patch.sh", str(ctx.mission_dir), fid, base, head)
     if res.returncode == 0:
         out = res.stdout.strip()
         return out.splitlines()[-1] if out else str(ctx.mission_dir / "patches" / (fid + ".patch"))
@@ -455,25 +491,64 @@ def repair_cap_problem(mission_dir: Path, assertions: List[str], cap: int) -> Op
     return None
 
 
-def register(ctx: Context, milestone: str, followups: List[Dict], repairs: List[Dict]) -> Union[str, Tuple[List[str], List[str]]]:
+def milestone_repair_rounds(mission_dir: Path, milestone: str) -> int:
+    """How many validation rounds of the milestone ended by scheduling repairs (`validate_done`
+    with result `repairs`). A round a human halt ended is not a repair round and never counts."""
+    return journal.count(mission_dir, "validate_done",
+                         lambda r: r.get("milestone") == milestone and r.get("result") == "repairs")
+
+
+def milestone_cap_problem(mission_dir: Path, milestone: str, cap: int) -> Optional[str]:
+    """The milestone-level half of the repair-round cap: a milestone gets at most `cap` repair
+    rounds per contract assertion routed to one of its features (one round can repair only so
+    many). A milestone past that ceiling gets no further repair, whatever the per-assertion
+    counts say -- the diagnosis is wrong, not the code. The text of the block, or None."""
+    rounds = milestone_repair_rounds(mission_dir, milestone)
+    ids = {f.id for f in files.read_features(mission_dir) if f.milestone == milestone}
+    n = max(1, sum(1 for a in files.read_contract(mission_dir) if any(f in ids for f in a.features)))
+    if rounds >= cap * n:
+        return ("%s has had %d repair round(s), the ceiling for %d assertion(s) at %d per assertion -- the "
+                "diagnosis is wrong, not the code" % (milestone, rounds, n, cap))
+    return None
+
+
+def register(ctx: Context, milestone: str, followups: List[Dict], repairs: List[Dict],
+             round_no: Optional[int] = None) -> Union[str, Tuple[List[str], List[str]]]:
     """Apply what a judgment step proposed to the registry: `followups` in files.append_followups'
     shape (source set, disposition repair | accept | waive, the cluster), `repairs` as {cluster,
     title, assertions, files, procedures, out_of_scope, origins: [F0nn]}. One cluster, one repair
     feature: every follow-up of a repaired cluster is dispositioned `repair as` that feature, and
     the feature's Repairs line names them -- so the ids are computed before anything is written.
     Each assertion a repair claims is routed to it in contract.md (check.sh's coverage rules). The
-    repair-round cap is checked first: over it, nothing is written and the problem text comes
-    back -- the caller closes its own books (a validation round, an open-issue list) and then
-    halts on it. Returns (follow-up ids, feature ids), or that text."""
+    repair-round caps are checked first -- per assertion, then per milestone: over either, nothing
+    is written and the problem text comes back -- the caller closes its own books (a validation
+    round, an open-issue list) and then halts on it. Then the clusters are normalised against the
+    registry (_normalise_clusters): a cluster that already has a repair feature still pending or
+    active takes this reply's follow-ups into that feature instead of a second one; a cluster
+    whose repair feature is done (or blocked, or gone) is a new root cause with the old label,
+    and is renamed to the next free C0n before anything is written. `round_no` is the validation
+    round that proposed the repairs (None from triage): `features_added` carries it, so a resumed
+    round can tell which repair features are its own. Returns (follow-up ids, feature ids aligned
+    to `repairs`, a reused id included), or that text; `features_added` names the ids this call
+    created under `ids` and the pending features it joined under `reused`, and the repair dicts
+    come back with their clusters renamed and a reused feature's assertions merged in, so a
+    caller's withheld set covers the whole feature."""
     mdir = ctx.mission_dir
     cap = files.repair_rounds(mdir)
     for r in repairs:
         over = repair_cap_problem(mdir, list(r.get("assertions") or []), cap)
         if over:
             return over
+    if repairs:
+        over = milestone_cap_problem(mdir, milestone, cap)
+        if over:
+            return over
+    reused = _normalise_clusters(ctx, milestone, followups, repairs, round_no)
     first_fu = int(files.next_followup_id(mdir)[2:])
     first_f = int(files.next_feature_id(mdir)[1:])
-    feature_of = {r["cluster"]: "F%03d" % (first_f + i) for i, r in enumerate(repairs)}
+    fresh = [r for r in repairs if r["cluster"] not in reused]
+    feature_of = dict(reused)
+    feature_of.update({r["cluster"]: "F%03d" % (first_f + i) for i, r in enumerate(fresh)})
     for fu in followups:
         if fu.get("disposition") == "repair":
             fu["repair_as"] = feature_of[fu["cluster"]]   # the validators paired every repair finding with a repair
@@ -481,8 +556,14 @@ def register(ctx: Context, milestone: str, followups: List[Dict], repairs: List[
     if fu_ids and fu_ids[0] != "FU%03d" % first_fu:
         raise files.MissionFileError("followups.md changed under the driver: expected FU%03d, wrote %s" % (first_fu, fu_ids[0]))
     fids: List[str] = []
+    created: List[str] = []
     for r in repairs:
         mine = [fid for fid, fu in zip(fu_ids, followups) if fu.get("cluster") == r["cluster"] and fu.get("disposition") == "repair"]
+        if r["cluster"] in reused:
+            fid = reused[r["cluster"]]
+            files.extend_repairs_line(mdir, fid, mine)     # the feature names what it repairs, the joiners too
+            fids.append(fid)
+            continue
         line = "%s (%s) of %s" % (r["cluster"], ", ".join(mine) or "—", ", ".join(r.get("origins") or []) or "—")
         fid = files.append_feature(mdir, milestone, r["title"], list(r["assertions"]), list(r["files"]),
                                    r.get("procedures") or "", r.get("out_of_scope") or "", line)
@@ -491,11 +572,67 @@ def register(ctx: Context, milestone: str, followups: List[Dict], repairs: List[
         for aid in r["assertions"]:
             files.route_assertion(mdir, aid, fid)
         fids.append(fid)
+        created.append(fid)
     if fu_ids:
         journal.append(mdir, "followups_added", ids=fu_ids, milestone=milestone)
-    if fids:
-        journal.append(mdir, "features_added", ids=fids, milestone=milestone)
+    joined = sorted(set(reused.values()))
+    if created or joined:
+        # `ids` is what this call created; `reused` the pending repair features the reply's
+        # follow-ups joined -- a resumed round reads both back (validate.applied_repairs)
+        journal.append(mdir, "features_added", ids=created, reused=joined or None, milestone=milestone, round=round_no)
     return fu_ids, fids
+
+
+def _cluster_no(cluster: str) -> int:
+    m = re.match(r"^C(\d+)$", (cluster or "").strip())
+    return int(m.group(1)) if m else 0
+
+
+def _normalise_clusters(ctx: Context, milestone: str, followups: List[Dict], repairs: List[Dict],
+                        round_no: Optional[int]) -> Dict[str, str]:
+    """The registry's one-cluster-one-repair rule (check.sh rule 8), applied to a reply before
+    register writes anything. The validators label a cluster by its root cause and the model
+    re-uses the label it read in followups.md, so a repair proposed for a cluster that already
+    has a repair feature means one of two things. The feature is still pending or active: the
+    new finding belongs to the work not yet done -- the reply's repair-dispositioned follow-ups
+    of the cluster join that feature, the repair dict takes the feature's assertions too, and the
+    feature's id is what register hands back for the cluster (REUSE). The feature is done,
+    blocked, or no longer in features.md: the old label names a repair that already ran, so this
+    is a new root cause that happens to share it -- the cluster is renamed, in the reply's
+    findings and repair alike, to the next free `C%02d` over followups.md and the reply (FRESH),
+    and registration goes on as for any new cluster. Either way a `note` says what happened.
+    Mutates `followups` and `repairs` in place; returns {cluster: reused feature id}."""
+    mdir = ctx.mission_dir
+    fus = files.read_followups(mdir)
+    feats = {f.id: f for f in files.read_features(mdir)}
+    used = max([_cluster_no(fu.cluster) for fu in fus]
+               + [_cluster_no(x.get("cluster")) for x in followups + repairs] or [0])
+    reused: Dict[str, str] = {}
+    for r in repairs:
+        c = r["cluster"]
+        have = sorted({fu.repair_as for fu in fus if fu.cluster == c and fu.repair_as})
+        if not have:
+            continue
+        e = have[-1]                       # the latest repair feature of the cluster: ids never reuse
+        feat = feats.get(e)
+        if feat is not None and feat.status in ("pending", "active"):
+            reused[c] = e
+            r["assertions"] = list(r["assertions"]) + [a for a in feat.assertions if a not in r["assertions"]]
+            journal.append(mdir, "note", milestone=milestone, round=round_no, feature=e, cluster=c,
+                           text="cluster %s already has repair feature %s (%s): the new follow-up(s) join it" % (c, e, feat.status))
+            ctx.log("   register: cluster %s joins %s (%s)" % (c, e, feat.status))
+            continue
+        used += 1
+        new = "C%02d" % used
+        for fu in followups:
+            if fu.get("cluster") == c:
+                fu["cluster"] = new
+        r["cluster"] = new
+        state = feat.status if feat is not None else "not in features.md"
+        journal.append(mdir, "note", milestone=milestone, round=round_no, feature=e, cluster=new,
+                       text="cluster %s was repaired by %s (%s); this round's repair is registered as %s" % (c, e, state, new))
+        ctx.log("   register: cluster %s was repaired by %s (%s) -- registered as %s" % (c, e, state, new))
+    return reused
 
 
 # ---------------------------------------------------------------- triage
@@ -623,8 +760,10 @@ def step_triage(ctx: Context, state: files.State) -> Optional[int]:
                                    files.read_text(followups_path) if followups_path.exists() else "",
                                    prompts.skill_section(ctx.plugin, "Halts"))
     ctx.log("triage: %d open issue(s) before the next feature" % len(issues))
+    known = {a.id for a in files.read_contract(mdir)}
     r = run_judgment(ctx, "triage", "triage", prompt,
-                     lambda obj: judgment.validate_triage(obj) + _index_problems(obj, len(issues)),
+                     lambda obj: judgment.validate_triage(obj) + _index_problems(obj, len(issues))
+                     + judgment.unknown_assertion_problems(obj, known),
                      milestone=state.milestone)
     if isinstance(r, int):
         return r
@@ -663,7 +802,7 @@ def ingest(ctx: Context, feature: files.Feature, grade: Grade) -> Dict:
     head = grade.sha or ""
     base_sha, how = _base_for(ctx, head)
     rng = "%s..%s" % (base_sha, head)
-    patch = materialise_patch(ctx, fid, base_sha, head, feature.files)
+    patch = materialise_patch(ctx, fid, base_sha, head)
 
     files.set_feature(mdir, fid, status="done", commit=head, rng=rng)
     # what the handoff claims, within the feature's assertions -- never the feature's list wholesale

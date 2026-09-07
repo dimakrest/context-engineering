@@ -130,8 +130,9 @@ Then:
   (`<base>..<head>`: head is the handoff's commit; base is the previous feature's head, or the
   merge-base with `origin/main` for the first). The hooks already journaled `dispatch` and
   `agent_return` with the measured duration — do not write those by hand.
-- Materialise the reviewer's patch now, while the range is fresh:
-  `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-patch.sh" .missions/<slug> F00n <base> <head> -- <paths>`
+- Materialise the reviewer's patch now, while the range is fresh — the whole range, so the patch
+  shows everything the run changed, the out-of-Files paths the handoff declared included:
+  `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-patch.sh" .missions/<slug> F00n <base> <head>`
 - Update `features.md`: status, and `- **Range:** <base>..<head>`.
 - Update `contract.md` assertions to `claimed` — **never** `proven`.
 - Copy every issue from the handoff into `state.md` under open issues; rewrite `resume_next`.

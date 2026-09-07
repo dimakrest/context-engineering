@@ -2,13 +2,19 @@
 environment, never through the repo's config; a reviewer is blind by having nothing to look at;
 one executor at a time per host.
 
-The guarantee model is layered on purpose. Credentials make a push IMPOSSIBLE: the child's env
-carries no token, no agent socket, no askpass, and its global gitconfig has an empty credential
-helper, so git has nothing to authenticate with. Hooks make what is still possible REFUSED: a
-commit off the mission branch, a message without the feature prefix, a push over a transport
-that needs no credential (a local path, as the trace fixture has) meet hooks that exit 1 -- the
-pre-push unless it holds the driver's own push token. Under the claude harness the plugin's own
-hooks stay installed and keep working; they are a bonus, never what the driver relies on.
+The guarantee model is layered on purpose, and each layer claims only what it holds. The
+credential layer means "no credential in the run's ENVIRONMENT": no token, no agent socket, no
+askpass, an empty credential helper, an empty gh config (GH_CONFIG_DIR points at an empty
+directory), so git and gh have nothing there to authenticate with. What HOME holds stays readable
+(~/.ssh keys, ~/.netrc): the guarantee is not "no credential on the machine". The hook layer
+refuses a COOPERATING worker: a commit off the mission branch, a message without the feature
+prefix, a merge, a rebase, a push over a transport that needs no credential (a local path, as the
+trace fixture has) meet hooks that exit 1 -- the pre-push unless it holds the driver's own push
+token. `--no-verify`, `git -c core.hooksPath=`, an unset GIT_CONFIG_COUNT or an edit of
+`.missions/<slug>/githooks/` bypass them, and the operator's global core.hooksPath is not chained
+(the child's global config is the driver's). The post-exit grade (grade.py) is the gate that does
+not depend on the worker. Under the claude harness the plugin's own hooks stay installed and keep
+working; they are a bonus, never what the driver relies on.
 
 Git sees all of it only through `GIT_CONFIG_*` variables in the child's environment. The repo's
 `core.hooksPath` is repository config, shared by every worktree of the repo, and would outlive a
@@ -46,11 +52,13 @@ HARNESS_ENV = {
     "codex": ("OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_HOME"),
     "stub": (),
 }
-# Never, whatever the lists say. GIT_CONFIG_* because ours are set below; CLAUDECODE/CLAUDE_CODE_*
-# because a child `claude` that sees them routes through the parent session's socket and hangs;
-# MISSIONS_PUSH_TOKEN because the MISSIONS_ prefix passes and a worker must never carry one.
-NEVER_EXACT = frozenset(("GH_TOKEN", "GITHUB_TOKEN", "GIT_ASKPASS", "SSH_AUTH_SOCK", "SSH_AGENT_PID",
-                         "GIT_SSH", "GIT_SSH_COMMAND", "CLAUDECODE", "MISSIONS_PUSH_TOKEN"))
+# Never, whatever the lists say. GIT_CONFIG_* and GH_CONFIG_DIR because ours are set below;
+# CLAUDECODE/CLAUDE_CODE_* because a child `claude` that sees them routes through the parent
+# session's socket and hangs; MISSIONS_PUSH_TOKEN because the MISSIONS_ prefix passes and a worker
+# must never carry one.
+NEVER_EXACT = frozenset(("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_CONFIG_DIR",
+                         "GIT_ASKPASS", "SSH_AUTH_SOCK", "SSH_AGENT_PID", "GIT_SSH", "GIT_SSH_COMMAND", "CLAUDECODE",
+                         "MISSIONS_PUSH_TOKEN"))
 NEVER_PREFIXES = ("CLAUDE_CODE_", "GIT_CONFIG_")
 
 
@@ -75,8 +83,10 @@ def build_env(mission_dir: Path, run_dir: Path, role: str, feature: str, task: s
     """The child's environment, built from `base_env` (the driver's own by default): the exact
     names and prefixes above, the harness's own variables, the operator's passthrough, and
     nothing else -- every `*_TOKEN *_SECRET *_PASSWORD *_KEY` that is not on a list is gone. The
-    never-list wins over every list. Then the mission's `MISSIONS_*` and the `GIT_*` that point git
-    at the driver-written config and hooks. Writes nothing; `prepare` writes what these point at."""
+    never-list wins over every list. Then the mission's `MISSIONS_*`, the `GIT_*` that point git
+    at the driver-written config and hooks, and a `GH_CONFIG_DIR` under them that holds no
+    hosts.yml -- `gh` in the operator's shell is logged in through ~/.config/gh, and a worker's
+    `gh pr create` must find nothing. Writes nothing; `prepare` writes what these point at."""
     src = os.environ if base_env is None else base_env
     allowed = set(KEEP_EXACT) | set(HARNESS_ENV.get(harness, ()))
     env: Dict[str, str] = {}
@@ -110,6 +120,7 @@ def build_env(mission_dir: Path, run_dir: Path, role: str, feature: str, task: s
         "GIT_CONFIG_VALUE_0": str(hooks),
         "GIT_CONFIG_KEY_1": "credential.helper",
         "GIT_CONFIG_VALUE_1": "",
+        "GH_CONFIG_DIR": str(hooks / "gh"),
     })
     if role == "worker":
         env["MISSIONS_FILES"] = ",".join(f.strip() for f in feature_files if f.strip())
@@ -177,9 +188,17 @@ exit 1
 # Under a core.hooksPath override git looks up EVERY hook in our directory, so the repo's other
 # client-side hooks (husky's prepare-commit-msg, a post-checkout that installs dependencies, ...)
 # would silently stop running for the worker. These carry only the chaining line.
-PASSTHROUGH_HOOKS = ("applypatch-msg", "pre-applypatch", "post-applypatch", "prepare-commit-msg", "pre-merge-commit",
-                     "post-commit", "pre-rebase", "post-checkout", "post-merge", "pre-auto-gc", "post-rewrite",
+PASSTHROUGH_HOOKS = ("applypatch-msg", "pre-applypatch", "post-applypatch", "prepare-commit-msg",
+                     "post-commit", "post-checkout", "post-merge", "pre-auto-gc", "post-rewrite",
                      "push-to-checkout", "sendemail-validate")
+# Refused for every role: a run's history is one feature's commits on the mission branch, and a
+# merge commit or a rewritten branch is what the grade cannot measure (grade.py checks both after
+# exit; these hooks stop a cooperating worker earlier). git leaves a refused merge staged with
+# MERGE_HEAD set, so the worker sees the refusal and `git merge --abort` puts the tree back.
+REFUSED_HOOKS = {
+    "pre-merge-commit": "missions: a worker never merges; the driver merges main in phase pr (#10)",
+    "pre-rebase": "missions: a worker never rebases; the driver rebases on main in phase pr (#10)",
+}
 
 
 def push_hash(token: str) -> str:
@@ -190,8 +209,9 @@ def hook_scripts(role: str, task: str, token_hash: str) -> Dict[str, str]:
     """The hooks for one run. Worker: chain, then the mission checks. Any other role: a
     pre-commit and commit-msg that refuse outright -- without chaining, because the repo's own
     pre-commit may rewrite files, and a reviewer run writes nothing. pre-push: chain, then refuse
-    unless the caller holds the driver's push token (its sha256 is what the script carries). The
-    rest of the client-side hook names chain and nothing more."""
+    unless the caller holds the driver's push token (its sha256 is what the script carries).
+    pre-merge-commit and pre-rebase refuse for every role, without chaining (a refusal needs no
+    second opinion). The rest of the client-side hook names chain and nothing more."""
     head = "#!/bin/bash\n# missions: written by the driver for %s (role %s); scoped to this run's env via GIT_CONFIG_*\n" % (task, role)
     refuse = 'echo "missions: a %s run does not commit" >&2\nexit 1\n' % role
     if role == "worker":
@@ -202,6 +222,8 @@ def hook_scripts(role: str, task: str, token_hash: str) -> Dict[str, str]:
         commit_msg = head + refuse
     pre_push = head + _CHAIN % {"name": "pre-push"} + _PRE_PUSH % {"hash": token_hash}
     hooks = {"pre-commit": pre_commit, "commit-msg": commit_msg, "pre-push": pre_push}
+    for name, text in REFUSED_HOOKS.items():
+        hooks[name] = head + 'echo "%s" >&2\nexit 1\n' % text
     for name in PASSTHROUGH_HOOKS:
         hooks[name] = head + _CHAIN % {"name": name} + "exit 0\n"
     return hooks
@@ -224,10 +246,12 @@ def _write_exec(path: Path, text: str) -> None:
 
 
 def prepare(ctx, req: RunRequest) -> None:
-    """Before every run: the git files the env points at, then the record of which variable NAMES
-    the run had (never values) -- the harness smoke and a curious operator read it after."""
+    """Before every run: the git files the env points at (the gh config directory among them,
+    created and left empty), then the record of which variable NAMES the run had (never values)
+    -- the harness smoke and a curious operator read it after."""
     hooks = githooks_dir(ctx.mission_dir)
     hooks.mkdir(parents=True, exist_ok=True)
+    (hooks / "gh").mkdir(exist_ok=True)
     write_gitconfig(ctx.mission_dir, ctx.checkout)
     _write_exec(hooks / "no-credentials", NO_CREDENTIALS)
     for name, text in hook_scripts(req.role, req.task, push_hash(ctx.push_token)).items():
@@ -241,40 +265,69 @@ def prepare(ctx, req: RunRequest) -> None:
 BLIND_DIRS = ("handoffs", "validation", "decisions")
 
 
-def _merge_move(src: Path, dst: Path) -> None:
-    """Move `src` to `dst`. When `dst` grew back while `src` was hidden (a crash, then a run before
-    preflight restored it), directories merge and a file already at `dst` is the newer one: it wins."""
-    if not dst.exists():
+def _merge_move(src: Path, dst: Path, aside: Path, strays: List[str]) -> None:
+    """Move the hidden `src` back to `dst`. Nothing at `dst`: a rename. A directory onto a
+    directory: merge, child by child. Anything else at `dst` was written while `src` was hidden
+    -- by the reviewer the window exists for, or by a hand that did not know -- and the hidden
+    original is the mission's record, so the stray moves to `aside / dst.name` (`.2`, `.3` on a
+    clash), its mission-relative path goes on `strays`, and the original takes its place. `aside`
+    is `<mdir>/.strays/<task>/`, which is how the relative path is computed."""
+    if not os.path.lexists(dst):
         os.rename(src, dst)
         return
     if src.is_dir() and dst.is_dir():
-        for child in list(src.iterdir()):
-            _merge_move(child, dst / child.name)
+        for child in sorted(src.iterdir()):
+            _merge_move(child, dst / child.name, aside, strays)
         os.rmdir(src)
         return
-    src.unlink()
+    aside.mkdir(parents=True, exist_ok=True)
+    target = aside / dst.name
+    n = 1
+    while os.path.lexists(target):
+        n += 1
+        target = aside / ("%s.%d" % (dst.name, n))
+    os.rename(dst, target)
+    strays.append(str(dst.relative_to(aside.parent.parent)))
+    os.rename(src, dst)
 
 
-def _restore_cell(mission_dir: Path, cell: Path) -> None:
+def _restore_cell(mission_dir: Path, cell: Path) -> List[str]:
+    """Bring one `.blind/<task>/` cell back; the strays moved aside, as mission-relative paths.
+    A cell that is already gone (restored by a hand, or by a driver that did not hold the lock)
+    is nothing to do, not an error: the window's `finally` must always return."""
+    if not cell.is_dir():
+        return []
     os.chmod(cell, 0o755)
-    for child in list(cell.iterdir()):
+    aside = mission_dir / ".strays" / cell.name
+    strays: List[str] = []
+    for child in sorted(cell.iterdir()):
         # runs/ merges like any other directory: the current task's run dir stayed behind, so it exists
-        _merge_move(child, mission_dir / child.name)
+        _merge_move(child, mission_dir / child.name, aside, strays)
     os.rmdir(cell)
     blind = cell.parent
     if blind.is_dir() and not any(blind.iterdir()):
         os.rmdir(blind)
+    return strays
+
+
+def _note_strays(mission_dir: Path, task: str, strays: List[str]) -> None:
+    if strays:
+        journal.append(mission_dir, "note", task=task,
+                       text="moved aside files written while hidden: %s -> .strays/%s/" % (", ".join(strays), task))
 
 
 def restore_blind(mission_dir: Path) -> List[str]:
-    """Bring back whatever a crashed driver left under `.blind/` -- the task names restored."""
+    """Bring back whatever a crashed driver left under `.blind/` -- the task names restored.
+    Only a driver that holds the mission's lock may call this (loop.preflight's `restore`): to
+    any other process a cell is a live reviewer window, not a crash. What grew back meanwhile
+    goes aside and is journaled per cell."""
     blind = mission_dir / ".blind"
     if not blind.is_dir():
         return []
     restored: List[str] = []
     for cell in sorted(blind.iterdir()):
         if cell.is_dir():
-            _restore_cell(mission_dir, cell)
+            _note_strays(mission_dir, cell.name, _restore_cell(mission_dir, cell))
             restored.append(cell.name)
     return restored
 
@@ -283,7 +336,9 @@ def restore_blind(mission_dir: Path) -> List[str]:
 def blind(ctx, task: str) -> Iterator[None]:
     """For a reviewer run: handoffs/, validation/, decisions/ and every other run's dir move into
     `.blind/<task>/` (mode 000) for the process lifetime and come back in `finally`. Hidden, not
-    forbidden -- the prompt names one patch and nothing else, and `patches/` stays."""
+    forbidden -- the prompt names one patch and nothing else, and `patches/` stays. A file the
+    reviewer wrote where a hidden one belongs is moved aside on the way back, never kept over
+    the original (a review that writes a handoff is exactly what the window is for catching)."""
     mdir = ctx.mission_dir
     cell = mdir / ".blind" / task
     cell.mkdir(parents=True, exist_ok=True)
@@ -300,7 +355,7 @@ def blind(ctx, task: str) -> Iterator[None]:
     try:
         yield
     finally:
-        _restore_cell(mdir, cell)
+        _note_strays(mdir, task, _restore_cell(mdir, cell))
 
 
 # ---------------------------------------------------------------- host lease

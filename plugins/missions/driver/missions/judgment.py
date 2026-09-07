@@ -11,12 +11,17 @@ issues) lives with the steps; nothing here touches a mission file.
 Optional string fields (`where`, `why`, `cluster_label`, `procedures`, `out_of_scope`, `reason`)
 may be absent; the applier reads them with `.get(key, "")`. Everything else listed in the
 schemas is required.
+
+The one thing the schema cannot know is the contract: `unknown_assertion_problems` checks every
+assertion id a reply names against the ids the caller read from contract.md, so a repair of an
+assertion that does not exist is a complaint the model answers, never a row route_assertion
+cannot find after the follow-ups were already written.
 """
 from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 _FENCE = re.compile(r"```(?:json)?[ \t]*\n(.*?)\n[ \t]*```", re.S)
 _AID = re.compile(r"^A\d{3}[a-z]?$")
@@ -218,4 +223,49 @@ def validate_triage(obj: Any) -> List[str]:
             problems.append("%s: disposition %s needs a followup" % (where, d))
         if d == "repair" and rp is None:
             problems.append("%s: disposition repair needs a repair" % where)
+    return problems
+
+
+def _unknown(problems: List[str], where: str, ids: List[Any], known: set) -> None:
+    """The ids of one field against the contract. Anything that is not a well-formed A00n string
+    is left to the schema check, which already names it; only real ids the contract lacks are
+    reported here, once each."""
+    seen: set = set()
+    for a in ids:
+        if isinstance(a, str) and _AID.match(a) and a not in known and a not in seen:
+            problems.append("%s: %s is not in the contract" % (where, a))
+            seen.add(a)
+
+
+def unknown_assertion_problems(obj: Any, known_ids: Iterable[str]) -> List[str]:
+    """The assertion ids a reply names that the contract does not have, in the reply's order --
+    a negotiate reply's `findings[i].assertion` (when not null) and `repairs[i].assertions[]`, a
+    triage reply's `resolutions[i].followup.assertion` and `resolutions[i].repair.assertions[]`.
+    One walk over both shapes: a reply carries only the keys of its own step, and a key that is
+    absent or of the wrong type is the schema check's complaint, not this one's. Added to the
+    schema's problems for the one re-run run_judgment allows, so the applier never routes an
+    assertion it cannot find after the follow-ups are already written."""
+    if not isinstance(obj, dict):
+        return []
+    known = set(known_ids)
+    problems: List[str] = []
+
+    def entries(key: str, of: Dict) -> List:
+        v = of.get(key)
+        return v if isinstance(v, list) else []
+
+    for i, f in enumerate(entries("findings", obj)):
+        if isinstance(f, dict):
+            _unknown(problems, "findings[%d]" % i, [f.get("assertion")], known)
+    for i, r in enumerate(entries("repairs", obj)):
+        if isinstance(r, dict):
+            _unknown(problems, "repairs[%d]" % i, entries("assertions", r), known)
+    for i, r in enumerate(entries("resolutions", obj)):
+        if not isinstance(r, dict):
+            continue
+        fu, rp = r.get("followup"), r.get("repair")
+        if isinstance(fu, dict):
+            _unknown(problems, "resolutions[%d].followup" % i, [fu.get("assertion")], known)
+        if isinstance(rp, dict):
+            _unknown(problems, "resolutions[%d].repair" % i, entries("assertions", rp), known)
     return problems

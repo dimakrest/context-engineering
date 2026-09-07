@@ -1,0 +1,14 @@
+# A worker that merges a side branch: the driver's pre-merge-commit hook refuses (for every
+# role), git leaves the refused merge staged, the worker aborts it and does the normal work, and
+# the feature lands with no merge commit on the branch. (D3 review, finding 1)
+rc=3
+args=--limit 1
+journal~="event":"step_done".*"step":"F001#1".*"cls":"done"
+journal~="event":"handoff_ingested".*"feature":"F001"
+journal~="event":"stop".*"reason":"limit-reached"
+journal!~="event":"halt"
+git~=F001: stub work
+postcheck=[ "$(cat "$M/runs/F001#1/merge-rc.txt")" != 0 ]
+postcheck=grep -q 'a worker never merges' "$M/runs/F001#1/merge.err"
+postcheck=[ -z "$(git log --merges --oneline)" ]
+postcheck=[ -z "$(git branch --list side)" ] && [ ! -e .git/MERGE_HEAD ]

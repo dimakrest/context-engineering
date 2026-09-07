@@ -1,0 +1,38 @@
+# Repair rounds per assertion: 2 (the base mission). The reviewer never finds A002 satisfied and
+# negotiate proposes cluster C01 with a repair every round. Round 1 registers FU001 and F004 under
+# C01. Round 2 proposes C01 again, but its repair feature F004 is done: a second repair feature
+# for the cluster would split it across two features (check.sh rule 8), so register renames this
+# round's cluster to the next free id, C02, and registers FU002 / F005 under it. Round 3 is the
+# per-assertion cap's: A002 has two repair features, nothing is written, the mission halts. The
+# registry passes check.sh at the end. (#18, finding 9)
+rc=5
+journal~="event":"followups_added".*"ids":\["FU001"\]
+journal~="event":"features_added".*"ids":\["F004"\].*"round":1
+journal~="event":"validate_done".*"milestone":"M1".*"round":1.*"result":"repairs"
+journal~="event":"handoff_ingested".*"feature":"F004"
+journal~="event":"validate_start".*"milestone":"M1".*"round":2
+journal~="event":"verdict".*"feature":"F004".*"A002":"not satisfied"
+journal~="event":"dispatch".*"dispatch_id":"negotiate-M1#2"
+journal~="event":"note".*"round":2.*"feature":"F004".*"cluster":"C02".*"text":"cluster C01 was repaired by F004 \(done\); this round's repair is registered as C02"
+journal~="event":"followups_added".*"ids":\["FU002"\]
+journal~="event":"features_added".*"ids":\["F005"\].*"round":2
+journal~="event":"judgment".*"task":"negotiate-M1#2".*"round":2.*1 finding\(s\): 1 repair.*\(FU002\), repair feature\(s\) F005
+journal~="event":"validate_done".*"milestone":"M1".*"round":2.*"result":"repairs"
+journal~="event":"dispatch".*"dispatch_id":"F005#1"
+journal~="event":"handoff_ingested".*"feature":"F005"
+journal~="event":"validate_start".*"milestone":"M1".*"round":3
+journal~="event":"verdict".*"feature":"F005".*"A002":"not satisfied"
+journal~="event":"judgment".*"task":"negotiate-M1#3".*"round":3.*refused: repair-round cap \(2 per assertion\) exceeded by a repair of A002, which already has 2 repair feature\(s\) \(F004, F005\)
+journal~="event":"validate_done".*"milestone":"M1".*"round":3.*"result":"halted"
+journal~="event":"stop".*"reason":"gate-blocked".*the diagnosis is wrong, not the code
+journal!~="ids":\["F006"
+journal!~="ids":\["FU003"
+journal!~="event":"milestone_closed"
+journal!~=already has repair feature
+state~=^phase: halted
+state~=^milestone: M1
+postcheck=[ "$(grep -c '^## FU' "$M/followups.md")" = 2 ] && ! grep -q '^### F006' "$M/features.md"
+postcheck=sed -n '/^## FU002/,/^## /p' "$M/followups.md" | grep -q '^- \*\*Cluster:\*\* C02 ' && sed -n '/^## FU002/,/^## /p' "$M/followups.md" | grep -q '^- \*\*Disposition:\*\* repair as F005'
+postcheck=sed -n '/^## FU001/,/^## /p' "$M/followups.md" | grep -q '^- \*\*Cluster:\*\* C01 ' && grep -q '^- \*\*Repairs:\*\* C01 (FU001) of F001$' "$M/features.md" && grep -q '^- \*\*Repairs:\*\* C02 (FU002) of F001$' "$M/features.md"
+postcheck=grep -qE '^\| A001 \| .* \| proven \|' "$M/contract.md" && grep -qE '^\| A002 \| .* \| F001, F002, F004, F005 \| claimed \|' "$M/contract.md"
+postcheck=bash "$plugin/scripts/check.sh" "$M" >/dev/null

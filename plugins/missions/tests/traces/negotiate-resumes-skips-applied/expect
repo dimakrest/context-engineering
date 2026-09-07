@@ -1,0 +1,36 @@
+# A driver that died right after the negotiate judgment was applied -- FU001 and F004 registered,
+# the judgment record written, no proven mark and no validate_done yet: the next driver resumes
+# round 1 past step 4. No second negotiate run, no FU002 / F005; the repair it reads back from
+# the journal withholds A002, A001 is proven, F004 is dispatched with the resume line naming its
+# cluster, and the mission runs on to done. (D3 review: negotiate is re-entrant)
+rc=0
+journal~="event":"driver_start"
+journal~="event":"note".*resuming validation round 1 of M1
+journal~="event":"decision".*"step":"proven".*"milestone":"M1".*"round":1.*"assertions":\["A001"\].*"evidence":\{"A001":"validation/M1-review-F001.md"\}
+journal~="event":"halt".*"class":"advisory".*first-pass validation failure in M1.*"assumption":"repairs scheduled: F004"
+journal~="event":"validate_done".*"milestone":"M1".*"round":1.*"result":"repairs"
+journal~="event":"dispatch".*"agent":"mission-worker".*"feature":"F004".*"dispatch_id":"F004#1"
+journal~="event":"handoff_ingested".*"feature":"F004"
+journal~="event":"validate_start".*"milestone":"M1".*"round":2
+journal~="event":"dispatch".*"dispatch_id":"review-F004#1"
+journal~="event":"dispatch".*"dispatch_id":"negotiate-M1#2"
+journal~="event":"decision".*"step":"proven".*"milestone":"M1".*"round":2.*"assertions":\["A002"\].*"evidence":\{"A002":"validation/M1-review-F004-r2.md"\}
+journal~="event":"milestone_closed".*"milestone":"M1".*"next":"M2".*"round":2
+journal~="event":"handoff_ingested".*"feature":"F003"
+journal~="event":"stop".*"reason":"done"
+journal!~="ids":\["FU002"
+journal!~="ids":\["F005"
+journal!~="event":"halt".*"class":"block"
+journal!~="event":"decision".*"step":"reopened"
+state~=^phase: validating
+state~=^milestone: M2
+stdout~=negotiate: already applied -- skipped
+stdout~=scrutiny: validation/M1-scrutiny.md exists -- skipped
+file=validation/M1-review-F004-r2.md
+postcheck=[ "$(grep -c '"event":"dispatch".*"dispatch_id":"negotiate-M1#' "$M/journal.jsonl")" = 2 ]
+postcheck=[ "$(grep -c '"event":"dispatch".*"dispatch_id":"review-F001#' "$M/journal.jsonl")" = 2 ]
+postcheck=[ "$(grep -c '"event":"judgment".*"step":"negotiate".*"milestone":"M1".*"round":1' "$M/journal.jsonl")" = 1 ]
+postcheck=[ "$(grep -c '^## FU' "$M/followups.md")" = 1 ] && ! grep -q '^### F005' "$M/features.md"
+postcheck=grep -q '^  resume_next: dispatch F004 (repair of C01); then validate M1 round 2$' "$M/runs/F004#1/prompt.md"
+postcheck=grep -qE '^\| A002 \| .* \| structural \| F001, F002, F004 \| proven \| validation/M1-review-F004-r2.md \|' "$M/contract.md"
+postcheck=bash "$plugin/scripts/check.sh" "$M" >/dev/null && bash "$plugin/scripts/mission-state.sh" "$M" >/dev/null

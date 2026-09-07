@@ -1,0 +1,28 @@
+# A later milestone's review refutes what an earlier one proved: M1 closes with A002 proven; in
+# M2, F003 (routed to A002 as well as A003) is reviewed `not satisfied` on A002. The row goes back
+# to claimed with the negative verdict's file as evidence, journaled as a `reopened` decision,
+# and the round halts on it -- never a `done` over a refuted assertion. (D3 review, decision B1)
+rc=5
+journal~="event":"decision".*"step":"proven".*"milestone":"M1".*"round":1.*"assertions":\["A001","A002"\]
+journal~="event":"milestone_closed".*"milestone":"M1".*"next":"M2"
+journal~="event":"handoff_ingested".*"feature":"F003"
+journal~="event":"validate_start".*"milestone":"M2".*"round":1.*"features":\["F003"\].*"assertions":\["A002","A003"\]
+journal~="event":"verdict".*"validator":"mission-reviewer".*"feature":"F003".*"assertions":\{"A002":"not satisfied","A003":"satisfied"\}.*"file":"validation/M2-review-F003.md"
+journal~="event":"verdict".*"validator":"mission-validator-behavior".*"milestone":"M2".*"A003":"proven"
+journal~="event":"judgment".*"step":"negotiate".*"task":"negotiate-M2#1".*no findings
+journal~="event":"decision".*"step":"proven".*"milestone":"M2".*"round":1.*"assertions":\["A003"\].*"evidence":\{"A003":"validation/M2-behavior.md"\}
+journal~="event":"decision".*"step":"reopened".*"milestone":"M2".*"round":1.*"assertions":\["A002"\].*"evidence":\{"A002":"validation/M2-review-F003.md"\}
+journal~="event":"validate_done".*"milestone":"M2".*"round":1.*"result":"halted"
+journal~="event":"halt".*"class":"block".*M2: A002 not satisfied and no repair proposed
+journal~="event":"stop".*"reason":"gate-blocked".*M2: A002 not satisfied and no repair proposed.*"exit":5
+journal!~="reason":"done"
+journal!~="event":"milestone_closed".*"milestone":"M2"
+journal!~="event":"decision".*"step":"reopened".*"milestone":"M1"
+state~=^phase: halted
+state~=^milestone: M2
+postcheck=grep -qE '^\| A002 \| .* \| structural \| F001, F002, F003 \| claimed \| validation/M2-review-F003.md \|' "$M/contract.md"
+postcheck=grep -qE '^\| A001 \| .* \| proven \| validation/M1-review-F001.md \|' "$M/contract.md"
+postcheck=grep -qE '^\| A003 \| .* \| proven \| validation/M2-behavior.md \|' "$M/contract.md"
+postcheck=grep -q '^  A002 \[structural\] — reviewer F003: not satisfied (validation/M2-review-F003.md) — contract: proven$' "$M/runs/negotiate-M2#1/prompt.md"
+postcheck=grep -q 'reopened: A002 (validation/M2-review-F003.md)' "$TMP/.stdout"
+postcheck=bash "$plugin/scripts/check.sh" "$M" >/dev/null

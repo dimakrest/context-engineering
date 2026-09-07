@@ -87,6 +87,8 @@ class Grade:
     branch_after: str = ""                               # the checkout's branch after exit
     quota: Optional[str] = None                          # the harness's quota/limit text, when seen
     reconstructed: bool = False                          # the driver wrote the handoff from the commit
+    head_before: str = ""                                # HEAD at launch: where the run's commits start
+    rewritten: bool = False                              # head_before is no longer on the branch (a rebase, a reset)
     task: str = ""
 
     def to_json(self) -> Dict[str, Any]:

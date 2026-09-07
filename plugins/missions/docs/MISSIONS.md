@@ -323,10 +323,14 @@ to the attempt — #4: eight outcome classes, the watchdog, handoff reconstructi
 feature, behavior validation where the contract needs it, negotiate, `proven` written only from
 validator verdicts, convergence, archive, the next milestone — with follow-ups and repair features
 registered from what a judgment step proposes and the driver applies. Enforcement no longer
-depends on the harness (#13): a run's environment is built from a whitelist, so no push credential
-reaches a worker; git hooks scoped to that environment refuse what is still possible; a reviewer
-runs with the handoffs and the other validators' files out of reach; one executor at a time per
-host. What remains: the terminal steps and the push (the `pr` phase, #10), `resume` / `status` and
+depends on the harness (#13), and each layer claims only what it holds: a run's environment is
+built from a whitelist, so no credential reaches a worker through its environment (no token, no
+agent socket, no askpass, an empty credential helper, an empty gh config — what `HOME` holds
+stays readable); git hooks scoped to that environment refuse a cooperating worker (a commit off
+the branch or without the prefix, a merge, a rebase, a push), and `--no-verify` bypasses them;
+the post-exit grade is the gate that does not depend on the worker. A reviewer runs with the
+handoffs and the other validators' files out of reach; one executor at a time per host. What
+remains: the terminal steps and the push (the `pr` phase, #10), `resume` / `status` and
 the mutation tests (#6), sleep-and-resume on a provider quota (#7). See the README's "Developing"
 section for the commands, the trace tests and the paid harness smoke.
 

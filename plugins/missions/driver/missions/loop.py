@@ -20,7 +20,7 @@ import subprocess
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from . import __version__, files, journal, prep, prompts, steps, validate
 from .adapters import NAMES, make_adapter
@@ -67,8 +67,13 @@ def _log(line: str) -> None:
 
 # ---------------------------------------------------------------- preflight
 
-def preflight(mission_dir: Path, plugin: Path, harness: Optional[str] = None) -> Tuple[List[str], List[str], Optional[Dict]]:
-    """(problems, warnings, config). Any problem refuses the run."""
+def preflight(mission_dir: Path, plugin: Path, harness: Optional[str] = None,
+              restore: bool = False) -> Tuple[List[str], List[str], Optional[Dict]]:
+    """(problems, warnings, config). Any problem refuses the run. `restore` brings back what a
+    crashed driver left under `.blind/`; only `run` passes it, from inside the driver lock --
+    to `missions preflight`, a dry run or a second driver, a cell under `.blind/` is a reviewer
+    window that a live driver holds open, and taking it apart would show that reviewer the
+    handoffs. Those callers get a warning instead."""
     problems: List[str] = []
     warnings: List[str] = []
     if not mission_dir.is_dir() or not (mission_dir / "state.md").exists():
@@ -83,10 +88,16 @@ def preflight(mission_dir: Path, plugin: Path, harness: Optional[str] = None) ->
     if not st.has_block:
         problems.append("state.md has no ```mission-state block (legacy header); the driver needs the v2 block")
     # a driver that died inside a reviewer's blind window left the handoffs hidden under .blind/
-    restored = prep.restore_blind(mission_dir)
-    if restored:
-        journal.append(mission_dir, "note", text="restored .blind/%s left by a crashed driver" % ", .blind/".join(restored))
-        warnings.append("restored .blind/%s (files hidden for a reviewer run by a driver that did not return)" % ", .blind/".join(restored))
+    blind = mission_dir / ".blind"
+    cells = sorted(c.name for c in blind.iterdir() if c.is_dir()) if blind.is_dir() else []
+    if restore:
+        restored = prep.restore_blind(mission_dir)
+        if restored:
+            journal.append(mission_dir, "note", text="restored .blind/%s left by a crashed driver" % ", .blind/".join(restored))
+            warnings.append("restored .blind/%s (files hidden for a reviewer run by a driver that did not return)" % ", .blind/".join(restored))
+    elif cells:
+        warnings.append("found .blind/%s: a reviewer run is in progress, or a driver crashed inside one; "
+                        "`missions run` restores it once it holds the driver lock" % ", .blind/".join(cells))
     cfg: Optional[Dict] = None
     try:
         cfg = files.read_config(mission_dir)
@@ -112,6 +123,12 @@ def preflight(mission_dir: Path, plugin: Path, harness: Optional[str] = None) ->
 
     if cfg is not None:
         checkout = files.checkout_of(mission_dir, cfg)
+        want = cfg.get("branch") or st.branch
+        if not want:
+            # the worker hooks compare against MISSIONS_BRANCH and the grade against the branch's
+            # ref: with neither named, every commit is refused and nothing can be measured
+            problems.append("no mission branch: state.md has no **Branch:** line and driver.json has no branch -- set one; "
+                            "the worker hooks refuse commits off the mission branch")
         top = files.git_out(checkout, "rev-parse", "--show-toplevel")
         if not top:
             problems.append("%s is not a git checkout" % checkout)
@@ -119,7 +136,6 @@ def preflight(mission_dir: Path, plugin: Path, harness: Optional[str] = None) ->
             branch = files.git_out(checkout, "branch", "--show-current")
             if not branch:
                 problems.append("HEAD is detached in %s -- check out the mission branch first" % checkout)
-            want = cfg.get("branch") or st.branch
             if want and branch and branch != want:
                 problems.append("checked out branch is %s; the mission branch is %s" % (branch, want))
             dirty = files.dirty_paths(checkout)
@@ -151,9 +167,29 @@ def preflight(mission_dir: Path, plugin: Path, harness: Optional[str] = None) ->
 def run(mission_dir: Path, args) -> int:
     plugin = files.plugin_root()
     mission_dir = mission_dir.resolve()
+    if getattr(args, "dry_run", False) or not mission_dir.is_dir():
+        # no lock: a dry run touches nothing, `.blind/` included, and a path that is no directory
+        # has nothing to lock -- preflight names the problem
+        r = _start(mission_dir, plugin, args, restore=False)
+        return r if isinstance(r, int) else dry_run(r, args)
+    try:
+        with DriverLock(mission_dir):
+            # the lock first, preflight inside it: `.blind/` is restored by the one driver that
+            # holds the mission, so a reviewer window of a live driver is never taken apart by a
+            # second one that mistook it for a crash
+            r = _start(mission_dir, plugin, args, restore=True)
+            return r if isinstance(r, int) else _run_locked(r, args)
+    except LockHeld as e:
+        _log("preflight: another driver holds %s (%s)" % (mission_dir / ".driver.lock", e))
+        return EXIT_CODES["preflight-failed"]
+
+
+def _start(mission_dir: Path, plugin: Path, args, restore: bool) -> Union[int, Context]:
+    """Preflight, then the Context a run needs -- or the preflight-failed exit code, journaled
+    when there is a mission to journal into."""
     log = _log
     harness_arg = getattr(args, "harness", None)
-    problems, warnings, cfg = preflight(mission_dir, plugin, harness_arg)
+    problems, warnings, cfg = preflight(mission_dir, plugin, harness_arg, restore=restore)
     for w in warnings:
         log("warning: " + w)
     if problems or cfg is None:
@@ -165,41 +201,9 @@ def run(mission_dir: Path, args) -> int:
         log("-- stopped: preflight-failed (%d problem(s)); fix the mission files, then re-run" % len(problems))
         return EXIT_CODES["preflight-failed"]
     harness = harness_arg or cfg["harness"]
-    ctx = Context(mission_dir=mission_dir, checkout=files.checkout_of(mission_dir, cfg), plugin=plugin,
-                  cfg=cfg, adapter=make_adapter(harness, cfg), run_id=uuid.uuid4().hex[:8],
-                  harness=harness, log=log)
-    if getattr(args, "dry_run", False):
-        return dry_run(ctx, args)
-    try:
-        with DriverLock(mission_dir):
-            return _run_locked(ctx, args)
-    except LockHeld as e:
-        log("preflight: another driver holds %s (%s)" % (mission_dir / ".driver.lock", e))
-        return EXIT_CODES["preflight-failed"]
-
-
-def _check_caps(ctx: Context, budget: Dict) -> Optional[int]:
-    mdir = ctx.mission_dir
-    cap = budget.get("dollar_cap")
-    if cap:
-        spend = journal.spend_usd(mdir) or 0.0
-        reserve = budget.get("terminal_reserve_pct") or 0.0
-        if spend + cap * reserve / 100.0 >= cap:
-            return stop(ctx, "budget", detail="dollar cap $%g reached: spent $%.2f, terminal reserve %g%%" % (cap, spend, reserve),
-                        needs="a cap raise in mission.md, journaled as cap_raised with the reason -- or stop here")
-    dcap = budget.get("dispatch_cap")
-    if dcap:
-        n = journal.dispatches(mdir)
-        if n >= dcap:
-            return stop(ctx, "budget", detail="dispatch cap reached: %d of %g" % (n, dcap),
-                        needs="re-plan the remaining milestones or raise the cap in mission.md (cap_raised)")
-    wcap = budget.get("wall_cap_h")
-    if wcap:
-        used = journal.wall_hours(mdir)
-        if used > wcap:
-            return stop(ctx, "budget", detail="active wall-clock cap reached: %.1f h of %g h" % (used, wcap),
-                        needs="re-plan or raise the cap in mission.md (cap_raised)")
-    return None
+    return Context(mission_dir=mission_dir, checkout=files.checkout_of(mission_dir, cfg), plugin=plugin,
+                   cfg=cfg, adapter=make_adapter(harness, cfg), run_id=uuid.uuid4().hex[:8],
+                   harness=harness, log=log)
 
 
 def _run_locked(ctx: Context, args) -> int:
@@ -234,10 +238,27 @@ def _run_locked(ctx: Context, args) -> int:
             if limit and attempts >= limit:
                 return stop(ctx, "limit-reached", detail="--limit %d worker run(s) reached" % limit,
                             needs="re-run missions run")
-            r = _check_caps(ctx, budget)
+            r = steps.check_caps(ctx, budget)
             if r is not None:
                 return r
             milestone = getattr(args, "milestone", None) or st.milestone
+            if st.phase == "pr":
+                # ahead of the closed-milestone check: a `done` stop puts the phase back to
+                # validating, and an operator who moved it to pr for the terminal steps keeps it
+                return stop(ctx, "gate-blocked", detail="phase pr is not driven by this version",
+                            needs="terminal steps via /missions:mission-run (driver pr phase: #10)")
+            if validate.closed(mdir, milestone):
+                # a closed milestone is never re-entered: a finished mission re-run is a no-op,
+                # --milestone stops once its milestone closes, and a state.md that names a closed
+                # one is a human's edit to fix, not a round to run again
+                nxt = files.next_milestone(mdir, milestone)
+                if nxt is None:
+                    return validate.done_stop(ctx)
+                if getattr(args, "milestone", None) == milestone:
+                    return stop(ctx, "limit-reached", detail="milestone %s is closed; --milestone %s" % (milestone, milestone),
+                                needs="re-run missions run without --milestone (state.md is at %s)" % st.milestone)
+                return stop(ctx, "gate-blocked", detail="state.md names %s, which closed" % milestone,
+                            needs="set `milestone:` in state.md to %s" % nxt)
             if st.phase in ("validating", "negotiating"):
                 # the one way into VALIDATE, behind the caps: a milestone that just completed
                 # (below) and a round left open by a stop (an error, an interrupt) both come here
@@ -248,9 +269,6 @@ def _run_locked(ctx: Context, args) -> int:
                 if isinstance(r, int):
                     return r
                 continue
-            if st.phase == "pr":
-                return stop(ctx, "gate-blocked", detail="phase pr is not driven by this version",
-                            needs="terminal steps via /missions:mission-run (driver pr phase: #10)")
             if st.phase != "implementing":
                 return stop(ctx, "gate-blocked", detail="phase %r is not one the driver drives" % st.phase,
                             needs="set `phase:` in state.md to implementing, validating or done")
@@ -306,6 +324,17 @@ def _run_locked(ctx: Context, args) -> int:
                 return stop(ctx, "gate-blocked",
                             detail="%s left the checkout %s, not on the mission branch %s" % (outcome.task, where, mission_branch),
                             needs="check out the mission branch, reconcile the worker's commits, then missions run again")
+            if grade.rewritten:
+                # the branch no longer carries the commit it was launched from: a rebase, a reset,
+                # an amend. Every earlier feature's range and patch point at history that is gone,
+                # so nothing after this can be graded against what was there -- a human reconciles
+                files.set_feature(mdir, feat.id, status="pending")
+                return stop(ctx, "gate-blocked", halt=True,
+                            detail="%s rewrote the mission branch: HEAD at launch %s is no longer on %s (a rebase or a reset) "
+                                   "-- reconcile the branch, then missions run again" % (
+                                       outcome.task, grade.head_before[:7], mission_branch or grade.branch_after or "the branch"),
+                            needs="git reflog shows the launch head; put the branch back on it or accept the rewrite and "
+                                  "fix features.md's ranges, then set `phase: implementing` and missions run again")
             if cls == "done":
                 steps.ingest(ctx, feat, grade)
                 crash_streak = noop_streak = 0

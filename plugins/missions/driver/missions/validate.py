@@ -11,12 +11,16 @@ driver re-entering an interrupted round never re-parses a verdict it recorded an
 a step whose file exists. A validator that crashes or answers nothing runs once more, then the
 run stops with `error` and the round stays open for the next driver.
 
-proven is mechanical and written only from validator verdicts (design §6.1): structural from the
-latest reviewer verdict, interface and conversational from the latest behavior verdict -- never
-from a handoff, never by the negotiate step, which proposes follow-ups and repair features
-(steps.register applies them) or says the contract is wrong, and marks nothing. An assertion a
-repair was just scheduled for is not marked either, whatever a later review of another feature
-said about it: the repair round's verdict proves it.
+proven is mechanical and written only from validator verdicts (design §6.1), read one round at a
+time: structural from the round's reviewer verdicts, interface and conversational from its
+behavior verdict -- never from a handoff, never by the negotiate step, which proposes follow-ups
+and repair features (steps.register applies them) or says the contract is wrong, and marks
+nothing. Every verdict of the round on an assertion must be positive: one negative blocks,
+whatever another review said, and re-opens a row an earlier round or milestone proved (the one
+move down, files.reopen_assertions); a `cannot tell` or `not reached` blocks without re-opening.
+Once a repair feature routed to the assertion has been reviewed, only the repair reviews count:
+the repair round's verdict proves it. An assertion a repair was just scheduled for is not marked
+either, whatever the round said about it.
 
 Not here: the pr phase (#10). The last milestone's close stops with `done` and names the
 terminal steps for a human; the phase is left at `validating` so the operator sees where the
@@ -54,31 +58,96 @@ def milestone_assertions(mission_dir: Path, milestone: str,
     return [a for a in files.read_contract(mission_dir) if any(f in ids for f in a.features)]
 
 
-def _latest_for(latest: Dict[str, Dict[str, Tuple[str, str]]], a: files.Assertion) -> Optional[Tuple[str, str]]:
-    """The latest (verdict, file) on the assertion from the validator that can prove its class
-    (verdicts.latest_verdicts' buckets); None when that validator never graded it."""
-    return latest["behavior" if a.proof_class in TAGGED else "reviews"].get(a.id)
+# the validator that can prove each class (verdicts.round_verdicts' buckets), and its two words
+# that settle an assertion; anything else it says (`cannot tell`, `not reached`) settles nothing
+_WORDS = {"reviews": ("satisfied", "not satisfied"), "behavior": ("proven", "FAILED")}
 
 
-def proven_evidence(mission_dir: Path, milestone: str) -> Dict[str, str]:
-    """The proven rule: {assertion: validation file} for every assertion of the milestone whose
-    latest verdict proves it -- structural when the reviewer's is `satisfied`, interface and
-    conversational when the behavior validator's is `proven`. A reviewer's `satisfied` on an
-    interface assertion proves nothing: a diff cannot show a chip on a dashboard. Writes nothing."""
-    latest = verdicts.latest_verdicts(mission_dir, milestone)
-    out: Dict[str, str] = {}
-    for a in milestone_assertions(mission_dir, milestone):
-        got = _latest_for(latest, a)
-        if got and got[0] == ("proven" if a.proof_class in TAGGED else "satisfied"):
-            out[a.id] = got[1]
-    return out
+def _bucket(a: files.Assertion) -> str:
+    return "behavior" if a.proof_class in TAGGED else "reviews"
 
 
-def verdict_of(latest: Dict[str, Dict[str, Tuple[str, str]]], a: files.Assertion) -> str:
-    """The latest verdict on one assertion from the validator that can prove its class, in that
-    validator's own word; `no verdict` when none was journaled."""
-    got = _latest_for(latest, a)
-    return got[0] if got else "no verdict"
+def round_verdicts_on(rv: Dict[str, Dict[str, List[Tuple[Optional[str], str, str]]]], a: files.Assertion,
+                      feats: List[files.Feature]) -> List[Tuple[Optional[str], str, str]]:
+    """The round's (feature, verdict, file) on one assertion from the validator that can prove its
+    class -- a reviewer's `satisfied` on an interface assertion proves nothing: a diff cannot
+    show a chip on a dashboard. Among the reviews, once a repair feature routed to the assertion
+    has been reviewed, only the repair reviews count: the repair round's verdict proves it,
+    whatever a review of the feature it repaired said about the code as it was."""
+    got = rv[_bucket(a)].get(a.id, [])
+    if _bucket(a) == "reviews":
+        repair_ids = {f.id for f in feats if f.repairs and f.id in a.features}
+        from_repair = [v for v in got if v[0] in repair_ids]
+        if from_repair:
+            return from_repair
+    return got
+
+
+def proven_evidence(mission_dir: Path, milestone: str, round_no: int,
+                    feats: List[files.Feature]) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """The proven rule over one round: (proven {assertion: validation file}, refuted {assertion:
+    validation file}) for the assertions of the milestone. An assertion the round said nothing
+    about is in neither. Any negative verdict refutes it, with the last negative's file; all
+    positive proves it, with the last positive's file; a `cannot tell` or `not reached` among
+    them leaves it in neither -- unproven, and nothing to re-open. Writes nothing."""
+    rv = verdicts.round_verdicts(mission_dir, milestone, round_no)
+    proven: Dict[str, str] = {}
+    refuted: Dict[str, str] = {}
+    for a in milestone_assertions(mission_dir, milestone, feats):
+        got = round_verdicts_on(rv, a, feats)
+        if not got:
+            continue
+        positive, negative = _WORDS[_bucket(a)]
+        negatives = [f for _, v, f in got if v == negative]
+        if negatives:
+            refuted[a.id] = negatives[-1]
+        elif all(v == positive for _, v, _ in got):
+            proven[a.id] = got[-1][2]
+    return proven, refuted
+
+
+def verdict_of(rv: Dict[str, Dict[str, List[Tuple[Optional[str], str, str]]]], a: files.Assertion,
+               feats: List[files.Feature]) -> str:
+    """The round's word on one assertion, for the stop line: the verdict that blocked it -- the
+    negative when one did, else the first `cannot tell` / `not reached` -- else the last verdict
+    of the round from the validator that can prove its class, in that validator's own word;
+    `no verdict` when it never graded it."""
+    got = round_verdicts_on(rv, a, feats)
+    positive, negative = _WORDS[_bucket(a)]
+    blocking = [v for _, v, _ in got if v != positive]
+    if negative in blocking:
+        return negative
+    if blocking:
+        return blocking[0]
+    return got[-1][1] if got else "no verdict"
+
+
+def closed(mission_dir: Path, milestone: str) -> bool:
+    """True when the journal says the milestone closed (`milestone_closed`) and no round of it is
+    open (every validate_start has its validate_done). The loop asks before it drives anything:
+    a closed milestone is never validated again, whatever state.md or --milestone names. One
+    journal pass."""
+    seen = False
+    started = done = 0
+    for rec in journal.events(mission_dir):
+        if rec.get("milestone") != milestone:
+            continue
+        ev = rec.get("event")
+        seen = seen or ev == "milestone_closed"
+        started += ev == "validate_start"
+        done += ev == "validate_done"
+    return seen and started == done
+
+
+def done_stop(ctx: Context) -> int:
+    """The `done` stop: the last milestone's close, and a finished mission's re-run, which is a
+    no-op. The phase is left at `validating` for the operator who runs the terminal steps (the
+    pr phase is #10); resume_next spells the issue out, since state.md reads ` #` as a comment."""
+    total = len(files.milestones(ctx.mission_dir))
+    return stop(ctx, "done", detail="all %d milestone(s) validated; every assertion proven" % total,
+                needs="terminal steps 1-6 of /missions:mission-run (the driver's pr phase is #10)", phase="validating",
+                resume_next="terminal steps 1-6 of /missions:mission-run: all %d milestone(s) validated, every assertion "
+                            "proven (the driver's pr phase is issue 10)" % total)
 
 
 def verdict_summary(mission_dir: Path, milestone: str, assertions: List[files.Assertion]) -> str:
@@ -115,12 +184,14 @@ def _round(mission_dir: Path, milestone: str) -> Tuple[int, bool]:
 
 def _done_steps(mission_dir: Path, milestone: str, round_no: int) -> Dict[Tuple[str, str], Dict]:
     """The validate_step records of this round whose file still exists: (step, feature) ->
-    record. A step whose file went missing is run again; its verdict in the journal stands."""
+    record. A step whose file went missing is run again; its verdict in the journal stands. A
+    review that had no patch (`nopatch`) wrote no file and is done all the same: its `cannot
+    tell` verdicts are in the journal, and a re-entry must not journal them twice."""
     out: Dict[Tuple[str, str], Dict] = {}
     for rec in journal.events(mission_dir):
         if rec.get("event") == "validate_step" and rec.get("milestone") == milestone and rec.get("round") == round_no:
             f = rec.get("file")
-            if f and (mission_dir / str(f)).exists():
+            if rec.get("nopatch") or (f and (mission_dir / str(f)).exists()):
                 out[(str(rec.get("step")), str(rec.get("feature") or ""))] = rec
     return out
 
@@ -128,7 +199,7 @@ def _done_steps(mission_dir: Path, milestone: str, round_no: int) -> Dict[Tuple[
 def _round_files(mission_dir: Path, milestone: str, round_no: int) -> Dict[str, str]:
     """The round's validation files in step order (file name -> text), for the negotiate prompt."""
     return {Path(str(rec["file"])).name: files.read_text(mission_dir / str(rec["file"]))
-            for rec in _done_steps(mission_dir, milestone, round_no).values()}
+            for rec in _done_steps(mission_dir, milestone, round_no).values() if rec.get("file")}
 
 
 def _validator(ctx: Context, role: str, milestone: str, round_no: int, prompt: str,
@@ -159,12 +230,13 @@ def _validator(ctx: Context, role: str, milestone: str, round_no: int, prompt: s
 
 def _patch_for(ctx: Context, feature: files.Feature) -> Tuple[Optional[Path], str, str]:
     """(the feature's patch or None, base, head). The patch the ingest materialised, else one made
-    now from the feature's Range. The shas come from the patch's own header: that file is the only
-    diff the reviewer sees, so the prompt names what it says."""
+    now from the feature's Range -- the whole range, as the ingest makes it. The shas come from the
+    patch's own header: that file is the only diff the reviewer sees, so the prompt names what it
+    says."""
     path = ctx.mission_dir / "patches" / (feature.id + ".patch")
     if not path.exists() and feature.range:
         base, head = feature.range.split("..", 1)
-        steps.materialise_patch(ctx, feature.id, base, head, feature.files)
+        steps.materialise_patch(ctx, feature.id, base, head)
     if not path.exists():
         return None, "", ""
     shas = {"base": "", "head": ""}
@@ -181,7 +253,8 @@ def _review(ctx: Context, milestone: str, round_no: int, feature: files.Feature,
             assertions: List[files.Assertion], intelligence: str) -> Optional[int]:
     """One blind review: the patch, the feature's assertions and its design section go in; a
     `verdict` per assertion comes out, `cannot tell` for any the table does not name. No patch to
-    review is a `cannot tell` on every assertion, journaled -- never a review of git."""
+    review is a `cannot tell` on every assertion, journaled with a `nopatch` validate_step so a
+    re-entered round does not journal it again -- never a review of git."""
     mdir = ctx.mission_dir
     mine = [a for a in assertions if feature.id in a.features]
     patch, base, head = _patch_for(ctx, feature)
@@ -191,6 +264,8 @@ def _review(ctx: Context, milestone: str, round_no: int, feature: files.Feature,
                             "its assertions are `cannot tell` this round" % (feature.id, feature.id))
         journal.append(mdir, "verdict", validator=prompts.AGENTS["reviewer"], feature=feature.id, milestone=milestone,
                        round=round_no, assertions={a.id: "cannot tell" for a in mine}, file="")
+        journal.append(mdir, "validate_step", milestone=milestone, round=round_no, step="reviewer", feature=feature.id,
+                       task="", file="", nopatch=True)
         ctx.log("   review %s: no patch -- cannot tell" % feature.id)
         return None
     prompt = prompts.reviewer_prompt(mdir, feature, mine, steps.design_for(mdir, feature), patch, base, head, intelligence)
@@ -274,7 +349,10 @@ def _negotiate(ctx: Context, milestone: str, round_no: int, assertions: List[fil
                                       _round_files(mdir, milestone, round_no),
                                       files.read_text(fu_path) if fu_path.exists() else "",
                                       prompts.skill_section(ctx.plugin, "VALIDATE"))
-    r = steps.run_judgment(ctx, "negotiate", "negotiate-" + milestone, prompt, judgment.validate_negotiate, milestone=milestone)
+    known = {a.id for a in files.read_contract(mdir)}
+    r = steps.run_judgment(ctx, "negotiate", "negotiate-" + milestone, prompt,
+                           lambda obj: judgment.validate_negotiate(obj) + judgment.unknown_assertion_problems(obj, known),
+                           milestone=milestone)
     if isinstance(r, int):
         return r
     task, obj = r
@@ -289,7 +367,7 @@ def _negotiate(ctx: Context, milestone: str, round_no: int, assertions: List[fil
     fu_ids: List[str] = []
     fids: List[str] = []
     if followups or repairs:
-        r = steps.register(ctx, milestone, followups, repairs)
+        r = steps.register(ctx, milestone, followups, repairs, round_no)
         if isinstance(r, str):
             # the cap refused a repair and nothing was written: the round closes as halted before
             # the stop, so the next driver does not resume it
@@ -307,21 +385,38 @@ def _negotiate(ctx: Context, milestone: str, round_no: int, assertions: List[fil
     return [dict(rp, id=fid) for fid, rp in zip(fids, repairs)]
 
 
+def negotiated(mission_dir: Path, milestone: str, round_no: int) -> bool:
+    """Whether the round's negotiate step was applied: its `judgment` record exists. A driver
+    that died after it re-enters the round past step 4 -- a second negotiate run would register
+    the same follow-ups and repairs again."""
+    return journal.last(mission_dir, "judgment", lambda r: r.get("step") == "negotiate" and r.get("milestone") == milestone
+                        and r.get("round") == round_no) is not None
+
+
+def applied_repairs(mission_dir: Path, milestone: str, round_no: int, feats: List[files.Feature]) -> List[Dict]:
+    """The repairs the round's negotiate step registered, read back from the journal's
+    `features_added` records of the round (the features it created, and the pending ones its
+    follow-ups joined) and features.md, in _negotiate's return shape as far as the rest of the
+    round needs it: {id, cluster, assertions}."""
+    ids = set()
+    for rec in journal.events(mission_dir):
+        if rec.get("event") == "features_added" and rec.get("milestone") == milestone and rec.get("round") == round_no:
+            ids.update(str(i) for i in (rec.get("ids") or []) + (rec.get("reused") or []))
+    return [{"id": f.id, "cluster": f.cluster, "assertions": list(f.assertions)}
+            for f in feats if f.milestone == milestone and f.id in ids]
+
+
 # ---------------------------------------------------------------- the round
 
 def run_validate(ctx: Context, milestone: str, until: Optional[str] = None) -> Union[int, str]:
     """One validation round of the milestone. Returns "repairs" (repair features were scheduled;
     the loop dispatches them and comes back), "closed" (the milestone closed and the next one is
     current), or the exit code of the stop that ended the run. `until` is the CLI's --until:
-    `milestone` stops after the close."""
+    `milestone` stops after the close. The caps are asked before every validator dispatch: a cap
+    reached mid-round stops there and the round stays open for the next driver."""
     mdir = ctx.mission_dir
-    cap = files.repair_rounds(mdir)
+    budget = files.read_budget(mdir)
     round_no, resumed = _round(mdir, milestone)
-    if round_no > cap + 1:
-        return stop(ctx, "gate-blocked", halt=True,
-                    detail="validation round %d of %s exceeds the repair-round cap (%d) plus the first pass -- a third "
-                           "repair for the same assertion means the diagnosis is wrong, not the code" % (round_no, milestone, cap),
-                    needs=steps.REPAIR_CAP_NEEDS)
     feats = files.read_features(mdir)
     mfeats = [f for f in feats if f.milestone == milestone]
     assertions = milestone_assertions(mdir, milestone, feats)
@@ -342,6 +437,9 @@ def run_validate(ctx: Context, milestone: str, until: Optional[str] = None) -> U
     if ("scrutiny", "") in done:
         ctx.log("   scrutiny: %s exists -- skipped" % done[("scrutiny", "")]["file"])
     else:
+        r = steps.check_caps(ctx, budget)
+        if r is not None:
+            return r
         r = _validator(ctx, "scrutiny", milestone, round_no, prompts.scrutiny_prompt(mdir, milestone, mfeats, assertions, digest_text))
         if isinstance(r, int):
             return r
@@ -359,8 +457,12 @@ def run_validate(ctx: Context, milestone: str, until: Optional[str] = None) -> U
         if f.status != "done":
             continue
         if ("reviewer", f.id) in done:
-            ctx.log("   review %s: %s exists -- skipped" % (f.id, done[("reviewer", f.id)]["file"]))
+            rec = done[("reviewer", f.id)]
+            ctx.log("   review %s: %s -- skipped" % (f.id, (rec["file"] + " exists") if rec.get("file") else "no patch, cannot tell journaled"))
             continue
+        r = steps.check_caps(ctx, budget)
+        if r is not None:
+            return r
         r = _review(ctx, milestone, round_no, f, assertions, intelligence)
         if r is not None:
             return r
@@ -370,6 +472,9 @@ def run_validate(ctx: Context, milestone: str, until: Optional[str] = None) -> U
     if tagged and ("behavior", "") in done:
         ctx.log("   behavior: %s exists -- skipped" % done[("behavior", "")]["file"])
     elif tagged:
+        r = steps.check_caps(ctx, budget)
+        if r is not None:
+            return r
         r = _validator(ctx, "behavior", milestone, round_no,
                        prompts.behavior_prompt(mdir, milestone, tagged, digest_text, files.read_behavior_cap(mdir)))
         if isinstance(r, int):
@@ -382,22 +487,37 @@ def run_validate(ctx: Context, milestone: str, until: Optional[str] = None) -> U
         journal.append(mdir, "validate_step", milestone=milestone, round=round_no, step="behavior", task=task, file=rel)
         ctx.log("   %s: %s" % (task, ", ".join("%s %s" % kv for kv in table.items())))
 
-    # 4. negotiate: the model proposes, the driver applies
-    files.write_state_fields(mdir, phase="negotiating",
-                             resume_next="negotiate %s round %d: every validator has answered" % (milestone, round_no))
-    r = _negotiate(ctx, milestone, round_no, assertions, mfeats)
-    if isinstance(r, int):
-        return r
-    repairs = r
+    # 4. negotiate: the model proposes, the driver applies -- once. A resumed round whose judgment
+    # record exists skips it and reads back the repairs it registered.
+    if resumed and negotiated(mdir, milestone, round_no):
+        ctx.log("   negotiate: already applied -- skipped")
+        repairs = applied_repairs(mdir, milestone, round_no, feats)
+    else:
+        files.write_state_fields(mdir, phase="negotiating",
+                                 resume_next="negotiate %s round %d: every validator has answered" % (milestone, round_no))
+        r = steps.check_caps(ctx, budget)
+        if r is not None:
+            return r
+        r = _negotiate(ctx, milestone, round_no, assertions, mfeats)
+        if isinstance(r, int):
+            return r
+        repairs = r
 
-    # 5. proven marks, from the verdicts alone -- withheld for what a repair was just scheduled for
+    # 5. proven marks, from the round's verdicts alone -- withheld for what a repair was just
+    # scheduled for; a negative verdict on a row an earlier round proved moves it back to claimed
     withheld = {aid for rp in repairs for aid in rp["assertions"]}
-    evidence = {aid: f for aid, f in proven_evidence(mdir, milestone).items() if aid not in withheld}
+    proven, refuted = proven_evidence(mdir, milestone, round_no, feats)
+    evidence = {aid: f for aid, f in proven.items() if aid not in withheld}
     changed = files.prove_assertions(mdir, evidence)
     if changed:
         journal.append(mdir, "decision", step="proven", milestone=milestone, round=round_no, assertions=changed,
                        evidence={a: evidence[a] for a in changed})
         ctx.log("   proven: %s" % ", ".join("%s (%s)" % (a, evidence[a]) for a in changed))
+    reopened = files.reopen_assertions(mdir, refuted)
+    if reopened:
+        journal.append(mdir, "decision", step="reopened", milestone=milestone, round=round_no, assertions=reopened,
+                       evidence={a: refuted[a] for a in reopened})
+        ctx.log("   reopened: %s" % ", ".join("%s (%s)" % (a, refuted[a]) for a in reopened))
 
     # 6. repairs scheduled: advisory, the loop dispatches them
     if repairs:
@@ -415,10 +535,10 @@ def run_validate(ctx: Context, milestone: str, until: Optional[str] = None) -> U
     # 7. unproven with nothing scheduled: a human decides
     unproven = [a for a in milestone_assertions(mdir, milestone, feats) if a.status != "proven"]
     if unproven:
-        latest = verdicts.latest_verdicts(mdir, milestone)
+        rv = verdicts.round_verdicts(mdir, milestone, round_no)
         journal.append(mdir, "validate_done", milestone=milestone, round=round_no, result="halted")
         return stop(ctx, "gate-blocked", halt=True,
-                    detail="%s: %s and no repair proposed" % (milestone, "; ".join("%s %s" % (a.id, verdict_of(latest, a)) for a in unproven[:3])),
+                    detail="%s: %s and no repair proposed" % (milestone, "; ".join("%s %s" % (a.id, verdict_of(rv, a, feats)) for a in unproven[:3])),
                     needs="sharpen the assertion or re-plan (/missions:mission-amend)")
 
     # 8. every assertion proven: converge, archive, advance
@@ -452,12 +572,7 @@ def _close(ctx: Context, milestone: str, round_no: int, until: Optional[str]) ->
     journal.append(mdir, "validate_done", milestone=milestone, round=round_no, result="closed")
     ctx.log("validate %s: closed after round %d (%s)%s" % (milestone, round_no, converge, (" -> " + nxt) if nxt else ""))
     if nxt is None:
-        total = len(files.milestones(mdir))
-        # resume_next spells the issue out: state.md reads ` #` as a comment marker
-        return stop(ctx, "done", detail="all %d milestone(s) validated; every assertion proven" % total,
-                    needs="terminal steps 1-6 of /missions:mission-run (the driver's pr phase is #10)", phase="validating",
-                    resume_next="terminal steps 1-6 of /missions:mission-run: all %d milestone(s) validated, every assertion "
-                                "proven (the driver's pr phase is issue 10)" % total)
+        return done_stop(ctx)
     if files.read_autonomy_ceiling(mdir) == "halt at every milestone":
         return stop(ctx, "gate-blocked", halt=True, detail="%s closed; autonomy ceiling: halt at every milestone" % milestone,
                     needs="review validation/%s-*.md, then set phase implementing" % milestone)

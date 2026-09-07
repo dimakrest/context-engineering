@@ -2,6 +2,7 @@
 """Unit checks for the driver that need no harness: the mission-file parsers and writers against
 the trace base fixture, the claude/codex envelope parsers on captured shapes, and the command
 builders. Run by tests/traces/run.sh; standalone: python3 tests/driver-selftest.py"""
+import argparse
 import contextlib
 import io
 import json
@@ -101,6 +102,31 @@ class FeatureTests(Fixture):
         self.assertEqual(files.read_text(self.m / "features.md").count("**Range:**"), 1)
         self.assertEqual(files.read_features(self.m)[1].status, "pending")
 
+    def test_files_line_without_backticks_reads_like_check_sh(self):
+        # the no-backtick branch is check.sh rule 1c's split: commas and whitespace, keeping a
+        # token that holds a `/` or ends in a source suffix; `(new)` and a placeholder are nothing
+        self.assertEqual(files._split_files("alerting/service.py (new), alerting/repository.py"),
+                         ["alerting/service.py", "alerting/repository.py"])
+        self.assertEqual(files._split_files("README.md docs/ Makefile, setup.json hooks/run.sh"),
+                         ["README.md", "docs/", "setup.json", "hooks/run.sh"])
+        self.assertEqual(files._split_files("\u2014"), [])
+        self.assertEqual(files._split_files("-"), [])
+        self.assertEqual(files._split_files(""), [])
+        # backticks are read verbatim, spaces and all: the template's shape and append_feature's
+        self.assertEqual(files._split_files("`docs/my note.md`, `alerting/service.py` (new)"), ["docs/my note.md", "alerting/service.py"])
+        # on a real features.md the driver counts the files check.sh's feature/file gate counts
+        path = self.m / "features.md"
+        files.write_text(path, files.read_text(path).replace(
+            "- **Files:** `analytics/service.py`, `tests/unit/test_a.py`", "- **Files:** analytics/service.py (new), tests/unit/test_a.py"))
+        self.assertEqual(files.read_features(self.m)[0].files, ["analytics/service.py", "tests/unit/test_a.py"])
+        self.assertEqual(check_sh(self.m)[0], 0)
+        files.write_text(path, files.read_text(path).replace(
+            "- **Files:** analytics/service.py (new), tests/unit/test_a.py", "- **Files:** analytics/service.py (new)"))
+        self.assertEqual(len({p for f in files.read_features(self.m) for p in f.files}), 2)
+        rc, out = check_sh(self.m)
+        self.assertEqual(rc, 1)
+        self.assertIn("3 features over 2 distinct files", out)     # `(new)` is not a file for check.sh either
+
 
 class ContractTests(Fixture):
     def test_read_and_claim(self):
@@ -120,6 +146,36 @@ class ContractTests(Fixture):
         files.write_text(self.m / "contract.md", raw)
         self.assertEqual(files.claim_assertions(self.m, ["A001"]), [])
         self.assertEqual(files.read_contract(self.m)[0].status, "proven")
+
+    def test_a_note_between_rows_and_a_second_table(self):
+        # check.sh reads every `| A0nn |` row of the file: a note between two rows and a second
+        # table further down end nothing for it, so they end nothing for the driver either
+        raw = files.read_text(self.m / "contract.md")
+        raw = raw.replace("| A002 |", "A002 below is the tenancy assertion; F002 shares it.\n\n| A002 |", 1)
+        raw += ("\n## Later additions\n\n"
+                "| ID | Assertion | Proof class | Feature(s) | Status | Evidence | Proof budget |\n"
+                "|---|---|---|---|---|---|---|\n"
+                "| A004 | The chip survives a reload | interface | F003 | unproven | \u2014 | min: playwright; max: 1 run |\n"
+                "| ~~A005~~ | retired before the plan | \u2014 | \u2014 | \u2014 | \u2014 | \u2014 |\n")
+        files.write_text(self.m / "contract.md", raw)
+        files.write_text(self.m / "features.md", files.read_text(self.m / "features.md").replace(
+            "- **Assertions:** A003\n", "- **Assertions:** A003, A004\n"))
+        rows = files.read_contract(self.m)
+        self.assertEqual([r.id for r in rows], ["A001", "A002", "A003", "A004"])
+        self.assertEqual((rows[3].proof_class, rows[3].features, rows[3].status), ("interface", ["F003"], "unproven"))
+        rc, out = check_sh(self.m)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("assertions 4", out)                     # the same four rows check.sh counts
+        # each row's line is its own, so a write lands on it and nowhere else -- the note included
+        self.assertEqual(files.prove_assertions(self.m, {"A002": "validation/M1-review-F001.md", "A004": "validation/M2-behavior.md"}),
+                         ["A002", "A004"])
+        after = files.read_text(self.m / "contract.md")
+        self.assertIn("| A002 | Tenant A never sees tenant B | structural | F001, F002 | proven | validation/M1-review-F001.md |", after)
+        self.assertIn("| A004 | The chip survives a reload | interface | F003 | proven | validation/M2-behavior.md |", after)
+        self.assertEqual(after.count("| proven |"), 2)
+        self.assertIn("A002 below is the tenancy assertion; F002 shares it.\n\n| A002 |", after)
+        self.assertEqual(files.claim_assertions(self.m, ["A001", "A004"]), ["A001"])
+        self.assertEqual([r.status for r in files.read_contract(self.m)], ["claimed", "proven", "unproven", "proven"])
 
 
 class BudgetAndDesignTests(Fixture):
@@ -522,6 +578,71 @@ class GradeTests(RepoFixture):
         s = grading.self_check(self.m, "F001", self.repo, PLUGIN, branch="mission/demo")
         self.assertTrue(any("not on the mission branch mission/demo" in p for p in s.problems))
 
+    def test_merges_and_unprefixed_commits_are_rejected(self):
+        head0 = self.git("rev-parse", "HEAD")
+        self.git("commit", "-q", "--allow-empty", "-m", "wip")           # slipped past commit-msg (--no-verify)
+        wip = self.git("rev-parse", "--short=7", "HEAD")
+        self.commit()
+        self.handoff()
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, head0, None, ["A001", "A002"], task="F001#1",
+                                  branch="mission/demo")
+        self.assertEqual(g.problems, ["commit(s) %s do not start with F001: -- every commit of a run carries the feature prefix" % wip])
+        self.assertEqual(classify(ClassifyTests().out(), g), "malformed_handoff")
+        # the self-check measures from the cited commit's first parent: the wip commit lies before it
+        self.assertEqual(grading.self_check(self.m, "F001", self.repo, PLUGIN, branch="mission/demo").problems, [])
+        # a merge: the pre-merge-commit hook refuses it for a worker that runs the hooks; plain git
+        # here stands for --no-verify, and the grade is the gate that does not depend on the worker
+        head1 = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-qb", "side")
+        (self.repo / "analytics" / "side.py").write_text("s\n", encoding="utf-8")
+        self.git("add", "analytics/side.py")
+        self.git("commit", "-qm", "side: work")
+        side = self.git("rev-parse", "--short=7", "HEAD")
+        self.git("checkout", "-q", "mission/demo")
+        self.git("merge", "-q", "--no-ff", "-m", "F001: merge side", "side")
+        merge = self.git("rev-parse", "HEAD")
+        self.handoff()
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, head1, None, ["A001", "A002"], task="F001#2",
+                                  branch="mission/demo", feature_files=["analytics/service.py"])
+        self.assertIn("the run merged: %s are merge commits in %s..%s -- a worker never merges" % (merge[:7], head1[:7], merge[:7]),
+                      g.problems)
+        self.assertIn("commit(s) %s do not start with F001: -- every commit of a run carries the feature prefix" % side, g.problems)
+        self.assertTrue(any("side.py" in p and "outside the feature's Files" in p for p in g.problems), g.problems)
+        self.assertEqual(classify(ClassifyTests().out(), g), "malformed_handoff")
+        s = grading.self_check(self.m, "F001", self.repo, PLUGIN, branch="mission/demo")
+        self.assertTrue(any("a worker never merges" in p for p in s.problems), s.problems)
+        self.assertTrue(any("do not start with F001:" in p for p in s.problems), s.problems)
+        self.assertEqual(grading.range_problems(self.repo, "F001", head0, head1), [
+            "commit(s) %s do not start with F001: -- every commit of a run carries the feature prefix" % wip])
+
+    def test_rewritten_branch_is_flagged(self):
+        head0 = self.git("rev-parse", "HEAD")
+        launched = self.commit("F001", "before")                          # HEAD when the run was launched
+        self.git("reset", "-q", "--hard", head0)                           # the worker rewound the branch under it
+        self.commit()
+        self.handoff()
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, launched, None, ["A001", "A002"], task="F001#1",
+                                  branch="mission/demo")
+        self.assertTrue(g.rewritten)
+        self.assertEqual(g.head_before, launched)
+        self.assertEqual((g.to_json()["rewritten"], g.to_json()["head_before"]), (True, launched))
+        self.assertEqual(g.problems, [])                                   # its own commit is fine: the loop halts on the rewrite
+        # an ordinary run, and a detached commit that left the branch's ref where it was: not rewrites
+        head2 = self.git("rev-parse", "HEAD")
+        self.commit("F001", "more")
+        self.handoff()
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, head2, None, ["A001", "A002"], task="F001#2",
+                                  branch="mission/demo")
+        self.assertFalse(g.rewritten)
+        tip = self.git("rev-parse", "mission/demo")
+        self.git("checkout", "-q", "--detach")
+        self.commit("F001", "detached")
+        self.handoff()
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, tip, None, ["A001", "A002"], task="F001#3",
+                                  branch="mission/demo")
+        self.assertFalse(g.rewritten)
+        self.assertFalse(g.commit_on_branch)
+
 
 class WatchdogTests(RepoFixture):
     def wd(self, **kw):
@@ -753,6 +874,23 @@ class ProveTests(Fixture):
         self.assertEqual(files.read_contract(self.m)[0].evidence, "validation/M1-review-F001.md")
         self.assertEqual(files.prove_assertions(self.m, {"A009": "x"}), [])
 
+    def test_reopen_is_the_one_move_down_and_only_from_proven(self):
+        files.prove_assertions(self.m, {"A001": "validation/M1-review-F001.md"})
+        files.claim_assertions(self.m, ["A002"])
+        # a claimed or unproven row is not re-opened (its claim was never proof); an unknown id is ignored
+        self.assertEqual(files.reopen_assertions(self.m, {"A002": "validation/M2-review-F003.md", "A003": "x", "A009": "y"}), [])
+        self.assertEqual(files.reopen_assertions(self.m, {"A001": "validation/M2-review-F003.md"}), ["A001"])
+        rows = {r.id: r for r in files.read_contract(self.m)}
+        self.assertEqual((rows["A001"].status, rows["A001"].evidence, rows["A002"].status, rows["A003"].status),
+                         ("claimed", "validation/M2-review-F003.md", "claimed", "unproven"))
+        self.assertIn("| A001 | Omitting the window equals the whole day | structural | F001 | claimed | validation/M2-review-F003.md |",
+                      files.read_text(self.m / "contract.md"))
+        self.assertEqual(files.reopen_assertions(self.m, {"A001": "again"}), [])
+        # a later round proves it again, with its own evidence
+        self.assertEqual(files.prove_assertions(self.m, {"A001": "validation/M2-review-F004-r2.md"}), ["A001"])
+        self.assertEqual(files.read_contract(self.m)[0].evidence, "validation/M2-review-F004-r2.md")
+        self.assertEqual(check_sh(self.m)[0], 0)
+
 
 REVIEW = """# Review F001
 
@@ -832,6 +970,22 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(verdicts.parse_scrutiny("## Commands\n| Command | Exit code | Duration |\n|---|---|---|\n\n## Failures\nnone\n"),
                          {"commands": [], "failures": "none"})
 
+    def test_an_escaped_pipe_is_one_cell(self):
+        # GFM: `\|` inside a cell is the cell's own pipe, so a piped command is one Command cell
+        text = SCRUTINY.replace("| ruff check . | 1 | 2s |", "| pytest x 2>&1 \\| tail -20 | 1 | 3s |")
+        s = verdicts.parse_scrutiny(text)
+        self.assertEqual(s["commands"][1], {"command": "pytest x 2>&1 | tail -20", "exit": 1, "duration": "3s"})
+        self.assertEqual(s["commands"][0], {"command": "make test-unit", "exit": 0, "duration": "12s"})
+        self.assertEqual(verdicts.table_rows("| a \\| b | c |\n|---|---|\n| `x \\| y` | 1 |"), [["`x | y`", "1"]])
+        # a reviewer's evidence cell that quotes a pipe keeps the verdict in its own column
+        review = REVIEW.replace("| A001 | satisfied | `analytics/service.py:3` |",
+                                "| A001 | satisfied | `grep -c tenant analytics/service.py \\| head -1` prints 1 |")
+        self.assertEqual(verdicts.parse_reviewer(review), verdicts.parse_reviewer(REVIEW))
+        rows = verdicts.table_rows(files.section(review, "Assertion verdicts"))
+        self.assertEqual(rows[0], ["A001", "satisfied", "`grep -c tenant analytics/service.py | head -1` prints 1"])
+        # the contract's splitter is untouched: it mirrors check.sh, where no cell escapes a pipe
+        self.assertEqual(files.table_cells("| a \\| b | c |"), ["a \\", "b", "c"])
+
 
 class LatestVerdictTests(Fixture):
     def test_latest_verdict_wins_per_validator(self):
@@ -852,6 +1006,16 @@ class LatestVerdictTests(Fixture):
         self.assertEqual(v["behavior"], {"A002": ("proven", "validation/M1-behavior.md")})
         self.assertEqual(verdicts.latest_verdicts(self.m, "M2")["reviews"], {"A003": ("satisfied", "validation/M2-review-F003.md")})
         self.assertEqual(verdicts.latest_verdicts(self.m, "M3"), {"reviews": {}, "behavior": {}})
+        # one round whole: every verdict on an assertion, in journal order, with the feature it came from
+        rv = verdicts.round_verdicts(self.m, "M1", 1)
+        self.assertEqual(rv["reviews"], {"A001": [("F001", "satisfied", "validation/M1-review-F001.md")],
+                                         "A002": [("F001", "not satisfied", "validation/M1-review-F001.md"),
+                                                  ("F002", "cannot tell", "validation/M1-review-F002.md")]})
+        self.assertEqual(rv["behavior"], {"A002": [(None, "proven", "validation/M1-behavior.md")]})
+        self.assertEqual(verdicts.round_verdicts(self.m, "M1", 2),
+                         {"reviews": {"A002": [("F004", "satisfied", "validation/M1-review-F004-r2.md")]}, "behavior": {}})
+        self.assertEqual(verdicts.round_verdicts(self.m, "M1", 3), {"reviews": {}, "behavior": {}})
+        self.assertEqual(verdicts.round_verdicts(self.m, "M2", 1)["reviews"], {"A003": [("F003", "satisfied", "validation/M2-review-F003.md")]})
 
 
 NEGOTIATE_OK = {"findings": [
@@ -934,6 +1098,30 @@ class JudgmentTests(unittest.TestCase):
         self.assertEqual(judgment.validate_triage({"resolutions": [{"disposition": "resolved"}, {"disposition": "resolved"}]}),
                          ["resolutions[0]: missing 'issue'", "resolutions[1]: missing 'issue'"])
 
+    def test_unknown_assertion_problems(self):
+        # one walk over both shapes; only well-formed ids the contract lacks, once per field --
+        # a malformed value is the schema check's complaint, and a null assertion is no id
+        known = {"A001", "A002", "A003"}
+        neg = {"findings": [{"assertion": "A099"}, {"assertion": None}, {"assertion": "A001"}, "not an object"],
+               "repairs": [{"assertions": ["A002", "A098", "A098", "bogus", 7]}, {"assertions": "A097"}, {}],
+               "contract_wrong": False}
+        self.assertEqual(judgment.unknown_assertion_problems(neg, known),
+                         ["findings[0]: A099 is not in the contract", "repairs[0]: A098 is not in the contract"])
+        tri = {"resolutions": [{"issue": 1, "followup": {"assertion": "A096"}, "repair": {"assertions": ["A003", "A095"]}},
+                               {"issue": 2, "followup": None, "repair": None}, 3]}
+        self.assertEqual(judgment.unknown_assertion_problems(tri, known),
+                         ["resolutions[0].followup: A096 is not in the contract", "resolutions[0].repair: A095 is not in the contract"])
+        self.assertEqual(judgment.unknown_assertion_problems({"findings": "x", "repairs": None, "resolutions": 4}, known), [])
+        self.assertEqual(judgment.unknown_assertion_problems("nope", known), [])
+        self.assertEqual(judgment.unknown_assertion_problems(neg, known | {"A099", "A098"}), [])
+        self.assertEqual(judgment.unknown_assertion_problems(NEGOTIATE_OK, known), [])
+        self.assertEqual(judgment.unknown_assertion_problems(TRIAGE_OK, known), [])
+        # what the negotiate step hands run_judgment: the schema's complaints, then the contract's
+        both = judgment.validate_negotiate(neg) + judgment.unknown_assertion_problems(neg, known)
+        self.assertIn("findings[3]: not an object", both)
+        self.assertTrue(any("'assertions' contains 'bogus'" in p for p in both), both)
+        self.assertEqual(both[-2:], ["findings[0]: A099 is not in the contract", "repairs[0]: A098 is not in the contract"])
+
 
 # ---------------------------------------------------------------- prep (D3)
 
@@ -949,7 +1137,8 @@ DRIVER_ENV = {
     "DB_PASSWORD": "p", "ANTHROPIC_API_KEY": "a", "OPENAI_API_KEY": "o", "KEEP_ME": "1", "MYAPP_URL": "u",
     "MYAPP_KEY": "k", "CLAUDECODE": "1", "CLAUDE_CODE_ENTRYPOINT": "cli", "GIT_CONFIG_GLOBAL": "/elsewhere",
     "GIT_CONFIG_COUNT": "9", "SSH_AUTH_SOCK": "/s", "GIT_SSH_COMMAND": "ssh -i key", "GIT_ASKPASS": "/ask",
-    "MISSIONS_PUSH_TOKEN": "z", "PYTHONPATH": "/x",
+    "MISSIONS_PUSH_TOKEN": "z", "PYTHONPATH": "/x", "GH_CONFIG_DIR": "/elsewhere/gh", "GH_ENTERPRISE_TOKEN": "e",
+    "GITHUB_ENTERPRISE_TOKEN": "e",
 }
 
 
@@ -960,7 +1149,8 @@ class PrepEnvTests(Fixture):
                               passthrough=list(passthrough), base_env=src)
 
     def test_whitelist_keeps_drops_and_passthrough(self):
-        env = self.env(passthrough=["KEEP_ME", "MYAPP_*", "GH_TOKEN", "CLAUDE_CODE_*", "GIT_CONFIG_COUNT"])
+        env = self.env(passthrough=["KEEP_ME", "MYAPP_*", "GH_TOKEN", "CLAUDE_CODE_*", "GIT_CONFIG_COUNT", "GH_CONFIG_DIR",
+                                    "GH_ENTERPRISE_TOKEN"])
         for k in ("PATH", "HOME", "LC_ALL", "XDG_RUNTIME_DIR", "MISSIONS_TEST", "HTTPS_PROXY", "TMPDIR",
                   "KEEP_ME", "MYAPP_URL", "MYAPP_KEY"):
             self.assertIn(k, env, k)
@@ -968,8 +1158,11 @@ class PrepEnvTests(Fixture):
         for k in ("MY_SECRET", "FOO_TOKEN", "AWS_ACCESS_KEY", "DB_PASSWORD", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "PYTHONPATH"):
             self.assertNotIn(k, env, k)
         # the never-list beats the passthrough
-        for k in ("GH_TOKEN", "GITHUB_TOKEN", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "SSH_AUTH_SOCK", "MISSIONS_PUSH_TOKEN"):
+        for k in ("GH_TOKEN", "GITHUB_TOKEN", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "SSH_AUTH_SOCK", "MISSIONS_PUSH_TOKEN",
+                  "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"):
             self.assertNotIn(k, env, k)
+        # gh reads its hosts.yml from GH_CONFIG_DIR: ours, empty, never the operator's (~/.config/gh or /elsewhere)
+        self.assertEqual(env["GH_CONFIG_DIR"], str(self.m / "githooks" / "gh"))
         # ours replace the driver's, never inherit them
         self.assertEqual(env["GIT_CONFIG_COUNT"], "2")
         self.assertEqual(env["GIT_CONFIG_GLOBAL"], str(self.m / "githooks" / "gitconfig"))
@@ -1148,6 +1341,38 @@ class GitFilesTests(RepoFixture):
         self.assertIn("post", marker.read_text(encoding="utf-8"))     # a hook we add nothing to still reaches the repo's
         self.assertNotEqual(self.wgit("commit", "--allow-empty", "-qm", "nope").returncode, 0)
 
+    def test_merge_and_rebase_refused_and_gh_has_no_config(self):
+        gh = self.m / "githooks" / "gh"
+        self.assertTrue(gh.is_dir())
+        self.assertEqual(list(gh.iterdir()), [])
+        self.assertEqual(self.req.env["GH_CONFIG_DIR"], str(gh))
+        for role in ("worker", "reviewer", "scrutiny"):
+            hooks = prep.hook_scripts(role, "t#1", "h")
+            self.assertIn("a worker never merges; the driver merges main in phase pr (#10)", hooks["pre-merge-commit"])
+            self.assertIn("a worker never rebases", hooks["pre-rebase"])
+            for name in ("pre-merge-commit", "pre-rebase"):
+                self.assertNotIn("orig=", hooks[name], name)          # a refusal chains nothing
+                self.assertNotIn(name, prep.PASSTHROUGH_HOOKS)
+        # a side branch with one commit (plain git: no hooks), then the merge under the run's env
+        self.git("checkout", "-qb", "side")
+        (self.repo / "analytics" / "side.py").write_text("s\n", encoding="utf-8")
+        self.git("add", "analytics/side.py")
+        self.git("commit", "-qm", "side: work")
+        self.git("checkout", "-q", "mission/demo")
+        res = self.wgit("merge", "--no-ff", "-m", "F001: merge side", "side")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("a worker never merges", res.stderr)
+        # git leaves the refused merge staged with MERGE_HEAD; the worker aborts it and the tree is back
+        self.assertTrue((self.repo / ".git" / "MERGE_HEAD").exists())
+        self.assertEqual(self.wgit("merge", "--abort").returncode, 0)
+        self.assertEqual(self.git("log", "--merges", "--oneline"), "")
+        self.assertEqual(files.dirty_paths(self.repo), [])
+        res = self.wgit("rebase", "side")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("a worker never rebases", res.stderr)
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.git("rev-parse", "mission/demo"))
+        self.assertEqual(self.git("branch", "--show-current"), "mission/demo")
+
 
 class StubResolutionTests(unittest.TestCase):
     def test_script_order(self):
@@ -1211,6 +1436,54 @@ class PathsOutsideTests(RepoFixture):
         g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, base, None, ["A001", "A002"], task="F001#1")
         self.assertEqual(g.problems, [])
 
+    def test_non_ascii_paths_come_back_verbatim(self):
+        # git prints a non-ASCII path quoted and octal-escaped unless core.quotePath is off;
+        # files.git turns it off on every call, so a path compares to the Files line as written
+        base = self.git("rev-parse", "HEAD")
+        (self.repo / "analytics" / "caf\u00e9.py").write_text("x\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "F001: accent")
+        head = self.git("rev-parse", "HEAD")
+        self.assertEqual(self.git("-c", "core.quotePath=true", "diff", "--name-only", base, head), '"analytics/caf\\303\\251.py"')
+        self.assertEqual(files.git_out(self.repo, "diff", "--name-only", base, head), "analytics/caf\u00e9.py")
+        self.assertEqual(grading.paths_outside(self.repo, base, head, ["analytics/service.py"]), ["analytics/caf\u00e9.py"])
+        self.assertEqual(grading.paths_outside(self.repo, base, head, ["analytics/caf\u00e9.py"]), [])
+        (self.repo / "analytics" / "na\u00efve.py").write_text("y\n", encoding="utf-8")
+        self.assertEqual(files.dirty_paths(self.repo), ["analytics/na\u00efve.py"])
+        (self.repo / "analytics" / "na\u00efve.py").unlink()
+        # the grade names the file as the handoff would spell it, and believes the handoff that does
+        self.handoff()
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, base, None, ["A001", "A002"], task="F001#1",
+                                  feature_files=["analytics/service.py"])
+        self.assertEqual(len(g.problems), 1, g.problems)
+        self.assertIn("analytics/caf\u00e9.py outside the feature's Files", g.problems[0])
+        text = files.read_text(files.handoff_path(self.m, "F001")).replace("## Completed\nx", "## Completed\nx; also analytics/caf\u00e9.py")
+        files.write_text(files.handoff_path(self.m, "F001"), text)
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, base, None, ["A001", "A002"], task="F001#1",
+                                  feature_files=["analytics/service.py"])
+        self.assertEqual(g.problems, [])
+
+    def test_a_rename_reports_its_source(self):
+        # a `git mv` from outside the Files into them deletes a path outside; rename detection
+        # folds the two sides into one entry named after the destination and hides the deletion
+        (self.repo / "docs").mkdir()
+        (self.repo / "docs" / "note.md").write_text("n\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "F001: a note")
+        base = self.git("rev-parse", "HEAD")
+        self.git("mv", "docs/note.md", "analytics/note.md")
+        self.git("commit", "-qm", "F001: move it")
+        head = self.git("rev-parse", "HEAD")
+        self.assertEqual(files.git_out(self.repo, "diff", "--name-only", "-M", base, head), "analytics/note.md")
+        self.assertEqual(grading.paths_outside(self.repo, base, head, ["analytics"]), ["docs/note.md"])
+        self.assertEqual(grading.paths_outside(self.repo, base, head, ["analytics", "docs"]), [])
+        self.handoff()
+        g = grading.grade_feature(self.m, "F001", self.repo, PLUGIN, base, None, ["A001", "A002"], task="F001#1",
+                                  feature_files=["analytics"])
+        self.assertEqual(len(g.problems), 1, g.problems)
+        self.assertIn("docs/note.md outside the feature's Files", g.problems[0])
+        self.assertEqual(classify(ClassifyTests().out(), g), "malformed_handoff")
+
 
 class BlindTests(Fixture):
     def test_blind_hides_and_restores(self):
@@ -1257,6 +1530,64 @@ class BlindTests(Fixture):
         self.assertTrue((self.m / "runs" / "F002#1").is_dir())
         self.assertFalse((self.m / ".blind").exists())
         self.assertEqual(prep.restore_blind(self.m), [])
+        self.assertIsNone(journal.last(self.m, "note"))                   # nothing strayed: no note, no .strays
+        self.assertFalse((self.m / ".strays").exists())
+
+    def test_the_hidden_original_wins_and_the_stray_goes_aside(self):
+        ctx = make_ctx(self.m, self.tmp)
+        (self.m / "handoffs").mkdir()
+        (self.m / "handoffs" / "F001.md").write_text("original", encoding="utf-8")
+        (self.m / "validation").mkdir()
+        (self.m / "validation" / "M1-scrutiny.md").write_text("v", encoding="utf-8")
+        with prep.blind(ctx, "review-F001#1"):
+            # the reviewer writes a handoff where the hidden one belongs, a new one, and a FILE named validation
+            (self.m / "handoffs").mkdir()
+            (self.m / "handoffs" / "F001.md").write_text("reviewer wrote this", encoding="utf-8")
+            (self.m / "handoffs" / "F009.md").write_text("new", encoding="utf-8")
+            (self.m / "validation").write_text("not a dir", encoding="utf-8")
+        self.assertEqual(files.read_text(self.m / "handoffs" / "F001.md"), "original")
+        self.assertEqual(files.read_text(self.m / "handoffs" / "F009.md"), "new")   # nothing hidden there: it stays
+        self.assertTrue((self.m / "validation").is_dir())
+        self.assertEqual(files.read_text(self.m / "validation" / "M1-scrutiny.md"), "v")
+        aside = self.m / ".strays" / "review-F001#1"
+        self.assertEqual(files.read_text(aside / "F001.md"), "reviewer wrote this")
+        self.assertEqual(files.read_text(aside / "validation"), "not a dir")
+        self.assertFalse((self.m / ".blind").exists())
+        note = journal.last(self.m, "note")
+        self.assertEqual(note["text"], "moved aside files written while hidden: handoffs/F001.md, validation -> .strays/review-F001#1/")
+        self.assertEqual(note["task"], "review-F001#1")
+        with prep.blind(ctx, "review-F002#1"):
+            pass
+        self.assertEqual(journal.count(self.m, "note"), 1)
+        self.assertFalse((self.m / ".strays" / "review-F002#1").exists())
+        # the window's finally tolerates a cell that is already gone
+        with prep.blind(ctx, "review-F003#1"):
+            self.assertEqual(prep.restore_blind(self.m), ["review-F003#1"])
+            self.assertTrue((self.m / "handoffs" / "F001.md").exists())
+        self.assertEqual(files.read_text(self.m / "handoffs" / "F001.md"), "original")
+        self.assertFalse((self.m / ".blind").exists())
+
+    def test_restore_after_a_crash_moves_strays_aside(self):
+        cell = self.m / ".blind" / "review-F001#1"
+        (cell / "handoffs").mkdir(parents=True)
+        (cell / "handoffs" / "F001.md").write_text("hidden", encoding="utf-8")
+        (cell / "decisions").mkdir()
+        (cell / "decisions" / "F001.md").write_text("hidden decision", encoding="utf-8")
+        os.chmod(cell, 0)
+        (self.m / "handoffs").mkdir()
+        (self.m / "handoffs" / "F001.md").write_text("stray", encoding="utf-8")
+        (self.m / "decisions").mkdir()
+        (self.m / "decisions" / "F001.md").write_text("stray decision", encoding="utf-8")
+        self.assertEqual(prep.restore_blind(self.m), ["review-F001#1"])
+        self.assertEqual(files.read_text(self.m / "handoffs" / "F001.md"), "hidden")
+        self.assertEqual(files.read_text(self.m / "decisions" / "F001.md"), "hidden decision")
+        aside = self.m / ".strays" / "review-F001#1"
+        # two strays with one basename: the later one (handoffs sorts after decisions) gets a suffix
+        self.assertEqual(files.read_text(aside / "F001.md"), "stray decision")
+        self.assertEqual(files.read_text(aside / "F001.md.2"), "stray")
+        self.assertEqual(journal.last(self.m, "note")["text"],
+                         "moved aside files written while hidden: decisions/F001.md, handoffs/F001.md -> .strays/review-F001#1/")
+        self.assertFalse((self.m / ".blind").exists())
 
 
 class LockEnv:
@@ -1318,20 +1649,91 @@ class HostLeaseTests(LockEnv, Fixture):
 
 
 class PreflightPrepTests(RepoFixture):
+    def cfg(self, **over):
+        cfg = {"harness": "stub", "checkout": ".", "branch": "mission/demo", "adapters": {"stub": {"script_dir": str(self.tmp)}}}
+        cfg.update(over)
+        files.write_config(self.m, cfg)
+
+    def ns(self, **over):
+        kw = dict(mission_dir=str(self.m), harness=None, milestone=None, limit=None, until=None, dry_run=False)
+        kw.update(over)
+        return argparse.Namespace(**kw)
+
     def test_preflight_restores_blind_and_warns_on_no_host_lease(self):
-        files.write_config(self.m, {"harness": "stub", "checkout": ".", "branch": "mission/demo", "host_lease": False,
-                                    "adapters": {"stub": {"script_dir": str(self.tmp)}}})
+        self.cfg(host_lease=False)
         cell = self.m / ".blind" / "review-F001#1"
         (cell / "handoffs").mkdir(parents=True)
         (cell / "handoffs" / "F001.md").write_text("hidden", encoding="utf-8")
         os.chmod(cell, 0)
+        # without `restore`: a warning, and the cell is left where it is
         problems, warnings, cfg = loop.preflight(self.m, PLUGIN)
         self.assertEqual(problems, [])
+        self.assertIn("found .blind/review-F001#1: a reviewer run is in progress, or a driver crashed inside one; "
+                      "`missions run` restores it once it holds the driver lock", warnings)
+        self.assertTrue(cell.is_dir())
+        self.assertFalse((self.m / "handoffs").exists())
+        self.assertIsNone(journal.last(self.m, "note"))
+        problems, warnings, cfg = loop.preflight(self.m, PLUGIN, restore=True)
+        self.assertEqual(problems, [])
         self.assertTrue(any("restored .blind/review-F001#1" in w for w in warnings), warnings)
+        self.assertFalse(any("found .blind" in w for w in warnings), warnings)
         self.assertTrue(any("host_lease is false" in w for w in warnings), warnings)
         self.assertEqual(files.read_text(self.m / "handoffs" / "F001.md"), "hidden")
         self.assertFalse((self.m / ".blind").exists())
         self.assertIn("restored .blind/review-F001#1", journal.last(self.m, "note")["text"])
+
+    def test_the_window_is_restored_only_under_the_lock(self):
+        self.cfg()
+        self.handoff("F001")
+        ctx = make_ctx(self.m, self.repo, cfg=files.read_config(self.m))
+        out = io.StringIO()
+        with prep.blind(ctx, "review-F001#1"):
+            cell = self.m / ".blind" / "review-F001#1"
+            # `missions preflight` and a dry run look, warn, and leave the window alone
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(cli.cmd_preflight(self.ns()), 0)
+                self.assertEqual(loop.run(self.m, self.ns(dry_run=True)), 0)
+            self.assertEqual(out.getvalue().count("warning: found .blind/review-F001#1: a reviewer run is in progress"), 2)
+            self.assertTrue(cell.is_dir())
+            self.assertFalse((self.m / "handoffs").exists())
+            self.assertFalse((self.m / ".driver.lock").exists())
+            # a second driver: the lock is held, so it never reaches preflight, let alone the restore
+            with loop.DriverLock(self.m):
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(loop.run(self.m, self.ns()), loop.EXIT_CODES["preflight-failed"])
+            self.assertIn("another driver holds", out.getvalue())
+            self.assertTrue(cell.is_dir())
+            self.assertFalse((self.m / "handoffs").exists())
+            self.assertIsNone(journal.last(self.m, "stop"))
+            self.assertIsNone(journal.last(self.m, "note"))
+            # the driver that holds the lock restores: what `run` does inside DriverLock
+            problems, warnings, _ = loop.preflight(self.m, PLUGIN, restore=True)
+            self.assertEqual(problems, [])
+            self.assertTrue(any("restored .blind/review-F001#1" in w for w in warnings), warnings)
+            self.assertTrue((self.m / "handoffs" / "F001.md").exists())
+            self.assertFalse(cell.exists())
+        # the window's own finally found its cell gone and returned
+        self.assertTrue((self.m / "handoffs" / "F001.md").exists())
+        self.assertFalse((self.m / ".blind").exists())
+        # a path that is no directory: preflight says so, and there is nothing to lock
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(loop.run(self.tmp / "nowhere", self.ns()), loop.EXIT_CODES["preflight-failed"])
+        self.assertIn("is not a mission directory", out.getvalue())
+
+    def test_unset_branch_fails_preflight(self):
+        self.cfg(branch="")
+        text = files.read_text(self.m / "state.md")
+        files.write_text(self.m / "state.md", "\n".join(ln for ln in text.split("\n") if not ln.startswith("**Branch:**")))
+        self.assertEqual(files.read_state(self.m).branch, "")
+        problems, _, _ = loop.preflight(self.m, PLUGIN)
+        self.assertEqual(problems, ["no mission branch: state.md has no **Branch:** line and driver.json has no branch -- set one; "
+                                    "the worker hooks refuse commits off the mission branch"])
+        # either source naming one is enough
+        self.cfg(branch="mission/demo")
+        self.assertEqual(loop.preflight(self.m, PLUGIN)[0], [])
+        self.cfg(branch="")
+        files.write_text(self.m / "state.md", text)
+        self.assertEqual(loop.preflight(self.m, PLUGIN)[0], [])
 
 
 class CliInitTests(Fixture):
@@ -1658,6 +2060,252 @@ class RunRoleTests(LockEnv, RepoFixture):
         self.assertIn("never a cap raise", s["needs"])
         self.assertEqual(files.read_state(self.m).phase, "halted")
 
+    def test_negotiate_rejects_an_assertion_the_contract_lacks(self):
+        # attempt 1 repairs A099, which contract.md does not have: the complaint goes back in the
+        # re-run prompt and attempt 2, which names A002, is applied -- nothing written in between
+        good = {"findings": [{"title": "leak", "assertion": "A002", "found_by": "mission-reviewer (review-F001)", "where": "",
+                              "severity": "high", "cluster": "C01", "cluster_label": "tenant", "blocking": True, "disposition": "repair", "why": "x"}],
+                "repairs": [{"cluster": "C01", "title": "tenancy filter", "assertions": ["A002"], "files": ["analytics/service.py"],
+                             "procedures": "", "out_of_scope": ""}], "contract_wrong": False, "reason": ""}
+        bad = json.loads(json.dumps(good))
+        bad["findings"][0]["assertion"] = "A099"
+        bad["repairs"][0]["assertions"] = ["A099", "A002"]
+        d = self.tmp / "stubs2"
+        d.mkdir()
+        files.write_text(d / "negotiate.sh", "#!/bin/bash\ncase \"$MISSIONS_TASK\" in\n  'negotiate-M1#1') echo '%s' ;;\n  *) echo '%s' ;;\n"
+                         "esac > \"$MISSIONS_RUN_DIR/output.md\"\n" % (json.dumps(bad), json.dumps(good)))
+        self.ctx.adapter = StubAdapter({"script_dir": str(d)})
+        feats = files.read_features(self.m)
+        mfeats = [f for f in feats if f.milestone == "M1"]
+        rows = validate.milestone_assertions(self.m, "M1", feats)
+        r = validate._negotiate(self.ctx, "M1", 1, rows, mfeats)
+        self.assertEqual([x["id"] for x in r], ["F004"])
+        self.assertEqual([x["task"] for x in journal.events(self.m) if x["event"] == "dispatch"], ["negotiate-M1#1", "negotiate-M1#2"])
+        second = files.read_text(self.m / "runs" / "negotiate-M1#2" / "prompt.md")
+        self.assertIn("could not be applied: findings[0]: A099 is not in the contract; repairs[0]: A099 is not in the contract\n", second)
+        self.assertIn("reply rejected -- findings[0]: A099 is not in the contract",
+                      journal.last(self.m, "note", lambda x: x.get("task") == "negotiate-M1#1")["text"])
+        self.assertEqual(journal.last(self.m, "judgment")["task"], "negotiate-M1#2")
+        self.assertEqual([(f.id, f.assertion) for f in files.read_followups(self.m)], [("FU001", "A002")])
+        self.assertNotIn("A099", "".join(files.read_text(self.m / n) for n in ("features.md", "contract.md", "followups.md")))
+        self.assertEqual(check_sh(self.m)[0], 0)
+        # two such replies: stop error with the complaint, the round left open, nothing written
+        files.write_text(d / "negotiate.sh", "#!/bin/bash\necho '%s' > \"$MISSIONS_RUN_DIR/output.md\"\n" % json.dumps(bad))
+        before = tuple(files.read_text(self.m / n) for n in ("features.md", "contract.md", "followups.md"))
+        self.assertEqual(validate._negotiate(self.ctx, "M1", 2, rows, mfeats), 1)
+        self.assertEqual(before, tuple(files.read_text(self.m / n) for n in ("features.md", "contract.md", "followups.md")))
+        s = journal.last(self.m, "stop")
+        self.assertEqual((s["reason"], s["exit"]), ("error", 1))
+        self.assertIn("negotiate: two replies could not be applied; last: findings[0]: A099 is not in the contract", s["detail"])
+        self.assertEqual(journal.count(self.m, "judgment"), 1)
+        self.assertIsNone(journal.last(self.m, "validate_done"))
+        self.assertIsNone(journal.last(self.m, "halt"))
+
+
+class RepairCapTests(Fixture):
+    """The milestone-level half of the repair-round cap (steps.register): repair rounds counted
+    from the journal's validate_done records, the ceiling from the milestone's assertion count --
+    and the caps check that moved next to it."""
+
+    FU = {"title": "leak", "source": "M1-review-F001", "assertion": "A002", "found_by": "mission-reviewer", "where": "",
+          "severity": "high", "cluster": "C01", "cluster_label": "tenant", "blocking": True, "disposition": "repair", "why": "x"}
+    RP = {"cluster": "C01", "title": "tenancy filter", "assertions": ["A002"], "files": ["analytics/service.py"],
+          "procedures": "", "out_of_scope": "", "origins": ["F001"]}
+
+    def test_milestone_repair_rounds_and_ceiling(self):
+        self.assertEqual(steps.milestone_repair_rounds(self.m, "M1"), 0)
+        journal.append(self.m, "validate_done", milestone="M1", round=1, result="repairs")
+        journal.append(self.m, "validate_done", milestone="M1", round=2, result="halted")      # a human halt never counts
+        journal.append(self.m, "validate_done", milestone="M2", round=1, result="repairs")
+        journal.append(self.m, "validate_done", milestone="M1", round=3, result="closed")
+        self.assertEqual((steps.milestone_repair_rounds(self.m, "M1"), steps.milestone_repair_rounds(self.m, "M2")), (1, 1))
+        # M1 has two assertions: at 2 per assertion its ceiling is 4 rounds; M2 has one: 2
+        self.assertIsNone(steps.milestone_cap_problem(self.m, "M1", 2))
+        self.assertIsNone(steps.milestone_cap_problem(self.m, "M2", 2))
+        journal.append(self.m, "validate_done", milestone="M2", round=2, result="repairs")
+        self.assertEqual(steps.milestone_cap_problem(self.m, "M2", 2),
+                         "M2 has had 2 repair round(s), the ceiling for 1 assertion(s) at 2 per assertion -- the diagnosis is wrong, not the code")
+        self.assertIsNone(steps.milestone_cap_problem(self.m, "M1", 1))
+        journal.append(self.m, "validate_done", milestone="M1", round=4, result="repairs")
+        self.assertEqual(steps.milestone_cap_problem(self.m, "M1", 1),
+                         "M1 has had 2 repair round(s), the ceiling for 2 assertion(s) at 1 per assertion -- the diagnosis is wrong, not the code")
+        # a milestone with no routed assertion still gets `cap` rounds
+        self.assertIsNone(steps.milestone_cap_problem(self.m, "M9", 2))
+        # register refuses on the ceiling with nothing written, though no assertion is at its own cap
+        files.write_text(self.m / "mission.md", files.read_text(self.m / "mission.md").replace("Repair rounds per assertion: 2", "Repair rounds per assertion: 1"))
+        ctx = make_ctx(self.m, self.tmp)
+        before = tuple(files.read_text(self.m / n) for n in ("features.md", "contract.md", "followups.md"))
+        r = steps.register(ctx, "M1", [dict(self.FU)], [dict(self.RP)], 5)
+        self.assertIsInstance(r, str)
+        self.assertIn("M1 has had 2 repair round(s), the ceiling for 2 assertion(s) at 1 per assertion", r)
+        self.assertEqual(before, tuple(files.read_text(self.m / n) for n in ("features.md", "contract.md", "followups.md")))
+        self.assertIsNone(journal.last(self.m, "features_added"))
+        # findings without a repair still register: the ceiling is on repairs
+        self.assertEqual(steps.register(ctx, "M1", [dict(self.FU, disposition="accept")], [], 5), (["FU001"], []))
+        # and under the ceiling the per-assertion cap is the one that speaks
+        files.write_text(self.m / "mission.md", files.read_text(self.m / "mission.md").replace("Repair rounds per assertion: 1", "Repair rounds per assertion: 3"))
+        self.assertEqual(steps.register(ctx, "M1", [dict(self.FU)], [dict(self.RP)], 5), (["FU002"], ["F004"]))
+        self.assertEqual(journal.last(self.m, "features_added")["round"], 5)
+        self.assertEqual(check_sh(self.m)[0], 0)
+
+    def test_check_caps(self):
+        ctx = make_ctx(self.m, self.tmp)
+        budget = files.read_budget(self.m)
+        self.assertIsNone(steps.check_caps(ctx, budget))
+        for i in range(3):
+            journal.append(self.m, "dispatch", agent="mission-worker", **{"class": "writer"}, task="F001#%d" % (i + 1))
+        journal.append(self.m, "dispatch", agent="mission-judgment", **{"class": "static"}, task="negotiate-M1#1")
+        self.assertIsNone(steps.check_caps(ctx, dict(budget, dispatch_cap=4.0)))      # a static dispatch is not counted
+        self.assertEqual(steps.check_caps(ctx, dict(budget, dispatch_cap=3.0)), 4)
+        s = journal.last(self.m, "stop")
+        self.assertEqual((s["reason"], s["detail"]), ("budget", "dispatch cap reached: 3 of 3"))
+        self.assertEqual(files.read_state(self.m).phase, "halted")
+        self.assertFalse(hasattr(loop, "_check_caps"))
+
+
+class RegisterTests(Fixture):
+    """steps.register's registry shape: one cluster, one repair feature -- a second reply for a
+    cluster joins its pending feature or, once that feature ran, gets a fresh cluster id -- and a
+    repair with nothing to claim writes no Assertions line. check.sh agrees with every result."""
+
+    def finding(self, **over):
+        fu = {"title": "leak", "source": "M1-review-F001", "assertion": "A002", "found_by": "mission-reviewer", "where": "",
+              "severity": "high", "cluster": "C01", "cluster_label": "tenant", "blocking": True, "disposition": "repair", "why": "x"}
+        fu.update(over)
+        return fu
+
+    def repair(self, **over):
+        rp = {"cluster": "C01", "title": "tenancy filter", "assertions": ["A002"], "files": ["analytics/service.py"],
+              "procedures": "", "out_of_scope": "", "origins": ["F001"]}
+        rp.update(over)
+        return rp
+
+    def test_reuse_joins_the_pending_repair_feature(self):
+        ctx = make_ctx(self.m, self.tmp)
+        self.assertEqual(steps.register(ctx, "M1", [self.finding()], [self.repair()], 1), (["FU001"], ["F004"]))
+        self.assertIsNone(journal.last(self.m, "note"))                                  # a first cluster needs no normalising
+        # the same cluster again while F004 is pending: the follow-up joins it, no F005
+        fus, rp = [self.finding(title="also the summary query", assertion="A001")], [self.repair(title="again", assertions=["A001"])]
+        self.assertEqual(steps.register(ctx, "M1", fus, rp, 2), (["FU002"], ["F004"]))
+        self.assertEqual(rp[0]["assertions"], ["A001", "A002"])                          # the caller's withheld set covers F004
+        self.assertEqual(fus[0]["repair_as"], "F004")
+        self.assertEqual([(x.id, x.cluster, x.repair_as) for x in files.read_followups(self.m)],
+                         [("FU001", "C01", "F004"), ("FU002", "C01", "F004")])
+        feats = {x.id: x for x in files.read_features(self.m)}
+        self.assertNotIn("F005", feats)
+        self.assertEqual((feats["F004"].assertions, feats["F004"].cluster, feats["F004"].repairs, feats["F004"].status),
+                         (["A002"], "C01", ["F001"], "pending"))
+        self.assertIn("- **Repairs:** C01 (FU001, FU002) of F001\n", files.read_text(self.m / "features.md"))
+        self.assertEqual(next(a for a in files.read_contract(self.m) if a.id == "A001").features, ["F001"])   # nothing new routed
+        # the join is journaled too, as `reused`: a round resumed past its negotiate reads it back
+        self.assertEqual(journal.count(self.m, "features_added"), 2)
+        rec = journal.last(self.m, "features_added")
+        self.assertEqual((rec["ids"], rec["reused"], rec["round"]), ([], ["F004"], 2))
+        self.assertEqual(validate.applied_repairs(self.m, "M1", 2, files.read_features(self.m)),
+                         [{"id": "F004", "cluster": "C01", "assertions": ["A002"]}])
+        self.assertEqual(journal.last(self.m, "followups_added")["ids"], ["FU002"])
+        n = journal.last(self.m, "note")
+        self.assertEqual((n["text"], n["feature"], n["cluster"], n["milestone"], n["round"]),
+                         ("cluster C01 already has repair feature F004 (pending): the new follow-up(s) join it", "F004", "C01", "M1", 2))
+        rc, out = check_sh(self.m)
+        self.assertEqual(rc, 0, out)
+        # findings without a repair keep their label untouched; an active feature is joined like a pending one
+        files.set_feature(self.m, "F004", status="active")
+        self.assertEqual(steps.register(ctx, "M1", [self.finding(title="third", disposition="accept", why="later")], [], None), (["FU003"], []))
+        self.assertEqual((files.read_followups(self.m)[2].cluster, files.read_followups(self.m)[2].repair_as), ("C01", None))
+        self.assertEqual(journal.count(self.m, "note"), 1)
+        fus, rp = [self.finding(title="fourth")], [self.repair(title="fourth")]
+        self.assertEqual(steps.register(ctx, "M1", fus, rp, 3), (["FU004"], ["F004"]))
+        self.assertEqual(rp[0]["assertions"], ["A002"])
+        self.assertIn("repair feature F004 (active)", journal.last(self.m, "note")["text"])
+        self.assertIn("- **Repairs:** C01 (FU001, FU002, FU004) of F001\n", files.read_text(self.m / "features.md"))
+        self.assertEqual(journal.count(self.m, "features_added"), 3)                     # the accept-only call added none
+        rc, out = check_sh(self.m)
+        self.assertEqual(rc, 0, out)
+
+    def test_fresh_cluster_when_the_repair_is_done(self):
+        ctx = make_ctx(self.m, self.tmp)
+        self.assertEqual(steps.register(ctx, "M1", [self.finding()], [self.repair()], 1), (["FU001"], ["F004"]))
+        files.set_feature(self.m, "F004", status="done", commit="0123456789abcdef")
+        # the reply re-uses the label C01 (and accepts something in C02): a new root cause -> C03,
+        # in the findings and the repair alike; the accepted finding keeps C02
+        fus = [self.finding(title="again"), self.finding(title="lint", assertion=None, cluster="C02", disposition="accept", why="later")]
+        rp = [self.repair(title="again")]
+        self.assertEqual(steps.register(ctx, "M1", fus, rp, 2), (["FU002", "FU003"], ["F005"]))
+        self.assertEqual((rp[0]["cluster"], fus[0]["cluster"], fus[1]["cluster"], fus[0]["repair_as"]), ("C03", "C03", "C02", "F005"))
+        self.assertEqual([(x.id, x.cluster, x.cluster_label, x.repair_as) for x in files.read_followups(self.m)],
+                         [("FU001", "C01", "tenant", "F004"), ("FU002", "C03", "tenant", "F005"), ("FU003", "C02", "tenant", None)])
+        feats = {x.id: x for x in files.read_features(self.m)}
+        self.assertEqual((feats["F005"].cluster, feats["F005"].repairs, feats["F005"].assertions, feats["F005"].status),
+                         ("C03", ["F001"], ["A002"], "pending"))
+        raw = files.read_text(self.m / "features.md")
+        self.assertIn("- **Repairs:** C03 (FU002) of F001\n", raw)
+        self.assertIn("- **Repairs:** C01 (FU001) of F001\n", raw)                          # F004 untouched
+        self.assertEqual(next(a for a in files.read_contract(self.m) if a.id == "A002").features, ["F001", "F002", "F004", "F005"])
+        self.assertEqual(journal.last(self.m, "features_added")["ids"], ["F005"])
+        n = journal.last(self.m, "note")
+        self.assertEqual((n["text"], n["feature"], n["cluster"], n["round"]),
+                         ("cluster C01 was repaired by F004 (done); this round's repair is registered as C03", "F004", "C03", 2))
+        rc, out = check_sh(self.m)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("cluster split", out)
+        # a blocked repair feature, and one features.md no longer has, are fresh clusters too
+        files.write_text(self.m / "mission.md", files.read_text(self.m / "mission.md").replace("Repair rounds per assertion: 2", "Repair rounds per assertion: 9"))
+        files.set_feature(self.m, "F005", status="blocked")
+        fus, rp = [self.finding(title="third", cluster="C03")], [self.repair(title="third", cluster="C03")]
+        self.assertEqual(steps.register(ctx, "M1", fus, rp, 3), (["FU004"], ["F006"]))
+        self.assertEqual(rp[0]["cluster"], "C04")
+        self.assertEqual(journal.last(self.m, "note")["text"], "cluster C03 was repaired by F005 (blocked); this round's repair is registered as C04")
+        files.append_followups(self.m, [self.finding(title="stray", cluster="C05", repair_as="F009")])
+        fus, rp = [self.finding(title="fifth", cluster="C05")], [self.repair(title="fifth", cluster="C05")]
+        self.assertEqual(steps.register(ctx, "M1", fus, rp, None), (["FU006"], ["F007"]))
+        self.assertEqual(rp[0]["cluster"], "C06")
+        self.assertEqual(journal.last(self.m, "note")["text"], "cluster C05 was repaired by F009 (not in features.md); this round's repair is registered as C06")
+        self.assertNotIn("round", journal.last(self.m, "features_added"))                   # triage passes None
+        self.assertEqual([x.id for x in files.read_features(self.m) if x.milestone == "M1"], ["F001", "F002", "F004", "F005", "F006", "F007"])
+
+    def test_repair_without_assertions_writes_no_assertions_line(self):
+        ctx = make_ctx(self.m, self.tmp)
+        fus = [self.finding(title="log noise", assertion=None, severity="low", blocking=False)]
+        rp = [self.repair(title="quiet the logger", assertions=[])]
+        self.assertEqual(steps.register(ctx, "M1", fus, rp, 1), (["FU001"], ["F004"]))
+        raw = files.read_text(self.m / "features.md")
+        self.assertIn("### F004 — quiet the logger\n- **Files:** `analytics/service.py`\n- **Procedures:** —\n", raw)
+        self.assertNotIn("- **Assertions:** —", raw)
+        feat = next(f for f in files.read_features(self.m) if f.id == "F004")
+        self.assertEqual((feat.assertions, feat.repairs, feat.cluster, feat.files), ([], ["F001"], "C01", ["analytics/service.py"]))
+        self.assertEqual([a.features for a in files.read_contract(self.m)], [["F001"], ["F001", "F002"], ["F003"]])   # nothing routed
+        prompt = prompts.worker_prompt(self.m, feat, "digest", [], steps.design_for(self.m, feat), PLUGIN)
+        self.assertIn("(contract.md names no assertion for F004 — say so in the handoff)", prompt)
+        rc, out = check_sh(self.m)
+        self.assertEqual(rc, 0, out)
+        # the section still takes its Status and Range lines where set_feature puts them
+        files.set_feature(self.m, "F004", status="done", commit="0123456789abcdef", rng="abc1234..def5678")
+        self.assertIn("- **Repairs:** C01 (FU001) of F001\n- **Status:** done · commit `0123456`\n- **Range:** `abc1234`..`def5678`\n",
+                      files.read_text(self.m / "features.md"))
+
+
+class PatchTests(RepoFixture):
+    def test_patch_covers_the_whole_range(self):
+        base = self.git("rev-parse", "HEAD")
+        (self.repo / "docs").mkdir()
+        files.write_text(self.repo / "docs" / "NOTE.md", "declared in the handoff\n")
+        (self.repo / "analytics" / "service.py").open("a", encoding="utf-8").write("# F001\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "F001: work")
+        head = self.git("rev-parse", "HEAD")
+        ctx = make_ctx(self.m, self.repo, cfg=files.read_config(self.m))
+        self.assertEqual(steps.materialise_patch(ctx, "F001", base, head), str(self.m / "patches" / "F001.patch"))
+        text = files.read_text(self.m / "patches" / "F001.patch")
+        self.assertTrue(text.startswith("feature: F001\nbase: %s\nhead: %s\npaths: <all>\n\n" % (base, head)))
+        self.assertIn("diff --git a/docs/NOTE.md", text)              # outside F001's Files, and in the patch
+        self.assertIn("diff --git a/analytics/service.py", text)
+        self.assertIsNone(journal.last(self.m, "note"))
+        # an empty range is no patch, and a note
+        self.assertIsNone(steps.materialise_patch(ctx, "F002", head, head))
+        self.assertIn("empty diff for F002", journal.last(self.m, "note")["text"])
+        self.assertFalse((self.m / "patches" / "F002.patch").exists())
+
 
 class TriageTests(LockEnv, Fixture):
     ISSUES = ["F001 handoff: the test stack would not start on port 5435", "F001 handoff: the fixture row for tenant B is missing"]
@@ -1826,6 +2474,28 @@ class TriageTests(LockEnv, Fixture):
         self.assertIn("could not be applied: the run exited 9 with no reply", files.read_text(self.m / "runs" / "triage#4" / "prompt.md"))
         self.assertEqual(journal.last(self.m, "step_done")["cls"], "error")
 
+    def test_step_triage_rejects_an_assertion_the_contract_lacks(self):
+        # attempt 1 repairs A099, which the contract does not have -- a reply the schema accepts,
+        # and the applier could not have routed; attempt 2 names A002 and is applied
+        self.script('case "$MISSIONS_TASK" in\n'
+                    '  "triage#1") echo \'{"resolutions":[{"issue":1,"disposition":"resolved","why":"x"},{"issue":2,"disposition":"repair","why":"y",'
+                    '"followup":{"title":"t","assertion":"A099","severity":"low","cluster":"C01","blocking":false},'
+                    '"repair":{"title":"r","assertions":["A099"],"files":["tests/unit/test_a.py"]}}]}\' ;;\n'
+                    '  *) echo \'{"resolutions":[{"issue":1,"disposition":"resolved","why":"x"},{"issue":2,"disposition":"repair","why":"y",'
+                    '"followup":{"title":"t","assertion":"A002","severity":"low","cluster":"C01","blocking":false},'
+                    '"repair":{"title":"r","assertions":["A002"],"files":["tests/unit/test_a.py"]}}]}\' ;;\n'
+                    'esac > "$MISSIONS_RUN_DIR/output.md"\n')
+        self.assertIsNone(steps.step_triage(self.ctx, files.read_state(self.m)))
+        second = files.read_text(self.m / "runs" / "triage#2" / "prompt.md")
+        self.assertIn("could not be applied: resolutions[1].followup: A099 is not in the contract; "
+                      "resolutions[1].repair: A099 is not in the contract\n", second)
+        self.assertEqual([(f.id, f.assertion, f.repair_as) for f in files.read_followups(self.m)], [("FU001", "A002", "F004")])
+        self.assertEqual(journal.last(self.m, "features_added")["ids"], ["F004"])
+        self.assertEqual(files.read_state(self.m).open_issues, [])
+        self.assertNotIn("A099", "".join(files.read_text(self.m / n) for n in ("features.md", "contract.md", "followups.md")))
+        rc, out = check_sh(self.m)
+        self.assertEqual(rc, 0, out)
+
 
 class ValidateRuleTests(Fixture):
     """The mechanical half of VALIDATE on the base fixture: the proven rule, the round bookkeeping,
@@ -1835,38 +2505,125 @@ class ValidateRuleTests(Fixture):
         journal.append(self.m, "verdict", validator=validator, feature=feature, milestone=milestone, round=round_no,
                        assertions=assertions, file=file)
 
-    def test_proven_rule_latest_wins_and_interface_needs_behavior(self):
+    def test_proven_rule_reads_the_round_whole(self):
+        feats = files.read_features(self.m)
+        rows = {r.id: r for r in files.read_contract(self.m)}
         files.claim_assertions(self.m, ["A001", "A002"])
+        # round 1: one negative among two reviews of A002 refutes it, whatever the later one said
         self.verdict("mission-reviewer", {"A001": "satisfied", "A002": "not satisfied"}, "validation/M1-review-F001.md", "F001")
-        self.verdict("mission-reviewer", {"A002": "cannot tell"}, "validation/M1-review-F002.md", "F002")
-        self.assertEqual(validate.proven_evidence(self.m, "M1"), {"A001": "validation/M1-review-F001.md"})
-        # the repair round's review is the latest verdict on A002, and wins
-        self.verdict("mission-reviewer", {"A002": "satisfied"}, "validation/M1-review-F004-r2.md", "F004", round_no=2)
-        self.assertEqual(validate.proven_evidence(self.m, "M1"),
-                         {"A001": "validation/M1-review-F001.md", "A002": "validation/M1-review-F004-r2.md"})
+        self.verdict("mission-reviewer", {"A002": "satisfied"}, "validation/M1-review-F002.md", "F002")
+        self.assertEqual(validate.proven_evidence(self.m, "M1", 1, feats),
+                         ({"A001": "validation/M1-review-F001.md"}, {"A002": "validation/M1-review-F001.md"}))
+        rv = verdicts.round_verdicts(self.m, "M1", 1)
+        self.assertEqual((validate.verdict_of(rv, rows["A001"], feats), validate.verdict_of(rv, rows["A002"], feats)),
+                         ("satisfied", "not satisfied"))
+        # round 2: a `cannot tell` blocks without refuting
+        self.verdict("mission-reviewer", {"A001": "satisfied", "A002": "cannot tell"}, "validation/M1-review-F001-r2.md", "F001", round_no=2)
+        self.verdict("mission-reviewer", {"A002": "satisfied"}, "validation/M1-review-F002-r2.md", "F002", round_no=2)
+        self.assertEqual(validate.proven_evidence(self.m, "M1", 2, feats), ({"A001": "validation/M1-review-F001-r2.md"}, {}))
+        self.assertEqual(validate.verdict_of(verdicts.round_verdicts(self.m, "M1", 2), rows["A002"], feats), "cannot tell")
+        # round 3: a repair feature routed to A002 was reviewed -- only its review counts on A002
+        files.append_feature(self.m, "M1", "tenancy filter", ["A002"], ["analytics/service.py"], "", "", "C01 (FU001) of F001")
+        files.route_assertion(self.m, "A002", "F004")
+        feats = files.read_features(self.m)
+        self.assertEqual((feats[2].id, feats[2].repairs, feats[2].cluster), ("F004", ["F001"], "C01"))
+        self.verdict("mission-reviewer", {"A001": "satisfied", "A002": "not satisfied"}, "validation/M1-review-F001-r3.md", "F001", round_no=3)
+        self.verdict("mission-reviewer", {"A002": "satisfied"}, "validation/M1-review-F004-r3.md", "F004", round_no=3)
+        self.assertEqual(validate.proven_evidence(self.m, "M1", 3, feats),
+                         ({"A001": "validation/M1-review-F001-r3.md", "A002": "validation/M1-review-F004-r3.md"}, {}))
+        # round 4: the repair's own negative refutes, whatever the origin's review said
+        self.verdict("mission-reviewer", {"A002": "satisfied"}, "validation/M1-review-F001-r4.md", "F001", round_no=4)
+        self.verdict("mission-reviewer", {"A002": "not satisfied"}, "validation/M1-review-F004-r4.md", "F004", round_no=4)
+        self.assertEqual(validate.proven_evidence(self.m, "M1", 4, feats), ({}, {"A002": "validation/M1-review-F004-r4.md"}))
+        # a round that said nothing leaves everything in neither; the summary still reads the latest
+        self.assertEqual(validate.proven_evidence(self.m, "M1", 9, feats), ({}, {}))
+        self.assertEqual(verdicts.latest_verdicts(self.m, "M1")["reviews"]["A002"], ("not satisfied", "validation/M1-review-F004-r4.md"))
         # an interface assertion is proven by the behavior validator, never by a diff
         self.verdict("mission-reviewer", {"A003": "satisfied"}, "validation/M2-review-F003.md", "F003", milestone="M2")
-        self.assertEqual(validate.proven_evidence(self.m, "M2"), {})
+        self.assertEqual(validate.proven_evidence(self.m, "M2", 1, feats), ({}, {}))
         self.verdict("mission-validator-behavior", {"A003": "FAILED"}, "validation/M2-behavior.md", milestone="M2")
-        self.assertEqual(validate.proven_evidence(self.m, "M2"), {})
-        latest = verdicts.latest_verdicts(self.m, "M2")
-        self.assertEqual(validate.verdict_of(latest, next(a for a in files.read_contract(self.m) if a.id == "A003")), "FAILED")
-        self.verdict("mission-validator-behavior", {"A003": "proven"}, "validation/M2-behavior-r2.md", milestone="M2", round_no=2)
-        self.assertEqual(validate.proven_evidence(self.m, "M2"), {"A003": "validation/M2-behavior-r2.md"})
+        self.assertEqual(validate.proven_evidence(self.m, "M2", 1, feats), ({}, {"A003": "validation/M2-behavior.md"}))
+        self.assertEqual(validate.verdict_of(verdicts.round_verdicts(self.m, "M2", 1), rows["A003"], feats), "FAILED")
+        self.verdict("mission-validator-behavior", {"A003": "not reached"}, "validation/M2-behavior-r2.md", milestone="M2", round_no=2)
+        self.assertEqual(validate.proven_evidence(self.m, "M2", 2, feats), ({}, {}))
+        self.verdict("mission-validator-behavior", {"A003": "proven"}, "validation/M2-behavior-r3.md", milestone="M2", round_no=3)
+        self.assertEqual(validate.proven_evidence(self.m, "M2", 3, feats), ({"A003": "validation/M2-behavior-r3.md"}, {}))
         # a behavior `proven` on a structural assertion proves nothing either
-        self.verdict("mission-validator-behavior", {"A001": "proven"}, "validation/M1-behavior.md")
-        files.write_text(self.m / "contract.md", files.read_text(self.m / "contract.md").replace("| F001 | claimed |", "| F001 | unproven |"))
-        journal.append(self.m, "verdict", validator="mission-reviewer", feature="F001", milestone="M1", round=3,
-                       assertions={"A001": "cannot tell"}, file="validation/M1-review-F001-r3.md")
-        self.assertNotIn("A001", validate.proven_evidence(self.m, "M1"))
-        # end to end: the marks land in contract.md with the file as evidence, and never move down
-        self.assertEqual(files.prove_assertions(self.m, validate.proven_evidence(self.m, "M1")), ["A002"])
-        self.assertEqual(files.prove_assertions(self.m, validate.proven_evidence(self.m, "M2")), ["A003"])
+        self.verdict("mission-validator-behavior", {"A001": "proven"}, "validation/M1-behavior-r5.md", round_no=5)
+        self.assertEqual(validate.proven_evidence(self.m, "M1", 5, feats), ({}, {}))
+        # end to end: the marks land in contract.md with the file as evidence, and a later
+        # round's negative is the one thing that moves one back
+        self.assertEqual(files.prove_assertions(self.m, validate.proven_evidence(self.m, "M1", 3, feats)[0]), ["A001", "A002"])
+        self.assertEqual(files.prove_assertions(self.m, validate.proven_evidence(self.m, "M2", 3, feats)[0]), ["A003"])
         rows = {r.id: r for r in files.read_contract(self.m)}
-        self.assertEqual((rows["A001"].status, rows["A002"].status, rows["A002"].evidence, rows["A003"].evidence),
-                         ("unproven", "proven", "validation/M1-review-F004-r2.md", "validation/M2-behavior-r2.md"))
+        self.assertEqual((rows["A001"].status, rows["A002"].evidence, rows["A003"].evidence),
+                         ("proven", "validation/M1-review-F004-r3.md", "validation/M2-behavior-r3.md"))
+        self.assertEqual(files.reopen_assertions(self.m, validate.proven_evidence(self.m, "M1", 4, feats)[1]), ["A002"])
+        rows = {r.id: r for r in files.read_contract(self.m)}
+        self.assertEqual((rows["A001"].status, rows["A002"].status, rows["A002"].evidence),
+                         ("proven", "claimed", "validation/M1-review-F004-r4.md"))
         rc, out = check_sh(self.m)
         self.assertEqual(rc, 0, out)
+
+    def test_closed_milestone_and_the_done_stop(self):
+        self.assertFalse(validate.closed(self.m, "M1"))
+        journal.append(self.m, "validate_start", milestone="M1", round=1)
+        journal.append(self.m, "milestone_closed", milestone="M1", next="M2", round=1)
+        # the close journals milestone_closed before validate_done: in between, the round is open
+        self.assertFalse(validate.closed(self.m, "M1"))
+        journal.append(self.m, "validate_done", milestone="M1", round=1, result="closed")
+        self.assertTrue(validate.closed(self.m, "M1"))
+        self.assertFalse(validate.closed(self.m, "M2"))
+        # a round opened on it afterwards is an open round, and the loop resumes it
+        journal.append(self.m, "validate_start", milestone="M1", round=2)
+        self.assertFalse(validate.closed(self.m, "M1"))
+        ctx = make_ctx(self.m, self.tmp)
+        files.write_state_fields(self.m, phase="validating", milestone="M2")
+        self.assertEqual(validate.done_stop(ctx), 0)
+        st = files.read_state(self.m)
+        self.assertEqual(st.phase, "validating")
+        self.assertTrue(st.resume_next.startswith("terminal steps 1-6 of /missions:mission-run: all 2 milestone(s) validated"))
+        s = journal.last(self.m, "stop")
+        self.assertEqual((s["reason"], s["exit"], s["detail"]), ("done", 0, "all 2 milestone(s) validated; every assertion proven"))
+        self.assertIn("terminal steps 1-6", s["needs"])
+
+    def test_done_steps_count_a_no_patch_review(self):
+        journal.append(self.m, "validate_start", milestone="M1", round=1)
+        journal.append(self.m, "validate_step", milestone="M1", round=1, step="reviewer", feature="F001", task="", file="", nopatch=True)
+        journal.append(self.m, "validate_step", milestone="M1", round=1, step="reviewer", feature="F002", task="review-F002#1",
+                       file="validation/M1-review-F002.md")
+        self.assertEqual(sorted(validate._done_steps(self.m, "M1", 1)), [("reviewer", "F001")])     # F002's file is missing
+        self.assertEqual(validate._round_files(self.m, "M1", 1), {})                                # nothing to paste from it
+        (self.m / "validation").mkdir()
+        files.write_text(self.m / "validation" / "M1-review-F002.md", "x")
+        self.assertEqual(sorted(validate._done_steps(self.m, "M1", 1)), [("reviewer", "F001"), ("reviewer", "F002")])
+        self.assertEqual(validate._round_files(self.m, "M1", 1), {"M1-review-F002.md": "x"})
+
+    def test_negotiate_is_applied_once_per_round(self):
+        feats = files.read_features(self.m)
+        self.assertFalse(validate.negotiated(self.m, "M1", 1))
+        journal.append(self.m, "judgment", step="triage", task="triage#1", milestone="M1", summary="x")
+        journal.append(self.m, "judgment", step="negotiate", task="negotiate-M1#1", milestone="M1", round=1, summary="x")
+        self.assertTrue(validate.negotiated(self.m, "M1", 1))
+        self.assertFalse(validate.negotiated(self.m, "M1", 2))
+        self.assertFalse(validate.negotiated(self.m, "M2", 1))
+        self.assertEqual(validate.applied_repairs(self.m, "M1", 1, feats), [])
+        ctx = make_ctx(self.m, self.tmp)
+        fu = {"title": "leak", "source": "M1-review-F001", "assertion": "A002", "found_by": "mission-reviewer", "where": "",
+              "severity": "high", "cluster": "C01", "cluster_label": "tenant", "blocking": True, "disposition": "repair", "why": "x"}
+        rp = {"cluster": "C01", "title": "tenancy filter", "assertions": ["A002"], "files": ["analytics/service.py"],
+              "procedures": "", "out_of_scope": "", "origins": ["F001"]}
+        self.assertEqual(steps.register(ctx, "M1", [fu], [rp], 1), (["FU001"], ["F004"]))
+        rec = journal.last(self.m, "features_added")
+        self.assertEqual((rec["ids"], rec["milestone"], rec["round"]), (["F004"], "M1", 1))
+        feats = files.read_features(self.m)
+        self.assertEqual(validate.applied_repairs(self.m, "M1", 1, feats), [{"id": "F004", "cluster": "C01", "assertions": ["A002"]}])
+        self.assertEqual(validate.applied_repairs(self.m, "M1", 2, feats), [])
+        # triage registers with no round: its features are nobody's round
+        self.assertEqual(steps.register(ctx, "M1", [dict(fu, cluster="C02")], [dict(rp, cluster="C02", assertions=["A001"])])[1], ["F005"])
+        self.assertNotIn("round", journal.last(self.m, "features_added"))
+        self.assertEqual(validate.applied_repairs(self.m, "M1", 1, files.read_features(self.m)),
+                         [{"id": "F004", "cluster": "C01", "assertions": ["A002"]}])
 
     def test_milestone_assertions_follow_the_routing(self):
         self.assertEqual([a.id for a in validate.milestone_assertions(self.m, "M1")], ["A001", "A002"])

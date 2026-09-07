@@ -12,9 +12,13 @@ written by THIS attempt (content changed since launch), that its commit is on th
 that the tree is clean, that the checkout is still on the mission branch, that every claimed
 assertion belongs to the feature and that a `complete` handoff claims every one of them, that
 every path the commit touches outside the feature's Files is named in the handoff (the pre-commit
-hook only warns about those; this is the gate), and whether the harness reported a quota. When a
-commit landed and no handoff was written, `reconstruct` writes one from the commit, marked as such
--- complete when the run ended on its own terms, partial when it was cut off.
+hook only warns about those; this is the gate), that the run's range holds no merge commit and
+every commit in it carries the feature prefix (the pre-merge-commit and commit-msg hooks refuse
+those for a worker that runs them; `--no-verify` does not run them), that the branch still
+carries the commit the run was launched from (`Grade.rewritten` otherwise: a rebase or a reset,
+which the loop halts on), and whether the harness reported a quota. When a commit landed and no
+handoff was written, `reconstruct` writes one from the commit, marked as such -- complete when
+the run ended on its own terms, partial when it was cut off.
 """
 from __future__ import annotations
 
@@ -117,16 +121,41 @@ def claimed_ids(handoff_raw: str) -> List[str]:
 
 def paths_outside(checkout: Path, base: str, head: str, feature_files: List[str]) -> List[str]:
     """Paths `base..head` touches that are neither under .missions/ nor equal to, or under, a
-    listed Files entry (a directory entry covers its subtree)."""
+    listed Files entry (a directory entry covers its subtree). Rename detection is off: a
+    `git mv` from outside the Files into them is a deletion outside and an addition inside, and
+    a diff that folds the two into one rename names only the destination -- the path the run
+    removed would go unreported."""
     listed = [f.strip().rstrip("/") for f in feature_files if f.strip()]
     out: List[str] = []
-    for p in files.git_out(checkout, "diff", "--name-only", base, head).splitlines():
+    for p in files.git_out(checkout, "diff", "--name-only", "--no-renames", base, head).splitlines():
         p = p.strip()
         if not p or p.startswith(".missions/"):
             continue
         if any(p == f or p.startswith(f + "/") for f in listed):
             continue
         out.append(p)
+    return out
+
+
+def range_problems(checkout: Path, fid: str, since: str, head: str) -> List[str]:
+    """What `since..head` must not hold: a merge commit (a worker never merges; the driver merges
+    main in phase pr) and a commit whose subject lacks the `F0nn:` prefix (the one thing that ties
+    a commit to its feature once the branch has many). The driver measures from HEAD at launch,
+    the self-check from the cited commit's first parent, so both see the same rule."""
+    out: List[str] = []
+    rng = "%s..%s" % (since, head)
+    merges = files.git_out(checkout, "rev-list", "--merges", rng).split()
+    if merges:
+        out.append("the run merged: %s are merge commits in %s..%s -- a worker never merges" % (
+            ", ".join(m[:7] for m in merges), since[:7], head[:7]))
+    unprefixed: List[str] = []
+    for line in files.git_out(checkout, "log", "--format=%H %s", rng).splitlines():
+        sha, _, subject = line.partition(" ")
+        if not subject.startswith(fid + ":"):
+            unprefixed.append(sha[:7])
+    if unprefixed:
+        out.append("commit(s) %s do not start with %s: -- every commit of a run carries the feature prefix" % (
+            ", ".join(unprefixed), fid))
     return out
 
 
@@ -172,6 +201,8 @@ def _check(mission_dir: Path, fid: str, checkout: Path, plugin: Path, h: files.H
             g.problems.append("commit %s is not on the mission branch%s" % (h.sha[:7], (" " + branch) if branch else ""))
         # empty only at a root commit, which has no first parent to be outside of
         since = (base or files.git_out(checkout, "rev-parse", "--verify", "--quiet", full + "~1")) if full else ""
+        if since:
+            g.problems.extend(range_problems(checkout, fid, since, full))
         if since and feature_files:
             # mentioned = the path or its basename appears anywhere in the handoff: a worker that
             # names what it touched is believed; the reason is for the reviewer to weigh
@@ -208,14 +239,17 @@ def grade_feature(mission_dir: Path, fid: str, checkout: Path, plugin: Path, hea
     there was none); the handoff counts as this attempt's only when its content differs. `outcome`,
     when given, is the run the grade is keyed to -- its quota signature belongs to the grade.
     `branch` is the mission branch; commits count only on its ref. `feature_files` is the
-    feature's Files line; paths outside it are measured from `head_before`."""
+    feature's Files line; paths outside it are measured from `head_before`. `rewritten` is set
+    when `head_before` is no longer on the branch's ref: the run rebased, reset or amended, and
+    the ranges of everything before it point at history that is gone."""
     h = files.read_handoff(mission_dir, fid)
     g = Grade(handoff_exists=h.exists, status=h.status, sha=h.sha, issues=list(h.issues),
-              undone=list(h.undone), task=task)
+              undone=list(h.undone), task=task, head_before=head_before)
     g.handoff_written = h.exists and files.fingerprint(files.handoff_path(mission_dir, fid)) != handoff_before
     g.tree_dirty = files.dirty_paths(checkout)
     g.branch_after = files.git_out(checkout, "branch", "--show-current")
     g.new_commit = new_commit_since(checkout, fid, head_before, branch)
+    g.rewritten = bool(head_before) and not commit_on_branch(checkout, head_before, branch)
     g.quota = quota_signature(outcome) if outcome is not None else None
     if h.exists and g.handoff_written:
         _check(mission_dir, fid, checkout, plugin, h, g, feature_assertions, branch, advise=False,

@@ -9,9 +9,10 @@ A002. An assertion the table does not name is left to the caller, which treats a
 as the weakest one. A reviewer's `## Defects` table has no parser: the negotiate prompt pastes
 the whole validation file, and the judgment reads the defects there.
 
-`latest_verdicts` reads the journal's `verdict` events rather than the validation files: they are
-the source of truth after a run, so a driver re-entering VALIDATE after a crash never re-parses a
-file it already journaled.
+`round_verdicts` and `latest_verdicts` read the journal's `verdict` events rather than the
+validation files: they are the source of truth after a run, so a driver re-entering VALIDATE
+after a crash never re-parses a file it already journaled. The proven rule reads one round whole
+(round_verdicts); the negotiate prompt's summary reads the latest per validator.
 """
 from __future__ import annotations
 
@@ -24,22 +25,33 @@ from . import files, journal, prompts
 _SEP_CELL = re.compile(r"^:?-+:?$")
 # a table whose header row has no separator under it is still a table; its first cell says so
 _HEADER_WORDS = ("id", "assertion", "command", "severity", "d-id", "changed symbol", "file")
+_ESCAPED_PIPE = "\x00"     # stands in for a GFM `\|` while the row is split on its pipes
 
 
 def _is_separator(cells: List[str]) -> bool:
     return any(cells) and all(_SEP_CELL.match(c) for c in cells if c)
 
 
+def _cells(line: str) -> List[str]:
+    r"""files.table_cells with the GFM `\|` escape honoured: scrutiny writes the command it ran,
+    and `pytest x 2>&1 \| tail -20` is one Command cell, not a command `pytest x 2>&1 \` with an
+    exit code of `tail -20`. The escape is replaced before the split and the pipe it stands for
+    put back after, so the cell reads as the command was run. table_cells itself is unchanged:
+    it mirrors check.sh on the contract, where no cell escapes a pipe."""
+    return [c.replace(_ESCAPED_PIPE, "|") for c in files.table_cells(line.replace("\\|", _ESCAPED_PIPE))]
+
+
 def table_rows(sec: str) -> List[List[str]]:
-    """Data rows of the markdown table(s) in a section: cells stripped, separators dropped, the
-    header dropped -- the row a separator follows, or one whose first cell is a column name."""
+    r"""Data rows of the markdown table(s) in a section: cells stripped, separators dropped, the
+    header dropped -- the row a separator follows, or one whose first cell is a column name.
+    A `\|` inside a cell is the cell's own pipe, not a cell boundary."""
     lines = [ln for ln in sec.split("\n") if ln.lstrip().startswith("|")]
     rows: List[List[str]] = []
     for i, ln in enumerate(lines):
-        cells = files.table_cells(ln)
+        cells = _cells(ln)
         if _is_separator(cells):
             continue
-        if i + 1 < len(lines) and _is_separator(files.table_cells(lines[i + 1])):
+        if i + 1 < len(lines) and _is_separator(_cells(lines[i + 1])):
             continue
         if cells and cells[0].strip("*`_ ").lower() in _HEADER_WORDS:
             continue
@@ -129,6 +141,23 @@ def assertion_verdicts(mission_dir: Path, milestone: str) -> Iterator[Tuple[str,
         role = VALIDATOR_ROLES.get(str(rec.get("validator")))
         if role is not None and isinstance(rec.get("assertions"), dict):
             yield role, rec
+
+
+def round_verdicts(mission_dir: Path, milestone: str, round_no: int) -> Dict[str, Dict[str, List[Tuple[Optional[str], str, str]]]]:
+    """Every verdict of one round, in journal order: {"reviews": {A001: [(feature, verdict,
+    file), ...]}, "behavior": {A001: [(None, verdict, file), ...]}}. The proven rule reads a
+    round whole -- two reviews of one assertion may disagree, and the later one is not the truer
+    one -- so the reviews keep the feature each came from, and a behavior verdict, which is per
+    milestone, carries None there."""
+    out: Dict[str, Dict[str, List[Tuple[Optional[str], str, str]]]] = {"reviews": {}, "behavior": {}}
+    bucket = {"reviewer": "reviews", "behavior": "behavior"}
+    for role, rec in assertion_verdicts(mission_dir, milestone):
+        if rec.get("round") != round_no:
+            continue
+        feature = str(rec["feature"]) if rec.get("feature") else None
+        for aid, v in rec["assertions"].items():
+            out[bucket[role]].setdefault(str(aid), []).append((feature, str(v), str(rec.get("file") or "")))
+    return out
 
 
 def latest_verdicts(mission_dir: Path, milestone: str) -> Dict[str, Dict[str, Tuple[str, str]]]:

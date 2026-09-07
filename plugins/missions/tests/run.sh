@@ -73,7 +73,14 @@ start=$(date +%s)
 # cases are generated, not committed: tests/gen-cases.py is the source of truth
 [ -f "$here/gen-cases.py" ] && python3 "$here/gen-cases.py" "$here/cases" >/dev/null
 # inertness first, then everything else
-for d in "$here"/cases/inertness/*/; do [ -d "$d" ] && [[ "${d#$here/cases/}" == $pattern/ || "$pattern" == "*/*" ]] && run_case "${d%/}"; done
+# `selected` counts in BOTH loops or the guard at the end lies: an inertness-only glob would run
+# its cases, pass them, and then be reported as "no case matched"
+for d in "$here"/cases/inertness/*/; do
+  [ -d "$d" ] || continue
+  [[ "${d#$here/cases/}" == $pattern/ || "$pattern" == "*/*" ]] || continue
+  selected=$((selected + 1))
+  run_case "${d%/}"
+done
 for d in "$here"/cases/*/*/; do
   [ -d "$d" ] || continue
   case "$d" in */cases/inertness/*) continue ;; esac

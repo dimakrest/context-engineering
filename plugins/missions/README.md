@@ -145,8 +145,11 @@ is #7). A 529 `overloaded` is a crash and is retried like one.
 **Prep: enforcement without harness hooks (#13).** A run's environment is built from a whitelist,
 never inherited: `PATH`, `HOME`, locale and proxy variables, the harness's own auth (`ANTHROPIC_*`
 under claude, `OPENAI_*` under codex), `MISSIONS_*`, and the names `driver.json`'s
-`env.passthrough` lists — every other `*_TOKEN` / `*_SECRET`, `GH_TOKEN`, `SSH_AUTH_SOCK`,
-`GIT_ASKPASS` is gone, and `runs/<task>/env-names.txt` records which names ran (never values).
+`env.passthrough` lists — every other `*_TOKEN` / `*_SECRET`, `GH_TOKEN` and `SSH_AUTH_SOCK` is
+gone. `GIT_ASKPASS`, `GIT_SSH_COMMAND` and `GH_CONFIG_DIR` are stripped and then *re-set* to the
+driver's own (an askpass that refuses, an empty gh config), so their value is the defense and
+their absence would be a different bug. `runs/<task>/env-names.txt` records which names the child
+was actually given (never values), written at the spawn site after any adapter additions.
 The child's global gitconfig is a driver-written file carrying the checkout's identity and an
 empty credential helper, and `GH_CONFIG_DIR` points `gh` at an empty directory under
 `githooks/`. The guarantee model is layered, and each layer claims only what it holds. The

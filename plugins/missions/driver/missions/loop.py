@@ -162,9 +162,14 @@ def preflight(mission_dir: Path, plugin: Path, harness: Optional[str] = None,
                 else:
                     # the adapter's own "can I actually work on this host" question, asked before
                     # anything is spent: a harness that cannot run a command is a paid no-op
-                    ask = getattr(make_adapter(h, cfg), "preflight_problems", None)
-                    if ask is not None:
-                        problems.extend(ask())
+                    try:
+                        ask = getattr(make_adapter(h, cfg), "preflight_problems", None)
+                        if ask is not None:
+                            problems.extend(ask())
+                    except Exception as e:
+                        # constructing the adapter is itself a config check now; reporting every
+                        # problem is preflight's job, so a bad `adapters` section is one of them
+                        problems.append("adapters.%s is not usable: %s: %s" % (h, type(e).__name__, e))
     return problems, warnings, cfg
 
 

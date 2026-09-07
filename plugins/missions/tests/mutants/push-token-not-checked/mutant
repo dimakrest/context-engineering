@@ -3,4 +3,5 @@
 category=approval
 file=driver/missions/prep.py
 breaks=worker-cannot-push
-control=two-feature-happy-path
+control=none
+why-no-control=the mutated line is shell inside prep._PRE_PUSH, reached only when a run attempts a push; no trace both pushes and passes, so any control's green is unfalsifiable at this site

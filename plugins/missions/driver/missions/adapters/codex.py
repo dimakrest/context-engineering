@@ -31,6 +31,7 @@ from . import base
 
 # codex's own words for its sandbox policies; the first two are the ones bubblewrap implements
 SANDBOX_NEEDS_USERNS = ("read-only", "workspace-write")
+SANDBOX_POLICIES = SANDBOX_NEEDS_USERNS + ("danger-full-access",)
 CLONE_NEWUSER = 0x10000000
 
 
@@ -53,12 +54,16 @@ def user_namespaces_usable() -> Optional[bool]:
     except OSError:
         return None
     if pid == 0:                                     # pragma: no cover - the child never returns
+        # BaseException, and os._exit rather than sys.exit: the child shares the parent's open
+        # file descriptions, so ANY exception that escaped here would unwind the parent's stack
+        # inside the child -- including the `with DriverLock(...)` the loop holds, whose __exit__
+        # calls flock(LOCK_UN) and would free the lock the parent still believes it holds.
         try:
             if libc.unshare(CLONE_NEWUSER) != 0:
                 os._exit(1)
             with open("/proc/self/uid_map", "w") as fh:
                 fh.write("0 %d 1\n" % os.getuid())
-        except (OSError, ValueError):
+        except BaseException:
             os._exit(1)
         os._exit(0)
     try:
@@ -83,6 +88,14 @@ class CodexAdapter:
         """Refuse a run that cannot do any work. A sandbox codex cannot start is not a degraded
         run, it is a guaranteed `no_op` with the tokens spent, so this is a problem and not a
         warning -- the whole point of asking is that it costs nothing and the run does not."""
+        if self.sandbox not in SANDBOX_POLICIES:
+            # a typo or a null sails past here otherwise and fails per-run, mid-mission, holding
+            # the host lease -- `--sandbox None` raises inside the adapter
+            return ["adapters.codex.sandbox is %r, not one of %s" % (
+                self.sandbox, ", ".join(SANDBOX_POLICIES))]
+        # `read-only` is always reachable -- steps.py gives it to the reviewer and judgment roles
+        # whatever `sandbox` says -- so a configured policy that needs no namespace only helps if
+        # it also covers those roles, which `command` now makes true.
         if self.sandbox not in SANDBOX_NEEDS_USERNS or user_namespaces_usable() is not False:
             return []
         return ["codex sandbox %r needs an unprivileged user namespace, and this host refuses one "
@@ -95,8 +108,15 @@ class CodexAdapter:
                 "enforcement" % self.sandbox]
 
     def command(self, req: RunRequest) -> List[str]:
+        # a read-only role asks codex for its `read-only` policy -- but not when the operator has
+        # turned codex's sandbox off altogether: `read-only` is bubblewrap too, so forcing it there
+        # would bwrap-kill every reviewer and judgment run on the very host the operator escaped
+        # for. Read-onlyness is then the driver's to enforce (blindness, hooks that refuse a
+        # commit for any non-worker role, the post-exit grade), which is what was opted into.
+        policy = self.sandbox if self.sandbox not in SANDBOX_NEEDS_USERNS else (
+            "read-only" if req.read_only else self.sandbox)
         cmd = [self.bin, "exec", "-C", str(req.cwd),
-               "--sandbox", "read-only" if req.read_only else self.sandbox,
+               "--sandbox", policy,
                "--json", "-o", str(req.output_path), "--skip-git-repo-check"]
         if req.model:
             cmd += ["-m", req.model]

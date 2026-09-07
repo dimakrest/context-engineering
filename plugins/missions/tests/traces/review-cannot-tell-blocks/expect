@@ -3,6 +3,10 @@
 # every verdict is positive) and not re-opened (nothing negative, and it was never proven), so it
 # stays claimed with no evidence and the round halts naming the word that blocked it. A001, which
 # the same review settled, is proven. (#6: no trace reached a `cannot tell` round)
+#
+# There is deliberately no `journal!~=reopened` here: files.reopen_assertions only moves rows that
+# are already `proven`, and A002 is `claimed`, so such a negative could never fail and would be
+# decoration. later-milestone-reopens-proven is where re-opening is actually pinned.
 rc=5
 journal~="event":"verdict".*"validator":"mission-reviewer".*"feature":"F001".*"A002":"cannot tell".*"file":"validation/M1-review-F001.md"
 journal~="event":"verdict".*"validator":"mission-reviewer".*"feature":"F002".*"A002":"satisfied"
@@ -11,7 +15,6 @@ journal~="event":"decision".*"step":"proven".*"milestone":"M1".*"round":1.*"asse
 journal~="event":"validate_done".*"milestone":"M1".*"round":1.*"result":"halted"
 journal~="event":"halt".*"class":"block".*M1: A002 cannot tell and no repair proposed
 journal~="event":"stop".*"reason":"gate-blocked".*M1: A002 cannot tell and no repair proposed.*"exit":5
-journal!~="event":"decision".*"step":"reopened"
 journal!~="event":"milestone_closed"
 journal!~="step":"proven".*"assertions":\[[^]]*"A002"
 state~=^phase: halted

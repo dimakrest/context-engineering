@@ -20,7 +20,8 @@ write_handoff() {  # $1 = sha, $2 = 1 to omit "## Left undone"
 # write_behavior encodes the behavior report SCHEMA -- keep it in step with
 # agents/mission-validator-behavior.md, in this one place. Same shape as write_review: $1 = a
 # verdict function, called with an assertion id, printing the row's Verdict and Evidence cells;
-# $2 = extra `## Defects` rows, one per line, when the run found any.
+# $2 = the `## Defects` PROSE (agents/mission-validator-behavior.md asks for what the user
+# experienced, the steps to reproduce and the call or trace id -- not the reviewer's table).
 write_behavior() {
   local a
   printf '## Assertion results\n| ID | Verdict | Evidence |\n|---|---|---|\n'

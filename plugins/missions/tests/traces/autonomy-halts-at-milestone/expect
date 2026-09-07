@@ -1,0 +1,14 @@
+# The autonomy ceiling says halt at every milestone: M1 closes (proven, converged, archived, M2 is
+# current) and then the mission halts for the review the ceiling asks for; nothing of M2 starts.
+# (#13, SKILL Halts: "the autonomy ceiling is halt at every milestone and a milestone just closed")
+rc=5
+journal~="event":"decision".*"step":"proven".*"milestone":"M1"
+journal~="event":"milestone_closed".*"milestone":"M1".*"next":"M2"
+journal~="event":"validate_done".*"milestone":"M1".*"result":"closed"
+journal~="event":"halt".*"class":"block".*M1 closed; autonomy ceiling: halt at every milestone.*review validation/M1-\*.md, then set phase implementing
+journal~="event":"stop".*"reason":"gate-blocked".*M1 closed; autonomy ceiling
+journal!~="dispatch_id":"F003#1"
+journal!~="event":"validate_start".*"milestone":"M2"
+state~=^phase: halted
+state~=^milestone: M2
+state~=^resume_next: gate-blocked: review validation/M1-

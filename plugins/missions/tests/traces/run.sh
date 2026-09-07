@@ -33,9 +33,11 @@ pattern="${1:-*}"
 out_root="$here/.out"
 pass=0; fail=0; failed=()
 
-drv() {  # run the driver with a clean environment
+drv() {  # run the driver with a clean environment; the host lease lives under the case's tmp dir,
+         # so a case never waits on a real mission (or makes one wait)
   local tmp="$1"; shift
-  env -i HOME="$HOME" PATH="$PATH" TMPDIR="$tmp" LC_ALL=C.UTF-8 MISSIONS_PLUGIN_ROOT="$plugin" "$@"
+  env -i HOME="$HOME" PATH="$PATH" TMPDIR="$tmp" LC_ALL=C.UTF-8 MISSIONS_PLUGIN_ROOT="$plugin" \
+    MISSIONS_HOST_LOCK="$tmp/host.lock" "$@"
 }
 
 run_case() {

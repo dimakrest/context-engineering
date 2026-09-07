@@ -31,6 +31,7 @@ class RunRequest:
     feature: str = ""
     mission_dir: Path = Path(".")
     watchdog: Any = None                 # watchdog.Watchdog; started and stopped by run_process
+    step: str = ""                       # reviewer | scrutiny | behavior | negotiate | triage; "" for the worker
 
 
 @dataclass
@@ -86,6 +87,8 @@ class Grade:
     branch_after: str = ""                               # the checkout's branch after exit
     quota: Optional[str] = None                          # the harness's quota/limit text, when seen
     reconstructed: bool = False                          # the driver wrote the handoff from the commit
+    head_before: str = ""                                # HEAD at launch: where the run's commits start
+    rewritten: bool = False                              # head_before is no longer on the branch (a rebase, a reset)
     task: str = ""
 
     def to_json(self) -> Dict[str, Any]:

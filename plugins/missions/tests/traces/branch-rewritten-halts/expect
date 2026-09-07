@@ -1,0 +1,16 @@
+# F002's worker resets the branch under F001's commit before doing its work: the commit the run
+# was launched from is no longer on the mission branch, so F001's range points at history that is
+# gone. The grade flags it (Grade.rewritten), the loop halts with the feature back to pending, and
+# nothing is ingested from the rewrite. (D3 review, finding 1)
+rc=5
+journal~="event":"handoff_ingested".*"feature":"F001"
+journal~="event":"dispatch".*"dispatch_id":"F002#1"
+journal~="event":"step_done".*"step":"F002#1"
+journal~="event":"halt".*rewrote the mission branch: HEAD at launch [0-9a-f]{7} is no longer on mission/demo
+journal~="event":"stop".*"reason":"gate-blocked"
+journal!~="event":"handoff_ingested".*"feature":"F002"
+journal!~="dispatch_id":"F002#2"
+state~=^phase: halted
+postcheck=sed -n '/^### F002/,/^##/p' "$M/features.md" | grep 'Status:\*\* pending' >/dev/null
+postcheck=grep -q '"rewritten": true' "$M/runs/F002#1/outcome.json"
+postcheck=! git log --oneline | grep -q 'F001: stub work'

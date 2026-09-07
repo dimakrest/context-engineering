@@ -98,7 +98,7 @@ if not cols:
     sys.exit(1)
 
 # ---- features: coverage table, per-feature lists, dependencies ---------------
-cov, own, deps, files, cur = {}, {}, {}, {}, None
+cov, own, deps, files, repairs, cur = {}, {}, {}, {}, set(), None
 for line in features.splitlines():
     m = re.match(r'###\s+(F\d{3})\b', line)
     if m:
@@ -114,6 +114,8 @@ for line in features.splitlines():
         m = re.match(r'-\s*\*\*Files:\*\*\s*(.+)', line)
         if m:
             files[cur] = [x.strip("` ") for x in re.split(r'[,\s]+', m.group(1)) if x.strip("` ") and "/" in x or x.strip("` ").endswith((".py", ".ts", ".tsx", ".md", ".sh", ".json"))]
+        if re.match(r'-\s*\*\*Repairs:\*\*', line):
+            repairs.add(cur)
         m = re.match(r'-\s*\*\*Seat:\*\*\s*(.+)', line)
         if m:
             # A seat is passed verbatim as `model:` on the Agent call, so it must
@@ -151,11 +153,16 @@ else:
             errs.append(f"{a} has no proof budget (min: <named test|mutation|pre-fix failure|playwright>; max: <n> pinning feature)")
 
 # 1c — planning gate: a feature list finer than the files it touches is the
-# decomposition that produced 56 commits over 23 files.
+# decomposition that produced 56 commits over 23 files. Repair features (a
+# `- **Repairs:**` line, written by the negotiate step) are left out on both
+# sides: a repair re-touches the files its origin feature already lists -- that
+# is what makes it a repair -- so counting it would trip the gate on the first
+# validation round of every mission that found a defect.
 if files:
-    distinct = {x for fs in files.values() for x in fs}
-    if len(sections) > len(distinct):
-        errs.append(f"feature count exceeds files touched: {len(sections)} features over {len(distinct)} distinct files -- merge features that share a file")
+    planned = sections - repairs
+    distinct = {x for f, fs in files.items() if f not in repairs for x in fs}
+    if len(planned) > len(distinct):
+        errs.append(f"feature count exceeds files touched: {len(planned)} features over {len(distinct)} distinct files -- merge features that share a file")
 else:
     notes.append("no **Files:** lines in features.md -- feature/file gate not applied")
 

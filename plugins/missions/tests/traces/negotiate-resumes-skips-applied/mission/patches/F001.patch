@@ -1,0 +1,12 @@
+feature: F001
+base: 1111111111111111111111111111111111111111
+head: 2222222222222222222222222222222222222222
+paths: analytics/service.py
+
+diff --git a/analytics/service.py b/analytics/service.py
+--- a/analytics/service.py
++++ b/analytics/service.py
+@@ -1,2 +1,3 @@
+ def aggregate(rows):
+     return sum(rows)
++# F001

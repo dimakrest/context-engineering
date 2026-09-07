@@ -1,0 +1,16 @@
+# After `stop done` a second `missions run` is a no-op: the last milestone is closed in the
+# journal, so the loop stops `done` again before it drives anything -- no dispatch, no new round,
+# the phase still validating for the terminal steps. (D3 review: a closed milestone is never
+# re-entered)
+rc=0
+journal~="event":"milestone_closed".*"milestone":"M2"
+journal~="event":"stop".*"reason":"done".*all 2 milestone\(s\) validated
+state~=^phase: validating
+state~=^milestone: M2
+postcheck=MISSIONS_HOST_LOCK="$TMP/host.lock" bash "$plugin/bin/missions" run "$M" >/dev/null; [ $? = 0 ]
+postcheck=[ "$(grep -c '"event":"driver_start"' "$M/journal.jsonl")" = 2 ]
+postcheck=[ "$(grep -c '"event":"dispatch"' "$M/journal.jsonl")" = 11 ]
+postcheck=[ "$(grep -c '"reason":"done"' "$M/journal.jsonl")" = 2 ]
+postcheck=[ "$(grep -c '"event":"validate_start"' "$M/journal.jsonl")" = 2 ]
+postcheck=[ "$(grep -c '"event":"milestone_closed"' "$M/journal.jsonl")" = 2 ]
+postcheck=grep -q '^phase: validating' "$M/state.md" && grep -q '^milestone: M2' "$M/state.md"

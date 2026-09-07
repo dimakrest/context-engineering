@@ -1,0 +1,33 @@
+# A handoff's issue no longer stops the loop: the triage judgment step proposes, the driver applies
+# (here: deferred into followups.md), the open issue clears, and the next feature dispatches. The
+# judgment run is static -- no host lease, no .lease, not counted by --limit. (#13, design §6.3)
+rc=3
+args=--limit 2
+journal~="event":"handoff_ingested".*"feature":"F001"
+journal~="event":"dispatch".*"agent":"mission-judgment".*"class":"static".*"milestone":"M1".*"dispatch_id":"triage#1".*"harness":"stub".*"step":"triage"
+journal~="event":"agent_return".*"dispatch_id":"triage#1"
+journal~="event":"cost".*"task":"triage#1"
+journal~="event":"step_done".*"step":"triage#1".*"role":"judgment".*"cls":"ok"
+journal~="event":"followups_added".*"FU001"
+journal~="event":"judgment".*"step":"triage".*"task":"triage#1".*deferred
+journal~="event":"dispatch".*"dispatch_id":"F002#1"
+journal~="event":"handoff_ingested".*"feature":"F002"
+journal~="event":"stop".*"reason":"limit-reached"
+journal!~="event":"lease_released".*dispatch_id=triage
+journal!~="event":"lease_wait"
+journal!~="event":"halt"
+state~=^phase: implementing
+file=runs/triage#1/prompt.md
+file=runs/triage#1/output.md
+file=runs/triage#1/env-names.txt
+nofile=.lease
+nofile=.blind
+postcheck=grep -q '^## FU001 — F001 handoff: the test stack would not start on port 5435 (from M1-triage)$' "$M/followups.md"
+postcheck=grep -q '^- \*\*Found by:\*\* F001 handoff, the test stack would not start on port 5435$' "$M/followups.md"
+postcheck=grep -q '^- \*\*Cluster:\*\* C09 — triage$' "$M/followups.md" && grep -q '^- \*\*Disposition:\*\* accept as known limitation — deferred by the triage step: deferred by the stub$' "$M/followups.md"
+postcheck=grep -q '^- none$' "$M/state.md" && ! grep -q 'port 5435' "$M/state.md"
+postcheck=grep -q '^- \[1\] F001 handoff: the test stack would not start on port 5435$' "$M/runs/triage#1/prompt.md"
+postcheck=grep -q '^--- handoffs/F001.md ---$' "$M/runs/triage#1/prompt.md" && grep -q '^## Halts' "$M/runs/triage#1/prompt.md" && tail -1 "$M/runs/triage#1/prompt.md" | grep -q '^Answer with the JSON object only.$'
+postcheck=head -1 "$M/runs/triage#1/system.md" | grep -q 'the model proposes, the driver applies'
+postcheck=grep -q 'MISSIONS_ROLE' "$M/runs/triage#1/env-names.txt" && ! grep -q 'MISSIONS_FILES' "$M/runs/triage#1/env-names.txt"
+postcheck=bash "$plugin/scripts/check.sh" "$M" >/dev/null

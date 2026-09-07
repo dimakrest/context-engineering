@@ -1,0 +1,19 @@
+# --milestone M1: once M1 closes the run stops limit-reached instead of validating M1 again --
+# one round, one close, and M2's feature is not dispatched; state.md is left at M2 implementing
+# for the run without the flag. (D3 review: a closed milestone is never re-entered)
+rc=3
+args=--milestone M1
+journal~="event":"validate_start".*"milestone":"M1".*"round":1
+journal~="event":"milestone_closed".*"milestone":"M1".*"next":"M2"
+journal~="event":"validate_done".*"milestone":"M1".*"round":1.*"result":"closed"
+journal~="event":"stop".*"reason":"limit-reached".*milestone M1 is closed; --milestone M1.*re-run missions run without --milestone \(state.md is at M2\).*"exit":3
+journal!~="round":2
+journal!~="dispatch_id":"F003#1"
+journal!~="event":"halt"
+journal!~="milestone":"M2".*"round"
+state~=^phase: implementing
+state~=^milestone: M2
+state~=^resume_next: limit-reached
+postcheck=[ "$(grep -c '"event":"validate_start".*"milestone":"M1"' "$M/journal.jsonl")" = 1 ]
+postcheck=[ "$(grep -c '"event":"milestone_closed"' "$M/journal.jsonl")" = 1 ]
+postcheck=[ "$(grep -c '"event":"dispatch"' "$M/journal.jsonl")" = 6 ]

@@ -1,0 +1,21 @@
+# The caps are asked between validator dispatches, not only before a worker: with a dispatch
+# cap of 3 (journal.dispatches counts the non-static ones: workers and executors, never a
+# judgment run), F001#1, F002#1 and scrutiny-M1#1 run, and the round stops `budget` before
+# review-F001#1. The round stays open -- validate_start without its validate_done -- for the
+# driver that comes back once the cap is raised. (D3 review, decision B2)
+rc=4
+journal~="event":"handoff_ingested".*"feature":"F002"
+journal~="event":"validate_start".*"milestone":"M1".*"round":1
+journal~="event":"dispatch".*"dispatch_id":"scrutiny-M1#1"
+journal~="event":"validate_step".*"milestone":"M1".*"round":1.*"step":"scrutiny".*"file":"validation/M1-scrutiny.md"
+journal~="event":"halt".*"class":"block".*budget: dispatch cap reached: 3 of 3
+journal~="event":"stop".*"reason":"budget".*dispatch cap reached: 3 of 3.*"exit":4
+journal!~="dispatch_id":"review-F001#1"
+journal!~="event":"validate_done"
+journal!~="event":"verdict".*"validator":"mission-reviewer"
+state~=^phase: halted
+state~=^milestone: M1
+state~=^resume_next: budget
+file=validation/M1-scrutiny.md
+nofile=.lease
+postcheck=[ "$(grep -c '"event":"dispatch"' "$M/journal.jsonl")" = 3 ]

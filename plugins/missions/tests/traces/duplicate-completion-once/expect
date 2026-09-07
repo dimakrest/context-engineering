@@ -1,6 +1,7 @@
 # Commit first, handoff later, then the handoff rewritten: the watchdog sees the commit (pending),
 # stands down when the handoff appears, and the exit grade runs exactly once. (#4)
-rc=5
+rc=3
+args=--until validate
 journal~="event":"dispatch".*"dispatch_id":"F001#1"
 journal~="event":"commit_observed".*"task":"F001#1".*"handoff":"pending"
 journal~="event":"agent_return".*"dispatch_id":"F001#1".*"status":"completed"

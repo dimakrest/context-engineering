@@ -64,33 +64,38 @@ marketplace fetches by version.
 ### The driver (0.3, in progress — #5)
 
 `bin/missions` is the out-of-process driver: a Python program (stdlib only, ≥ 3.9) that owns the run
-loop instead of a Claude session deciding whether to take another turn. Today it drives the
-IMPLEMENT phase of one milestone — select the pending feature, render its prompt, run a worker as
-a blocking subprocess under `claude -p` or `codex exec`, grade the handoff after the process exits,
-write `features.md` / `contract.md` / `state.md` / `journal.jsonl`, loop — and stops with a typed
+loop instead of a Claude session deciding whether to take another turn. It drives a mission from
+its first feature to its last milestone's close — select the pending feature, render its prompt,
+run a worker as a blocking subprocess under `claude -p` or `codex exec`, grade the handoff after
+the process exits, write `features.md` / `contract.md` / `state.md` / `journal.jsonl`, loop; when
+a milestone's features are all done, run VALIDATE the same way (below) — and stops with a typed
 reason and exit code (`0` done · `1` error · `2` preflight-failed · `3` limit-reached · `4` budget ·
-`5` gate-blocked · `8` provider-quota · `130` interrupted). VALIDATE, the judgment steps, `resume`
-and `status` follow in #13 and #6.
+`5` gate-blocked · `7` contract · `8` provider-quota · `130` interrupted). Not driven yet: the
+terminal steps and the push (the `pr` phase, #10); `resume`, `status` and the mutation tests (#6).
 
 ```
 plugins/missions/bin/missions init      .missions/<slug> --harness claude|codex
 plugins/missions/bin/missions preflight .missions/<slug>
-plugins/missions/bin/missions run       .missions/<slug> [--limit N] [--milestone M] [--dry-run]
+plugins/missions/bin/missions run       .missions/<slug> [--limit N] [--milestone M] [--until validate|milestone] [--dry-run]
 plugins/missions/bin/missions grade     .missions/<slug> F0nn [--self] [--json]
 ```
 
-Run it from the checkout on the mission branch. It writes `driver.json`, `runs/<task>/` and
-`.driver.lock` into the mission directory and nothing else new; the 0.2 hooks keep working
-alongside it (it takes and releases `.writer` / `.lease` in their format). Note that a `codex`
+Run it from the checkout on the mission branch. It writes `driver.json`, `runs/<task>/`,
+`githooks/` and `.driver.lock` into the mission directory and nothing else new — `validation/`,
+`patches/`, `followups.md` and the rest are the 0.2 files, written in their 0.2 shapes; the 0.2
+hooks keep working alongside it (it takes and releases `.writer` / `.lease` in their format). Note that a `codex`
 worker runs your `~/.codex/hooks.json` hooks and gets no dollar budget — cost is reported in
 tokens.
 
 **Grading happens once, after exit (#4).** A launch grades nothing. When the worker process is
 gone the driver grades the handoff — the schema function `hooks/mission-handoff-schema.sh`, the
 commit on the mission branch's own ref (a detached checkout cannot make a commit count by sitting
-on it), a clean tree, the checkout still on the mission branch, claims within the feature's
+on it), a clean tree, the checkout still on the mission branch, no merge commit and the `F0nn:`
+prefix on every commit since launch, claims within the feature's
 assertions and, for a `complete` handoff, every one of them claimed — keyed to the attempt that
-ran (`F012#2`): a handoff left by an earlier attempt is not this one's. The contract is marked
+ran (`F012#2`): a handoff left by an earlier attempt is not this one's. A run after which the
+launch commit is no longer on the branch (a rebase, a reset) halts the mission: the earlier
+features' ranges point at history that is gone. The contract is marked
 `claimed` only for what the handoff claims. A handoff that says `blocked` halts the mission with
 its own reason on the decision card; `partial` is re-dispatched with its "Left undone" as the
 rejection. The worker is told to run the same check before it exits (`missions grade … --self`);
@@ -116,6 +121,74 @@ rate-limit message in the harness's own error text or stderr (never the worker's
 `infra_quota`, even after a WIP commit: the feature goes back to pending and the driver exits `8`
 without halting the mission — wait for the reset, run again (the driver's own sleep-and-resume
 is #7). A 529 `overloaded` is a crash and is retried like one.
+
+**Prep: enforcement without harness hooks (#13).** A run's environment is built from a whitelist,
+never inherited: `PATH`, `HOME`, locale and proxy variables, the harness's own auth (`ANTHROPIC_*`
+under claude, `OPENAI_*` under codex), `MISSIONS_*`, and the names `driver.json`'s
+`env.passthrough` lists — every other `*_TOKEN` / `*_SECRET`, `GH_TOKEN`, `SSH_AUTH_SOCK`,
+`GIT_ASKPASS` is gone, and `runs/<task>/env-names.txt` records which names ran (never values).
+The child's global gitconfig is a driver-written file carrying the checkout's identity and an
+empty credential helper, and `GH_CONFIG_DIR` points `gh` at an empty directory under
+`githooks/`. The guarantee model is layered, and each layer claims only what it holds. The
+credential layer means **no credential in the run's environment**: no token, no agent socket, no
+askpass, an empty credential helper, an empty gh config — what `HOME` holds stays readable
+(`~/.ssh` keys, `~/.netrc`), so it is not "no credential on the machine". The hook layer
+**refuses a cooperating worker**: a commit off the mission branch, a message without the `F0nn:`
+prefix, a merge, a rebase, a push over a transport that needs no credential (a local path) meet
+hooks that exit 1, and roles other than the worker cannot commit at all — while `--no-verify`,
+`git -c core.hooksPath=`, an unset `GIT_CONFIG_COUNT` or an edit of `.missions/<slug>/githooks/`
+bypass them, and the operator's global `core.hooksPath` is not chained (the child's global config
+is the driver's). The post-exit grade is the gate that does not depend on the worker. The hooks
+live in `.missions/<slug>/githooks/` and reach git only through `GIT_CONFIG_*` variables in the
+run's environment, so the repo's config is never written and nothing needs restoring after a
+crash; the repo's own hooks (pre-commit framework, husky) run first and keep their exit code. A
+path staged outside the feature's `Files` draws a warning at commit and a rejection from the
+grade after exit when the handoff does not name it. Under the claude harness the plugin's own
+hooks stay installed and keep working; they are a bonus, never what the driver relies on. A
+reviewer is blind by having nothing to look at: for its run's lifetime `handoffs/`,
+`validation/`, `decisions/` and every other run's directory sit under `.blind/<task>/` (mode 000)
+and come back in `finally` — a file written where a hidden one belongs is moved to
+`.strays/<task>/`, the original wins. Only the driver that holds the mission's lock restores
+what a crashed one left under `.blind/`; `missions preflight` and a dry run warn and leave it.
+
+**VALIDATE and the judgment steps.** When every feature of the milestone is done the driver runs
+the skill's sequence itself: scrutiny (one executor run) → a blind review per feature, serial →
+behavior (only when the milestone has `interface` / `conversational` assertions) → negotiate →
+converge → archive → the next milestone. Each validator's final message lands in
+`validation/M1-<step>.md` (`-r2` for a repair round) under a header naming the task that wrote
+it, and its per-assertion table is parsed and journaled as `verdict`. `proven` is written only
+from those verdicts, one round at a time — structural from the reviewers' `satisfied`, interface
+and conversational from the behavior validator's `proven`; every verdict of the round must agree,
+one negative blocks (and moves a row an earlier round proved back to `claimed`), and once a
+repair feature was reviewed only its review counts for the assertion it repairs — never from a
+handoff, never by the negotiate step. Negotiate, and triage of the open issues a handoff raised,
+are *judgment* steps: the model proposes, the driver applies. A judgment run is read-only, takes
+no lease, answers with one JSON object checked against a schema in code (an assertion id the
+contract does not have is such an error), and is re-run once with the error appended before the
+driver stops with `error`. What it proposes is registered in the 0.2 shapes: findings become
+`followups.md` entries (`(from M1-review-F001)`, clustered, dispositioned); every cluster
+dispositioned `repair` becomes one repair feature `### F0nn` carrying `- **Repairs:** C01 (FU001)
+of F001` (the feature/file gate in `check.sh` skips those; a repair with no assertion carries no
+Assertions line), and its assertions are routed to it in `contract.md`. One cluster, one repair
+feature: a cluster whose repair feature is still pending takes later findings into it, and one
+whose repair already ran is a new root cause and gets a fresh cluster id, so the registry never
+shows a cluster split across features. Repairs send the loop back to implementing with an
+advisory `halt` in the journal; the repair-round cap (`Repair rounds per assertion`) and a
+milestone-round cap halt the mission with the serial guard's wording. `contract_wrong` stops with
+`contract` (exit 7); an unproven assertion nobody proposes to repair, a convergence failure, and
+the `halt at every milestone` autonomy ceiling stop `gate-blocked`.
+
+**Flags and the host.** `--until validate` stops when the milestone's features are done and
+VALIDATE would begin; `--until milestone` stops after it closes. Every executor run — worker,
+reviewer, scrutiny, behavior — takes `~/.missions/host.lock` (fcntl; `MISSIONS_HOST_LOCK`
+overrides the path), so two missions in two worktrees never run their tests at the same time; a
+driver that waits journals `lease_wait` naming the holder. `"host_lease": false` in `driver.json`
+opts out (preflight warns). `driver.json` also carries per-role `timeout_s` / `budget_usd` /
+`model` under `roles`, and `env.passthrough`, the operator's explicit list of extra variable
+names (or `PREFIX_*` globs) the runs may see. `bash tests/harness/run.sh claude|codex` is the paid
+smoke: one real worker run over the fixture repo with a $0.50 budget, asserting the journal shape
+(`dispatch` → `agent_return` → `cost` → `step_done`, cost in usd under claude and tokens under
+codex) and that no `GH_TOKEN` reached the run; the suites never run it.
 
 Trace tests run the real driver over a temporary repo with a stub worker (a shell script):
 

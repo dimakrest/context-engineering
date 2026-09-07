@@ -1,0 +1,22 @@
+# A judgment reply the driver cannot parse is sent back once with the parser's own words; a second
+# such reply is stop(error). Nothing was applied, nothing halted, the round stays open for the next
+# driver to resume at negotiate. (#13, design §6.3 failure policy)
+rc=1
+journal~="event":"validate_step".*"step":"reviewer".*"feature":"F002"
+journal~="event":"dispatch".*"agent":"mission-judgment".*"class":"static".*"dispatch_id":"negotiate-M1#1".*"step":"negotiate"
+journal~="event":"step_done".*"step":"negotiate-M1#1".*"cls":"ok"
+journal~="event":"note".*"task":"negotiate-M1#1".*"step":"negotiate".*reply rejected -- no JSON object in the reply
+journal~="event":"dispatch".*"dispatch_id":"negotiate-M1#2"
+journal~="event":"note".*"task":"negotiate-M1#2".*reply rejected
+journal~="event":"stop".*"reason":"error".*negotiate: two replies could not be applied.*"needs":"look at runs/negotiate-M1#2/output.md.*"exit":1
+journal!~="dispatch_id":"negotiate-M1#3"
+journal!~="event":"judgment"
+journal!~="event":"validate_done"
+journal!~="event":"decision".*"step":"proven"
+journal!~="event":"halt"
+state~=^phase: negotiating
+state~=^milestone: M1
+state~=^resume_next: error: look at runs/negotiate-M1
+postcheck=grep -q 'could not be applied: no JSON object in the reply' "$M/runs/negotiate-M1#2/prompt.md" && ! grep -q 'could not be applied' "$M/runs/negotiate-M1#1/prompt.md"
+postcheck=tail -1 "$M/runs/negotiate-M1#2/prompt.md" | grep -q '^Answer with the JSON object only.$'
+postcheck=grep -qE '^\| A001 \| .* \| claimed \|' "$M/contract.md"

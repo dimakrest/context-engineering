@@ -1,0 +1,23 @@
+# Blindness is the entire value of the review: while a reviewer runs, the handoffs, the other
+# validators' files and every other run's directory are out of its reach, and its prompt names
+# one patch and no git command. Everything is back when it returns. (#13, design §7 item 5)
+rc=3
+args=--until milestone
+journal~="event":"dispatch".*"dispatch_id":"review-F001#1"
+journal~="event":"dispatch".*"dispatch_id":"review-F002#1"
+journal~="event":"milestone_closed".*"milestone":"M1"
+journal~="event":"stop".*"reason":"limit-reached"
+journal!~="event":"note".*restored .blind
+nofile=.blind
+file=handoffs/F001.md
+file=handoffs/F002.md
+file=validation/M1-scrutiny.md
+file=validation/M1-review-F001.md
+file=validation/M1-review-F002.md
+file=runs/F001#1/prompt.md
+file=runs/scrutiny-M1#1/output.md
+postcheck=[ "$(cat "$M/runs/review-F001#1/handoffs-visible.txt")" = absent ] && [ "$(cat "$M/runs/review-F002#1/handoffs-visible.txt")" = absent ]
+postcheck=! grep -qE 'handoffs/|## Handoff|Assertions claimed|Procedures followed|Left undone|git (log|show|diff)|origin/main\.\.\.' "$M/runs/review-F001#1/prompt.md"
+postcheck=grep -q 'Patch: .*/patches/F001.patch' "$M/runs/review-F001#1/prompt.md" && grep -q 'Write nothing to the repository' "$M/runs/review-F001#1/prompt.md"
+postcheck=head -1 "$M/runs/review-F001#1/system.md" | grep -q '^# Mission Reviewer'
+stdout~=>> review-F001#1 .* read-only

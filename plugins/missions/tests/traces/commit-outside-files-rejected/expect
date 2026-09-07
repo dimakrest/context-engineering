@@ -1,0 +1,15 @@
+# A commit that touches a path outside the feature's Files without the handoff naming it is not
+# valid evidence: the pre-commit hook warned, the self-check named it, the driver rejected it; the
+# re-dispatch that names the path under Completed is done. (#13, design §7 item 2)
+rc=3
+args=--limit 2
+journal~="event":"step_done".*"step":"F001#1".*"cls":"malformed_handoff".*analytics/other.py outside the feature's Files
+journal~="event":"dispatch".*"dispatch_id":"F001#2"
+journal~="event":"step_done".*"step":"F001#2".*"cls":"done"
+journal~="event":"handoff_ingested".*"feature":"F001"
+journal~="event":"stop".*"reason":"limit-reached"
+postcheck=grep -q "analytics/other.py outside the feature's Files" "$M/runs/F001#1/selfcheck.txt" && grep -q 'name them under Completed' "$M/runs/F001#1/selfcheck.txt"
+postcheck=grep -q 'handoff valid' "$M/runs/F001#2/selfcheck.txt"
+postcheck=grep -q "staged outside F001's Files: analytics/other.py" "$M/runs/F001#1/commit.err" && grep -q 'name them in the handoff' "$M/runs/F001#1/commit.err"
+postcheck=grep -q "outside the feature's Files" "$M/runs/F001#2/prompt.md"
+postcheck=grep -q 'Changes outside the files named above are allowed only when the handoff names them' "$M/runs/F001#1/prompt.md"

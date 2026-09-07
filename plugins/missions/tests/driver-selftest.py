@@ -318,6 +318,34 @@ class AdapterTests(unittest.TestCase):
         self.assertIn("rate limit", err["error"])
         self.assertIsNone(err["usage"])
 
+    def test_codex_sandbox_preflight(self):
+        """A sandbox codex cannot start is a guaranteed no_op with the tokens spent, so preflight
+        refuses it -- but only for the policies bubblewrap implements, and never on an unknown."""
+        from missions.adapters import codex as cx
+
+        def with_probe(value, cfg):
+            saved = cx.user_namespaces_usable
+            cx.user_namespaces_usable = lambda: value
+            try:
+                return cx.CodexAdapter(cfg).preflight_problems()
+            finally:
+                cx.user_namespaces_usable = saved
+
+        for policy in cx.SANDBOX_NEEDS_USERNS:
+            problems = with_probe(False, {"sandbox": policy})
+            self.assertEqual(len(problems), 1, policy)
+            self.assertIn("user namespace", problems[0])
+            self.assertIn("danger-full-access", problems[0])   # the message names the way out
+            self.assertEqual(with_probe(True, {"sandbox": policy}), [], policy)
+            self.assertEqual(with_probe(None, {"sandbox": policy}), [], policy)   # unknown != failure
+        # the policy that needs no bubblewrap is never refused, whatever the host says
+        for probe in (False, True, None):
+            self.assertEqual(with_probe(probe, {"sandbox": "danger-full-access"}), [])
+        # the default is one that needs it, so the check is reachable without configuration
+        self.assertIn(cx.CodexAdapter({}).sandbox, cx.SANDBOX_NEEDS_USERNS)
+        # and the probe answers one of the three things it promises
+        self.assertIn(cx.user_namespaces_usable(), (True, False, None))
+
 
 class RequestTests(Fixture):
     def ctx(self, harness, cfg=None):

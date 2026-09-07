@@ -10,6 +10,13 @@
 # usage: bash tests/harness/run.sh <claude|codex|both>
 #
 #   claude | codex   one adapter
+#
+# MISSIONS_SMOKE_CODEX_SANDBOX overrides adapters.codex.sandbox for the run. On a host that
+# refuses unprivileged user namespaces codex's bubblewrap cannot start, and preflight now refuses
+# the run; `MISSIONS_SMOKE_CODEX_SANDBOX=danger-full-access` is how an operator says "this host is
+# already a sandbox" and lets the smoke exercise the adapter. A deliberate choice, not a default:
+# it leaves the driver's own env whitelist, git hooks, blindness and post-exit grade as the only
+# enforcement.
 #   both             both, then the two runs are compared: same journal shape, same outcome class,
 #                    same evidence. This is the harness-agnostic claim (#6) as a test rather than
 #                    a promise; the cost unit is the one difference and is exempt. `both` pays for
@@ -88,7 +95,7 @@ SHIM
 
   # a real worker on a small purse and a short leash, launched through the shim
   python3 - "$m/driver.json" "$h" "$tmp/bin/$h-shim" <<'EOF' || {
-import json, sys
+import json, os, sys
 path, harness, shim = sys.argv[1:4]
 with open(path, encoding="utf-8") as fh:
     cfg = json.load(fh)
@@ -99,6 +106,9 @@ if harness == "claude":
     cfg["roles"]["worker"]["budget_usd"] = 2.0
 else:
     cfg["roles"]["worker"]["budget_usd"] = None
+    sandbox = os.environ.get("MISSIONS_SMOKE_CODEX_SANDBOX")
+    if sandbox:
+        cfg["adapters"]["codex"]["sandbox"] = sandbox
 cfg["adapters"][harness]["bin"] = shim
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(cfg, fh, indent=2)
@@ -117,6 +127,14 @@ EOF
       bash "$plugin/bin/missions" run "$m" --limit 1 --until validate 2>&1 ) | tee "$tmp/run.log"
   rc=${PIPESTATUS[0]}
   echo "smoke: missions run exited $rc after $(( $(date +%s) - start ))s"
+  if [ "$rc" = 2 ]; then
+    # preflight-failed: the driver refused before spending anything, which is the cheap version of
+    # "could not run here". Its own problem line above already names the fix.
+    echo "smoke: NOT ESTABLISHED -- preflight refused this host; nothing was spent and nothing"
+    echo "       was proved about the driver."
+    echo "smoke: kept $tmp"
+    return 2
+  fi
 
   python3 - "$m" "$h" "$tmp/repo" "$tmp/summary.json" "$plugin" "$rc" <<'EOF'
 

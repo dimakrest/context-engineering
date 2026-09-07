@@ -1260,9 +1260,19 @@ class GitFilesTests(RepoFixture):
         self.assertIn(h, reviewer["pre-push"])
         for name in ("pre-commit", "commit-msg", "pre-push", "no-credentials"):
             self.assertTrue(os.access(self.m / "githooks" / name, os.X_OK), name)
-        names = files.read_text(self.m / "runs" / "F001#1" / "env-names.txt").split()
-        self.assertIn("MISSIONS_FILES", names)
-        self.assertNotIn("GH_TOKEN", names)
+        self.assertIn("MISSIONS_FILES", self.req.env)
+        self.assertNotIn("GH_TOKEN", self.req.env)
+
+    def test_env_names_record_is_what_the_child_got(self):
+        """env-names.txt is written where the environment is final, not where prep built it: a
+        name an adapter adds through extra_env is in the record, so a credential arriving that
+        way could not hide from the traces that read this file."""
+        from missions.adapters import base as adapters_base
+        adapters_base.run_process(["/bin/true"], self.req, extra_env={"ADAPTER_ADDED": "1"})
+        names = files.read_text(self.req.run_dir / "env-names.txt").split()
+        self.assertIn("MISSIONS_FILES", names)      # prep put this in
+        self.assertIn("ADAPTER_ADDED", names)       # the adapter put this in, after prep
+        self.assertNotIn("GH_TOKEN", names)         # the whitelist kept this out
         self.assertFalse(any("=" in n for n in names))
 
     def test_env_resolves_our_config(self):

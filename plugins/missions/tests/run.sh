@@ -24,7 +24,7 @@ set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 plugin=$(cd "$here/.." && pwd)
 pattern="${1:-*/*}"
-pass=0; fail=0; failed=()
+pass=0; fail=0; selected=0; failed=()
 
 run_case() {
   local case_dir="$1" name script rc_exp=0 rc out err ok=1 line tmp args=""
@@ -78,8 +78,11 @@ for d in "$here"/cases/*/*/; do
   [ -d "$d" ] || continue
   case "$d" in */cases/inertness/*) continue ;; esac
   [[ "${d#$here/cases/}" == $pattern/ ]] || continue
+  selected=$((selected + 1))
   run_case "${d%/}"
 done
 echo
 echo "passed $pass · failed $fail · $(( $(date +%s) - start ))s"
 [ "$fail" = 0 ] || { printf '  - %s\n' "${failed[@]}"; exit 1; }
+# a glob that selects no case is a typo, not a green suite
+[ "$selected" -gt 0 ] || { echo "no case matched '$pattern'"; exit 1; }

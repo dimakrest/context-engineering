@@ -334,8 +334,10 @@ stays readable); git hooks scoped to that environment refuse a cooperating worke
 the branch or without the prefix, a merge, a rebase, a push), and `--no-verify` bypasses them;
 the post-exit grade is the gate that does not depend on the worker. A reviewer runs with the
 handoffs and the other validators' files out of reach; one executor at a time per host. What
-remains: the terminal steps and the push (the `pr` phase, #10), `status` (#19), the mutation
-tests (#6), and `resume` with sleep-and-resume on a provider quota (#7). See the README's "Developing"
+remains: the terminal steps and the push (the `pr` phase, #10), `status` (#19), and `resume`
+with sleep-and-resume on a provider quota (#7). #6's mutation tests and live smoke are in
+`tests/mutants.sh` and `tests/harness/run.sh`; the same trace under both adapters needs a host
+where codex's sandbox can start. See the README's "Developing"
 section for the commands, the trace tests and the paid harness smoke.
 
 ---

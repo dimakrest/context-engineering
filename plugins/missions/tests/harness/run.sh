@@ -47,10 +47,14 @@ case "$h" in
   *) echo "usage: bash tests/harness/run.sh <claude|codex|both>" >&2; exit 2 ;;
 esac
 
+for x in $([ "$h" = both ] && echo claude codex || echo "$h"); do
+  command -v "$x" >/dev/null 2>&1 || { echo "smoke: $x is not on PATH" >&2; exit 2; }
+done
+
 # One adapter: $1 harness, $2 tmp dir. Leaves $2/summary.json for the comparison.
 smoke_one() {
-  local h="$1" tmp="$2" m rc start fail
-  command -v "$h" >/dev/null 2>&1 || { echo "smoke: $h is not on PATH" >&2; return 2; }
+  local h="$1" tmp="$2" m rc start fail real
+  real=$(command -v "$h")
   echo "smoke: harness $h  tmp $tmp"
   bash "$here/../traces/_base/repo.sh" "$tmp" || { echo "smoke: repo.sh failed" >&2; return 1; }
   m="$tmp/repo/.missions/demo"; mkdir -p "$m"
@@ -62,44 +66,72 @@ smoke_one() {
   mkdir -p "$tmp/bin"
   cat > "$tmp/bin/$h-shim" <<SHIM
 #!/bin/bash
-# missions smoke: dump this process's own environment, then become the real harness. The file is
-# named env.txt because tests/traces/worker-env-stripped's stub writes the same thing under the
-# same name -- the stub trace and the live smoke assert one property on one kind of evidence.
-[ -n "\${MISSIONS_RUN_DIR:-}" ] && compgen -e | sort > "\$MISSIONS_RUN_DIR/env.txt"
-exec $(command -v "$h") "\$@"
+# missions smoke: record this process's own environment, then become the real harness. env.txt is
+# `env | cut -d= -f1` -- byte for byte what tests/traces/worker-env-stripped's stub writes, so the
+# stub trace and the live smoke assert one property on one kind of evidence. NOT `compgen -e`,
+# which enumerates bash's exported *identifiers* and so cannot see a credential exported under a
+# name that is not a valid shell identifier. redirects.txt carries the values the canary has to
+# JUDGE rather than merely find: GH_CONFIG_DIR, GIT_ASKPASS and GIT_SSH_COMMAND are stripped from
+# the operator's environment and then re-set by the driver to its own, so their presence proves
+# nothing and their absence would be a different bug -- only the value says which.
+if [ -n "\${MISSIONS_RUN_DIR:-}" ]; then
+  env | cut -d= -f1 | sort > "\$MISSIONS_RUN_DIR/env.txt"
+  { printf 'GH_CONFIG_DIR=%s\n' "\${GH_CONFIG_DIR:-}"
+    printf 'GH_ENTRIES=%s\n' "\$(ls -A "\${GH_CONFIG_DIR:-/nonexistent}" 2>/dev/null | wc -l)"
+    printf 'GIT_ASKPASS=%s\n' "\${GIT_ASKPASS:-}"
+    printf 'GIT_SSH_COMMAND=%s\n' "\${GIT_SSH_COMMAND:-}"
+  } > "\$MISSIONS_RUN_DIR/redirects.txt"
+fi
+exec "$real" "\$@"
 SHIM
   chmod +x "$tmp/bin/$h-shim"
 
   # a real worker on a small purse and a short leash, launched through the shim
-  python3 - "$m/driver.json" "$h" "$tmp/bin/$h-shim" <<'EOF'
+  python3 - "$m/driver.json" "$h" "$tmp/bin/$h-shim" <<'EOF' || {
 import json, sys
 path, harness, shim = sys.argv[1:4]
 with open(path, encoding="utf-8") as fh:
     cfg = json.load(fh)
-cfg["roles"]["worker"].update({"timeout_s": 900, "budget_usd": 2.0})
+# codex declares no budget capability, so a budget_usd there is a number the driver prints and
+# never enforces; its bound is the deadline
+cfg["roles"]["worker"]["timeout_s"] = 900
+if harness == "claude":
+    cfg["roles"]["worker"]["budget_usd"] = 2.0
+else:
+    cfg["roles"]["worker"]["budget_usd"] = None
 cfg["adapters"][harness]["bin"] = shim
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(cfg, fh, indent=2)
     fh.write("\n")
 EOF
+    echo "smoke: could not cap the purse or install the shim in driver.json" >&2; return 1; }
 
   start=$(date +%s)
-  ( cd "$tmp/repo" && GH_TOKEN="${GH_TOKEN:-smoke-canary}" SMOKE_SECRET_TOKEN=canary \
+  # every one of these is on prep.NEVER_EXACT, or falls off the whitelist, so every one MUST be
+  # absent from the child. A canary that is never planted is a check that cannot fail.
+  ( cd "$tmp/repo" && \
+    GH_TOKEN="${GH_TOKEN:-smoke-canary}" GITHUB_TOKEN=canary GH_ENTERPRISE_TOKEN=canary \
+    GITHUB_ENTERPRISE_TOKEN=canary MISSIONS_PUSH_TOKEN=canary SSH_AUTH_SOCK=/tmp/smoke-agent.sock \
+    GIT_ASKPASS=/bin/true SMOKE_SECRET_TOKEN=canary SMOKE_SECRET_KEY=canary \
+    GH_CONFIG_DIR=/tmp/smoke-operator-gh \
       bash "$plugin/bin/missions" run "$m" --limit 1 --until validate 2>&1 ) | tee "$tmp/run.log"
   rc=${PIPESTATUS[0]}
   echo "smoke: missions run exited $rc after $(( $(date +%s) - start ))s"
 
-  python3 - "$m" "$h" "$tmp/repo" "$tmp/summary.json" "$plugin" <<'EOF'
+  python3 - "$m" "$h" "$tmp/repo" "$tmp/summary.json" "$plugin" "$rc" <<'EOF'
 
 import json, re, subprocess, sys
 from pathlib import Path
 mdir, harness, repo, summary_path, plugin = (Path(sys.argv[1]), sys.argv[2], sys.argv[3],
                                              sys.argv[4], sys.argv[5])
-# the driver's own vocabulary, so a renamed or added class cannot leave this judging by a stale
-# literal. The complement is what the check is for: these four mean nothing happened.
+driver_rc = int(sys.argv[6])
+# the driver's own vocabulary, partitioned. The partition is ASSERTED against CLASSES below, so a
+# ninth class fails loudly here instead of silently landing in whichever bucket the code guessed.
 sys.path.insert(0, str(Path(plugin) / "driver"))
 from missions.outcome import CLASSES
-NOTHING_HAPPENED = ("no_op", "infra_crash", "stalled", "infra_quota")
+PRODUCTIVE = ("done", "handoff_missing", "malformed_handoff", "tests_failed")
+NOTHING_HAPPENED = ("no_op", "infra_crash", "stalled")
+NOT_OUR_FAULT = ("infra_quota",)   # the provider said no; the driver handled it (exit 8)
 want_unit = {"claude": "usd", "codex": "tokens"}[harness]
 recs = [json.loads(ln) for ln in (mdir / "journal.jsonl").read_text(encoding="utf-8").splitlines() if ln.strip()]
 mine = [r for r in recs if r.get("task") == "F001#1"
@@ -121,50 +153,75 @@ check("cost unit is %s (got %r from %r)" % (want_unit, c.get("unit"), c.get("sou
       c.get("unit") == want_unit)
 check("step_done carries a class and elapsed_s",
       isinstance(s.get("cls"), str) and isinstance(s.get("elapsed_s"), (int, float)))
+check("missions run exited %d (limit-reached)" % driver_rc, driver_rc == 3)
+check("the class partition covers outcome.CLASSES (%d)" % len(CLASSES),
+      set(PRODUCTIVE) | set(NOTHING_HAPPENED) | set(NOT_OUR_FAULT) == set(CLASSES))
 
-# the worker did the work: a class that means nothing happened is the failure this smoke exists for
 cls = s.get("cls")
-# evidence: the mission branch moved
-log = subprocess.run(["git", "-C", repo, "log", "--oneline", "main..mission/demo"],
-                     capture_output=True, text=True).stdout.strip()
-
-# before judging the verdict: did the harness's own sandbox refuse to start? Then nothing about
-# the driver was established, and saying so is the only honest result (exit 2, not a failure).
-# `output.md` is deliberately NOT read: it is the agent's own last message, and grade.py's
-# quota_signature refuses that channel ("a test named after a rate limit is not a rate limit").
-# stderr and the harness's structured stdout are where the tool speaks for itself.
 run_dir = mdir / "runs" / "F001#1"
-blob = "\n".join((run_dir / n).read_text(encoding="utf-8", errors="replace")
-                 for n in ("stderr", "stdout") if (run_dir / n).exists())
-# kept tight on purpose: these are the tool's own error forms, not prose about them. The
-# character class stops at the quote or backtick that ends the message inside codex's JSON.
-blocked = re.search(r"(bwrap: [^\n\"`\\]{0,70}|landlock[^\n\"`]{0,40}not permitted|"
-                    r"seccomp[^\n\"`]{0,40}not permitted|"
-                    r"sandbox[^\n\"`]{0,40}(?:failed to start|startup failure))", blob, re.I)
-if blocked and not log:
-    print("  --   %s could not run here: %s" % (harness, blocked.group(0).strip()[:120]))
-    print("smoke: NOT ESTABLISHED -- the harness's sandbox refused to start; nothing was proved "
-          "about the driver")
-    sys.exit(2)
 
-check("outcome class %r is one the driver defines" % cls, cls in CLASSES)
-check("outcome class %r means the worker did the work" % cls, cls not in NOTHING_HAPPENED)
-check("a commit landed on mission/demo (%s)" % (log.splitlines()[0] if log else "none"), bool(log))
-
-# the credential canary, read from the environment the child process itself had
+# The credential checks come FIRST and unconditionally: the shim wrote them before it exec'd the
+# harness, so they hold even when the harness went on to do nothing. This is the one property that
+# survives a dead harness, and on a host where codex cannot start it is the only one there is.
 child = run_dir / "env.txt"
 names = child.read_text(encoding="utf-8").split() if child.exists() else None
 check("the child's own environment was captured (%s)" % child.name, names is not None)
 if names is not None:
-    # the names tests/traces/worker-env-stripped asserts on the stub, plus this script's canary
-    leaked = [n for n in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
-                          "MY_SECRET", "FOO_TOKEN", "ANTHROPIC_API_KEY", "SMOKE_SECRET_TOKEN") if n in names]
-    check("no credential in the child's %d environment names (%s)" % (
-        len(names), ", ".join(leaked) or "none leaked"), not leaked)
-    # GH_CONFIG_DIR must be PRESENT: the driver sets it to an empty config dir of its own, which
-    # is what makes `gh` find no login. Its absence would let gh fall back to the operator's.
-    check("the child got the mission's own variables (MISSIONS_TASK, GIT_CONFIG_GLOBAL, GH_CONFIG_DIR)",
-          all(n in names for n in ("MISSIONS_TASK", "GIT_CONFIG_GLOBAL", "GH_CONFIG_DIR")))
+    # exactly the names planted before the run, every one of them on prep.NEVER_EXACT or off the
+    # whitelist. The harness's OWN key (ANTHROPIC_API_KEY, OPENAI_API_KEY) is forwarded by design
+    # via prep.HARNESS_ENV and is not a leak -- asserting its absence would fail a correct driver.
+    # GIT_ASKPASS, GIT_SSH_COMMAND and GH_CONFIG_DIR are NOT here: the driver strips the
+    # operator's and sets its own, so they must be PRESENT -- judged by value, just below.
+    planted = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+               "MISSIONS_PUSH_TOKEN", "SSH_AUTH_SOCK", "SMOKE_SECRET_TOKEN", "SMOKE_SECRET_KEY")
+    leaked = [n for n in planted if n in names]
+    check("none of the %d planted credentials reached the child (%s)" % (
+        len(planted), ", ".join(leaked) or "none leaked"), not leaked)
+    check("the child got the mission's own variables (MISSIONS_TASK, GIT_CONFIG_GLOBAL)",
+          all(n in names for n in ("MISSIONS_TASK", "GIT_CONFIG_GLOBAL")))
+# The redirections are judged by VALUE: the operator's were planted, and the child must hold the
+# driver's own instead -- an empty gh config so `gh pr create` finds no login, and an askpass that
+# refuses so git can neither prompt for a credential nor open a transport that would use one.
+red = run_dir / "redirects.txt"
+if red.exists():
+    kv = dict(ln.split("=", 1) for ln in red.read_text(encoding="utf-8").splitlines() if "=" in ln)
+    check("GH_CONFIG_DIR is the driver's own empty dir, not the operator's (%s, %s entries)" % (
+        kv.get("GH_CONFIG_DIR") or "unset", kv.get("GH_ENTRIES")),
+        (kv.get("GH_CONFIG_DIR") or "").endswith("/githooks/gh") and kv.get("GH_ENTRIES") == "0")
+    check("GIT_ASKPASS and GIT_SSH_COMMAND point at the driver's no-credentials script",
+          all((kv.get(k) or "").endswith("/githooks/no-credentials")
+              for k in ("GIT_ASKPASS", "GIT_SSH_COMMAND")))
+else:
+    check("the child's driver-set redirections were captured (redirects.txt)", False)
+
+# evidence: the mission branch moved
+log = subprocess.run(["git", "-C", repo, "log", "--oneline", "main..mission/demo"],
+                     capture_output=True, text=True).stdout.strip()
+
+# Could the harness run here at all? Two ways it could not, neither of them the driver's fault.
+# A definite failure above DOMINATES: exit 2 says "nothing was established", which would be a lie
+# if something already failed. Reading the harness's transcript for this is the same technique
+# grade.py's quota_signature uses on the harness's error text -- but note the honest limit: under
+# codex, stdout IS the agent's own messages, so an agent that merely QUOTES a sandbox error trips
+# this. That is tolerable only because the consequence is downgrading a paid smoke to "not
+# established", never a driver decision, and only in combination with no commit at all.
+TAIL = 2_000_000        # adapters.base.read_output's cap, for the same reason
+blob = "\n".join((run_dir / n).read_text(encoding="utf-8", errors="replace")[-TAIL:]
+                 for n in ("stderr", "stdout") if (run_dir / n).exists())
+blocked = re.search(r"(bwrap: [^\n\"`\\]{0,70}|landlock[^\n\"`]{0,40}not permitted|"
+                    r"seccomp[^\n\"`]{0,40}not permitted|"
+                    r"sandbox[^\n\"`]{0,40}(?:failed to start|startup failure))", blob, re.I)
+if (blocked and not log) or cls in NOT_OUR_FAULT:
+    why = ("%s could not run here: %s" % (harness, blocked.group(0).strip()[:120])) if blocked else (
+        "the provider reported a quota or limit; the driver stopped correctly")
+    print("  --   " + why)
+    print("smoke: NOT ESTABLISHED -- nothing was proved about the driver%s" % (
+        "" if ok else ", AND checks above already failed"))
+    sys.exit(1 if not ok else 2)
+
+check("outcome class %r is one the driver defines" % cls, cls in CLASSES)
+check("outcome class %r means the worker did the work" % cls, cls in PRODUCTIVE)
+check("a commit landed on mission/demo (%s)" % (log.splitlines()[0] if log else "none"), bool(log))
 
 print("smoke: class %s · cost %s %s · elapsed %ss · model %s" % (
     cls, c.get("value"), c.get("unit"), s.get("elapsed_s"), a.get("model")))
@@ -190,6 +247,13 @@ tmp_c=$(mktemp -d); smoke_one claude "$tmp_c" || rc_c=$?
 echo
 tmp_x=$(mktemp -d); smoke_one codex "$tmp_x" || rc_x=$?
 echo
+if [ "$rc_c" = 1 ] || [ "$rc_x" = 1 ]; then
+  # a paid run that actually failed is a finding; do not let the other adapter's "cannot run here"
+  # downgrade it to a code an operator or CI wrapper reads as "not applicable"
+  echo "smoke: not comparing -- a run FAILED:$(
+    [ "$rc_c" = 1 ] && printf ' claude'; [ "$rc_x" = 1 ] && printf ' codex')"
+  exit 1
+fi
 if [ "$rc_c" = 2 ] || [ "$rc_x" = 2 ]; then
   echo "smoke: not comparing -- could not run on this host:$(
     [ "$rc_c" = 2 ] && printf ' claude'; [ "$rc_x" = 2 ] && printf ' codex')"

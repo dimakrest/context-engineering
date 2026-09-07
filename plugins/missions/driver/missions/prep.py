@@ -247,8 +247,9 @@ def _write_exec(path: Path, text: str) -> None:
 
 def prepare(ctx, req: RunRequest) -> None:
     """Before every run: the git files the env points at (the gh config directory among them,
-    created and left empty), then the record of which variable NAMES the run had (never values)
-    -- the harness smoke and a curious operator read it after."""
+    created and left empty). The record of which variable NAMES the run had is written by
+    `adapters.base.run_process`, not here: an adapter may still add to the environment after
+    this, and a name list that predates the merge is not the environment the child received."""
     hooks = githooks_dir(ctx.mission_dir)
     hooks.mkdir(parents=True, exist_ok=True)
     (hooks / "gh").mkdir(exist_ok=True)
@@ -257,7 +258,6 @@ def prepare(ctx, req: RunRequest) -> None:
     for name, text in hook_scripts(req.role, req.task, push_hash(ctx.push_token)).items():
         _write_exec(hooks / name, text)
     req.run_dir.mkdir(parents=True, exist_ok=True)
-    files.write_text(req.run_dir / "env-names.txt", "\n".join(sorted(req.env)) + "\n")
 
 
 # ---------------------------------------------------------------- blindness

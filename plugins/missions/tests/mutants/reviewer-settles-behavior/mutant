@@ -4,4 +4,7 @@
 category=evidence
 file=driver/missions/validate.py
 breaks=behavior-failed-blocks-close
-control=two-feature-happy-path
+# control: an M1-only round, where every assertion is `structural` and _bucket returns
+# "reviews" either way -- the line runs and the mutation is genuinely inert. Anything
+# reaching M2 asserts A003 proven from the behavior file and is a second `breaks`.
+control=conflicting-reviews-not-proven

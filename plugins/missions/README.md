@@ -71,8 +71,10 @@ the process exits, write `features.md` / `contract.md` / `state.md` / `journal.j
 a milestone's features are all done, run VALIDATE the same way (below) — and stops with a typed
 reason and exit code (`0` done · `1` error · `2` preflight-failed · `3` limit-reached · `4` budget ·
 `5` gate-blocked · `7` contract · `8` provider-quota · `130` interrupted). Not driven yet: the
-terminal steps and the push (the `pr` phase, #10); `status` (#19), the mutation tests (#6),
-`resume` and sleep-and-resume on a quota (#7).
+terminal steps and the push (the `pr` phase, #10); `status` (#19), `resume` and
+sleep-and-resume on a quota (#7). The mutation tests and the live smoke of #6 are in
+`tests/mutants.sh` and `tests/harness/run.sh`; what stays open there is the same trace under
+both adapters, which needs a host where codex's sandbox can start.
 
 ```
 plugins/missions/bin/missions init      .missions/<slug> --harness claude|codex
@@ -211,8 +213,10 @@ bash plugins/missions/tests/mutants.sh              # every mutant
 bash plugins/missions/tests/mutants.sh 'skip-*'     # one
 ```
 
-Each case under `tests/mutants/` breaks one rule — continuation, identity, approval, freshness or
-enforcement — on a throwaway copy of the plugin, and asserts that the trace defending that rule
+Each case under `tests/mutants/` breaks one rule — continuation, identity, approval, freshness,
+enforcement or evidence — on a throwaway copy of the plugin, and asserts that the trace defending that rule
 now **fails** while a control trace still **passes**. The second half is what keeps a mutant
-honest: a mutation that reddens everything proves nothing. An anchor that no longer matches the
+honest: a mutation that reddens everything proves nothing — so pick a control that *executes* the
+mutated line without depending on it. The `breaks` trace is run once on the unmutated copy first,
+so a renamed trace cannot read as a passing mutant, and an anchor that no longer matches the
 driver is reported as `anchor not found` rather than a quiet pass.

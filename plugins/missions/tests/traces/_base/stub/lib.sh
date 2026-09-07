@@ -25,10 +25,9 @@ write_behavior() {
   local a
   printf '## Assertion results\n| ID | Verdict | Evidence |\n|---|---|---|\n'
   for a in $(prompt_assertions); do printf '| %s | %s |\n' "$a" "$("$1" "$a")"; done
-  printf '\n## Defects\n'
-  if [ -z "${2:-}" ]; then printf 'none\n'; else
-    printf '| Severity | file:line | What breaks, and the concrete input that breaks it |\n|---|---|---|\n%s\n' "$2"
-  fi
+  # prose, not the reviewer's table: agents/mission-validator-behavior.md asks for what the user
+  # experienced, the steps to reproduce and the call or trace id
+  printf '\n## Defects\n%s\n' "${2:-none}"
 }
 
 # The assertion ids the prompt lists, one per line (the `  A00n — text` rows prompts.py writes).

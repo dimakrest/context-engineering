@@ -3,4 +3,4 @@
 category=evidence
 file=driver/missions/validate.py
 breaks=review-cannot-tell-blocks
-control=two-feature-happy-path
+control=validate-happy-path

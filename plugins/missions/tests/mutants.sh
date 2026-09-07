@@ -6,9 +6,13 @@
 # usage: bash tests/mutants.sh [<mutant-glob>]      e.g. bash tests/mutants.sh 'skip-*'
 #
 # Each mutant asserts in BOTH directions:
-#   breaks=<trace>    must fail under the mutant   -- the rule is defended
-#   control=<trace>   must still pass under it     -- the mutation is surgical, not a broken driver
+#   breaks=<trace>    passes UNMUTATED, then must fail under the mutant -- the rule is defended
+#   control=<trace>   must still pass under it   -- the mutation is surgical, not a broken driver
 # The second half is what keeps a mutant honest: deleting a random line also turns a trace red.
+# Pick a control that actually EXECUTES the mutated code on a healthy driver -- a VALIDATE mutant
+# controlled by a trace that stops before VALIDATE proves nothing about being surgical.
+# The unmutated baseline is what keeps the first half honest: traces/run.sh exits non-zero when a
+# glob matches nothing, so without it a `breaks` naming a renamed trace would read as a pass.
 #
 # Case layout: tests/mutants/<name>/
 #   mutant     category= file= breaks= control=   (plus # comment lines saying what the rule is)
@@ -29,6 +33,7 @@ plugin=$(cd "$here/.." && pwd)
 pattern="${1:-*}"
 out_root="$here/mutants/.out"
 pass=0; fail=0; failed=()
+CATEGORIES="continuation identity approval freshness enforcement evidence"
 
 apply() {  # <src-file> <old.txt> <new.txt>; non-zero with a reason on stderr when it cannot apply
   python3 - "$@" <<'PY'
@@ -63,6 +68,10 @@ run_mutant() {
   for k in category file breaks control; do
     [ -n "${!k}" ] || { echo "FAIL $name: $k= is missing from mutant"; return 1; }
   done
+  case " $CATEGORIES " in
+    *" $category "*) ;;
+    *) echo "FAIL $name: category=$category is not one of: $CATEGORIES"; return 1 ;;
+  esac
 
   tmp=$(mktemp -d)
   # exclude rather than copy-then-delete: keep() leaves a whole plugin copy under .out on every
@@ -75,21 +84,24 @@ run_mutant() {
   if [ ! -f "$tmp/plugin/$file" ]; then
     echo "FAIL $name [$category]: $file does not exist"; rm -rf "$tmp"; return 1
   fi
+  local -a why=()
+  # baseline FIRST, on the unmutated copy: a `breaks` naming a renamed or misspelled trace makes
+  # traces/run.sh exit non-zero for its own reasons, and without this that reads as a passing
+  # mutant. It also makes "the trace failed" attributable to the mutation and nothing else.
+  if ! bash "$tmp/plugin/tests/traces/run.sh" "$breaks" >"$tmp/.baseline.log" 2>&1; then
+    echo "FAIL $name [$category]: $breaks does not pass on an UNMUTATED driver -- renamed, or already red"
+    tail -4 "$tmp/.baseline.log" | sed 's/^/      /'; keep "$name" "$tmp"; return 1
+  fi
   if ! apply "$tmp/plugin/$file" "$case_dir/old.txt" "$case_dir/new.txt" 2>"$tmp/.apply.err"; then
     echo "FAIL $name [$category]: cannot mutate $file -- $(cat "$tmp/.apply.err")"
     echo "      the driver moved under this mutant; re-anchor tests/mutants/$name/old.txt"
-    rm -rf "$tmp"; return 1
+    keep "$name" "$tmp"; return 1
   fi
-  # the mutated file must still be importable: a mutant is a behaviour change, not a syntax error.
-  # The dotted name comes from the path, so a mutant on an adapter (missions.adapters.codex) is
-  # checked too -- `import missions.loop` alone reaches 14 of the 15 modules but no concrete adapter.
   mod="${file#driver/}"; mod="${mod%.py}"; mod="${mod//\//.}"
   if ! (cd "$tmp/plugin/driver" && python3 -c "import $mod") >"$tmp/.import.log" 2>&1; then
     echo "FAIL $name [$category]: the mutated driver does not import:"
     sed 's/^/      /' "$tmp/.import.log" | tail -5; keep "$name" "$tmp"; return 1
   fi
-
-  local -a why=()
   if bash "$tmp/plugin/tests/traces/run.sh" "$breaks" >"$tmp/.breaks.log" 2>&1; then
     ok=0; why+=("$breaks still PASSES under this mutant -- the trace does not defend $category")
   fi

@@ -31,7 +31,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 plugin=$(cd "$here/../.." && pwd)
 pattern="${1:-*}"
 out_root="$here/.out"
-pass=0; fail=0; failed=()
+pass=0; fail=0; selected=0; failed=()
 
 drv() {  # run the driver with a clean environment; the host lease lives under the case's tmp dir,
          # so a case never waits on a real mission (or makes one wait)
@@ -138,10 +138,12 @@ if [ "$pattern" = "*" ]; then
 fi
 for c in "$here"/$pattern/; do
   [ -f "$c/expect" ] || continue
+  selected=$((selected + 1))
   if run_case "${c%/}"; then pass=$((pass + 1)); else fail=$((fail + 1)); failed+=("$(basename "$c")"); fi
 done
 echo
 echo "passed $pass · failed $fail · $(( $(date +%s) - start ))s"
 for f in "${failed[@]:-}"; do [ -n "$f" ] && echo "  - $f"; done
-# `pass` must be non-zero too: a glob that matches no case is a typo, not a green suite
-[ "$fail" = 0 ] && [ "$pass" -gt 0 ]
+# cases SELECTED, not passed: on the default glob the driver-selftest above already makes `pass`
+# non-zero, so counting passes would let a glob that matched no case read as a green suite
+[ "$fail" = 0 ] && [ "$selected" -gt 0 ]

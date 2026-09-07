@@ -4,4 +4,7 @@
 category=enforcement
 file=driver/missions/prep.py
 breaks=reviewer-cannot-see-handoffs
-control=two-feature-happy-path
+# control: a VALIDATE round that runs reviews but does not itself assert blindness -- so it
+# proves the mutation broke nothing else. validate-happy-path is NOT a control here: it
+# asserts handoffs-visible=absent, which makes it a second `breaks`.
+control=conflicting-reviews-not-proven

@@ -1,0 +1,4 @@
+REFUSED_HOOKS = {
+    "pre-merge-commit": "missions: a worker never merges; the driver merges main in phase pr (#10)",
+    "pre-rebase": "missions: a worker never rebases; the driver rebases on main in phase pr (#10)",
+}

@@ -71,7 +71,10 @@ the process exits, write `features.md` / `contract.md` / `state.md` / `journal.j
 a milestone's features are all done, run VALIDATE the same way (below) — and stops with a typed
 reason and exit code (`0` done · `1` error · `2` preflight-failed · `3` limit-reached · `4` budget ·
 `5` gate-blocked · `7` contract · `8` provider-quota · `130` interrupted). Not driven yet: the
-terminal steps and the push (the `pr` phase, #10); `resume`, `status` and the mutation tests (#6).
+terminal steps and the push (the `pr` phase, #10); `status` (#19), `resume` and
+sleep-and-resume on a quota (#7). The mutation tests and the live smoke of #6 are in
+`tests/mutants.sh` and `tests/harness/run.sh`; what stays open there is the same trace under
+both adapters — runnable wherever codex can execute (see the codex sandbox note below).
 
 ```
 plugins/missions/bin/missions init      .missions/<slug> --harness claude|codex
@@ -86,6 +89,23 @@ Run it from the checkout on the mission branch. It writes `driver.json`, `runs/<
 hooks keep working alongside it (it takes and releases `.writer` / `.lease` in their format). Note that a `codex`
 worker runs your `~/.codex/hooks.json` hooks and gets no dollar budget — cost is reported in
 tokens.
+
+**codex needs unprivileged user namespaces.** On Linux `codex exec` sandboxes every command it
+runs with bubblewrap, which needs a user namespace it can write a uid map in. Plenty of hosts
+refuse that — an unprivileged container, a hardened kernel — and the failure is quiet and
+expensive: bwrap exits before the shell for *every* command, so the worker reads no file, runs no
+test, explains the blockage in prose and exits 0. That is a truthful `no_op`, but the driver would
+then tell you the brief is not landing. Preflight asks the question first, so it costs nothing:
+
+```
+problem: codex sandbox 'workspace-write' needs an unprivileged user namespace, and this host refuses one …
+```
+
+Run somewhere user namespaces are allowed, or — **only when the host is already a sandbox you
+accept the worker having the run of**, such as a container or VM — set `adapters.codex.sandbox`
+to `"danger-full-access"` in `driver.json`. That turns codex's own sandbox off and leaves the
+driver's env whitelist, git hooks, blindness and post-exit grade as the enforcement. It is a
+deliberate choice and never a default; the driver will not make it for you.
 
 **Grading happens once, after exit (#4).** A launch grades nothing. When the worker process is
 gone the driver grades the handoff — the schema function `hooks/mission-handoff-schema.sh`, the
@@ -185,10 +205,12 @@ overrides the path), so two missions in two worktrees never run their tests at t
 driver that waits journals `lease_wait` naming the holder. `"host_lease": false` in `driver.json`
 opts out (preflight warns). `driver.json` also carries per-role `timeout_s` / `budget_usd` /
 `model` under `roles`, and `env.passthrough`, the operator's explicit list of extra variable
-names (or `PREFIX_*` globs) the runs may see. `bash tests/harness/run.sh claude|codex` is the paid
-smoke: one real worker run over the fixture repo with a $0.50 budget, asserting the journal shape
-(`dispatch` → `agent_return` → `cost` → `step_done`, cost in usd under claude and tokens under
-codex) and that no `GH_TOKEN` reached the run; the suites never run it.
+names (or `PREFIX_*` globs) the runs may see. `bash tests/harness/run.sh claude|codex|both` is the
+paid smoke: one real worker run over the fixture repo with a $2.00 budget, asserting the journal
+shape (`dispatch` → `agent_return` → `cost` → `step_done`, cost in usd under claude and tokens
+under codex), that the class means the worker did the work, that a commit landed, and that no
+credential reached the child's own environment. `both` runs each adapter and compares the shape,
+the class and the evidence — the harness-agnostic claim as a test. The suites never run it.
 
 Trace tests run the real driver over a temporary repo with a stub worker (a shell script):
 
@@ -200,3 +222,18 @@ bash plugins/missions/tests/traces/run.sh 'two-*'    # one case
 A case is a directory under `tests/traces/` that overlays `_base/` (the fixture repo, mission and
 stub) and an `expect` of `rc=`, `journal~=` (in order), `git~=`, `state~=`, `file=`, `postcheck=`;
 `run.sh`'s header documents every key. A failed case keeps its tmp dir under `tests/traces/.out/`.
+
+Mutation tests check that those traces bite:
+
+```
+bash plugins/missions/tests/mutants.sh              # every mutant
+bash plugins/missions/tests/mutants.sh 'skip-*'     # one
+```
+
+Each case under `tests/mutants/` breaks one rule — continuation, identity, approval, freshness,
+enforcement or evidence — on a throwaway copy of the plugin, and asserts that the trace defending that rule
+now **fails** while a control trace still **passes**. The second half is what keeps a mutant
+honest: a mutation that reddens everything proves nothing — so pick a control that *executes* the
+mutated line without depending on it. The `breaks` trace is run once on the unmutated copy first,
+so a renamed trace cannot read as a passing mutant, and an anchor that no longer matches the
+driver is reported as `anchor not found` rather than a quiet pass.

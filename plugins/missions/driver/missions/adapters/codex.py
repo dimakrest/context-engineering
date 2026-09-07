@@ -7,15 +7,65 @@ Codex has no system-prompt flag, so the system part is prepended to the user pro
 the prompt from stdin; `-o` writes the agent's last message. Non-interactive exec fails commands
 outside the sandbox instead of prompting, so the sandbox mode is the approval policy. `--json`
 prints JSONL events: `turn.completed` carries token usage (no dollars -- unit is tokens, never
-zero), `turn.failed`/`error` carry the failure text, `thread.started` the session id.
+zero), `turn.failed`/`error` carry the failure text, `thread.started` the session id. Nothing in
+the stream names a model, so a codex run journals `model: null` -- verified against 0.153.4's own
+output, not an unparsed field.
+
+On Linux codex sandboxes every model-run command with bubblewrap, which needs an unprivileged
+user namespace it can write a uid map in. Plenty of hosts do not allow that -- an unprivileged
+container, a hardened kernel -- and the failure is quiet and expensive: bwrap exits before the
+shell for EVERY command, so the worker reads no file and runs no test, then reports the blockage
+in prose and exits 0. The driver grades that `no_op`, truthfully, and tells the operator the
+brief is not landing. `preflight_problems` catches it before anything is spent.
 """
 from __future__ import annotations
 
+import ctypes
 import json
-from typing import Any, Dict, List
+import os
+import sys
+from typing import Any, Dict, List, Optional
 
 from ..outcome import Outcome, RunRequest, unknown_cost
 from . import base
+
+# codex's own words for its sandbox policies; the first two are the ones bubblewrap implements
+SANDBOX_NEEDS_USERNS = ("read-only", "workspace-write")
+CLONE_NEWUSER = 0x10000000
+
+
+def user_namespaces_usable() -> Optional[bool]:
+    """Can this host make the kind of user namespace bubblewrap needs -- one whose uid map it may
+    write? True/False, or None when the question could not be asked (not Linux, no libc to call).
+    None is never reported as a problem: an unknown is not a failure.
+
+    Probed rather than read off `/proc/sys/kernel/unprivileged_userns_clone`, because that knob
+    says 1 on hosts where the map write is still refused. Done in a fork, since a process that
+    has entered a user namespace cannot leave it."""
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    except OSError:
+        return None
+    try:
+        pid = os.fork()
+    except OSError:
+        return None
+    if pid == 0:                                     # pragma: no cover - the child never returns
+        try:
+            if libc.unshare(CLONE_NEWUSER) != 0:
+                os._exit(1)
+            with open("/proc/self/uid_map", "w") as fh:
+                fh.write("0 %d 1\n" % os.getuid())
+        except (OSError, ValueError):
+            os._exit(1)
+        os._exit(0)
+    try:
+        _, status = os.waitpid(pid, 0)
+    except OSError:
+        return None
+    return os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
 
 
 class CodexAdapter:
@@ -28,6 +78,21 @@ class CodexAdapter:
 
     def capabilities(self) -> Dict:
         return {"cost_unit": "tokens", "budget": False, "model": True, "read_only": True}
+
+    def preflight_problems(self) -> List[str]:
+        """Refuse a run that cannot do any work. A sandbox codex cannot start is not a degraded
+        run, it is a guaranteed `no_op` with the tokens spent, so this is a problem and not a
+        warning -- the whole point of asking is that it costs nothing and the run does not."""
+        if self.sandbox not in SANDBOX_NEEDS_USERNS or user_namespaces_usable() is not False:
+            return []
+        return ["codex sandbox %r needs an unprivileged user namespace, and this host refuses one "
+                "(bubblewrap will fail before the shell for every command, so the worker would "
+                "read nothing, run nothing and cost tokens to say so). Either run where user "
+                "namespaces are allowed, or -- only when the host is ALREADY a sandbox, such as a "
+                "container or VM you accept the worker having the run of -- set "
+                "adapters.codex.sandbox to \"danger-full-access\" in driver.json, which leaves the "
+                "driver's own env whitelist, git hooks, blindness and post-exit grade as the "
+                "enforcement" % self.sandbox]
 
     def command(self, req: RunRequest) -> List[str]:
         cmd = [self.bin, "exec", "-C", str(req.cwd),

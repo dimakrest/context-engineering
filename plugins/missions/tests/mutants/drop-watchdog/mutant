@@ -1,0 +1,6 @@
+# Continuation: a run that commits and then goes idle must be ended by the driver, not waited out.
+# Deleting the watchdog is the S3 defect (F003, F012, F014) put back.
+category=continuation
+file=driver/missions/watchdog.py
+breaks=commit-without-handoff
+control=two-feature-happy-path

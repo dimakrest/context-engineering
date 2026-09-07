@@ -1,0 +1,1 @@
+        elif all(v == positive for _, v, _ in got):

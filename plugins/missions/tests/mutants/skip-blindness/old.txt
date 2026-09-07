@@ -1,0 +1,9 @@
+    for name in BLIND_DIRS:
+        if (mdir / name).exists():
+            os.rename(mdir / name, cell / name)
+    runs = mdir / "runs"
+    if runs.is_dir():
+        (cell / "runs").mkdir(exist_ok=True)
+        for entry in list(runs.iterdir()):
+            if entry.name != task:
+                os.rename(entry, cell / "runs" / entry.name)

@@ -105,6 +105,10 @@ def run_process(cmd: Sequence[str], req: RunRequest, stdin_path: Optional[Path] 
     env = dict(req.env)
     if extra_env:
         env.update(extra_env)
+    # the record of which variable NAMES the child got (never values), written here rather than in
+    # prep.prepare because this is where the environment is final -- anything an adapter adds is in
+    # it, so a credential arriving that way could not hide from the traces that read this file
+    (req.run_dir / "env-names.txt").write_text("\n".join(sorted(env)) + "\n", encoding="utf-8")
     (req.run_dir / "command.txt").write_text("\n".join(cmd) + "\n", encoding="utf-8")
     started = time.monotonic()
     timed_out = False

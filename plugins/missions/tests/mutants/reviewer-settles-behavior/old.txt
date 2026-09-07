@@ -1,0 +1,1 @@
+    return "behavior" if a.proof_class in TAGGED else "reviews"

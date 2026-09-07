@@ -24,7 +24,7 @@ set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 plugin=$(cd "$here/.." && pwd)
 pattern="${1:-*/*}"
-pass=0; fail=0; failed=()
+pass=0; fail=0; selected=0; failed=()
 
 run_case() {
   local case_dir="$1" name script rc_exp=0 rc out err ok=1 line tmp args=""
@@ -50,7 +50,9 @@ run_case() {
   done < "$case_dir/expect"
   args="${args//\$TMP/$tmp}"
   local stdin="$tmp/stdin.json"; [ -f "$stdin" ] || printf '{}' > "$stdin"
-  sed -i '' "s#\\\$TMP#$tmp#g" "$stdin" 2>/dev/null || true
+  # not `sed -i`: the in-place suffix differs between GNU and BSD sed, and the BSD spelling
+  # silently substitutes nothing on GNU -- fixtures that name $TMP would then never see it
+  local json; json=$(<"$stdin"); printf '%s' "${json//\$TMP/$tmp}" > "$stdin"
   for s in "${setups[@]:-}"; do [ -n "$s" ] && (cd "$tmp" && eval "$s") >/dev/null 2>&1; done
   local -a argv=(); eval "argv=($args)"
   out=$(cd "$tmp" && env -i HOME="$HOME" PATH="$PATH" TMPDIR="$tmp" CLAUDE_PROJECT_DIR="$tmp" CLAUDE_PLUGIN_ROOT="$plugin" "${envs[@]:-MISSIONS_TEST=1}" \
@@ -76,8 +78,11 @@ for d in "$here"/cases/*/*/; do
   [ -d "$d" ] || continue
   case "$d" in */cases/inertness/*) continue ;; esac
   [[ "${d#$here/cases/}" == $pattern/ ]] || continue
+  selected=$((selected + 1))
   run_case "${d%/}"
 done
 echo
 echo "passed $pass · failed $fail · $(( $(date +%s) - start ))s"
 [ "$fail" = 0 ] || { printf '  - %s\n' "${failed[@]}"; exit 1; }
+# a glob that selects no case is a typo, not a green suite
+[ "$selected" -gt 0 ] || { echo "no case matched '$pattern'"; exit 1; }

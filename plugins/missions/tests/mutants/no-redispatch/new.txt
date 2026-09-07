@@ -1,0 +1,2 @@
+                return stop(ctx, "error", detail="MUTANT: a rejected handoff stops the run",
+                            needs="none")

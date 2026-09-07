@@ -1,0 +1,6 @@
+# Continuation: a rejected handoff is re-dispatched with the rejection, up to repair_rounds. A
+# driver that stops instead is a driver that needs a human for what it can do itself.
+category=continuation
+file=driver/missions/loop.py
+breaks=malformed-handoff-redispatched
+control=two-feature-happy-path

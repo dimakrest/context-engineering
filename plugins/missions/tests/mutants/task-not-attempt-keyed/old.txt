@@ -1,0 +1,1 @@
+    task = "%s#%d" % (fid, journal.attempts(mdir, fid) + 1)

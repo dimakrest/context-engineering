@@ -1,0 +1,1 @@
+        elif any(v == positive for _, v, _ in got):  # MUTANT: one positive proves it

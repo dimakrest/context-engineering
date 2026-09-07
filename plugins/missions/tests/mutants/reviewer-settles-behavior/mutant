@@ -1,0 +1,10 @@
+# Evidence: only the validator that can prove an assertion's class settles it -- a reviewer's
+# `satisfied` on an `interface` assertion proves nothing, because a diff cannot show a chip on a
+# dashboard. Routing every class to the reviews bucket is that rule deleted.
+category=evidence
+file=driver/missions/validate.py
+breaks=behavior-failed-blocks-close
+# control: an M1-only round, where every assertion is `structural` and _bucket returns
+# "reviews" either way -- the line runs and the mutation is genuinely inert. Anything
+# reaching M2 asserts A003 proven from the behavior file and is a second `breaks`.
+control=conflicting-reviews-not-proven

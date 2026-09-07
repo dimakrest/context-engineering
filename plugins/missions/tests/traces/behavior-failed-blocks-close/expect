@@ -1,0 +1,23 @@
+# A behaviour assertion that does not hold: in M2 the reviewer says A003 satisfied from the diff,
+# and the behavior validator -- the only one that can settle an `interface` class -- says FAILED.
+# The reviewer's word does not carry it: A003 is neither proven nor closed, the round halts naming
+# the behavior validator's own word, and M2 never closes. (#6: no trace reached a behavior FAILED)
+rc=5
+journal~="event":"milestone_closed".*"milestone":"M1".*"next":"M2"
+journal~="event":"validate_start".*"milestone":"M2".*"round":1
+journal~="event":"verdict".*"validator":"mission-reviewer".*"feature":"F003".*"A003":"satisfied"
+journal~="event":"verdict".*"validator":"mission-validator-behavior".*"milestone":"M2".*"A003":"FAILED"
+journal~="event":"judgment".*"step":"negotiate".*"task":"negotiate-M2#1".*no findings
+journal~="event":"validate_done".*"milestone":"M2".*"round":1.*"result":"halted"
+journal~="event":"halt".*"class":"block".*M2: A003 FAILED and no repair proposed
+journal~="event":"stop".*"reason":"gate-blocked".*M2: A003 FAILED and no repair proposed.*"exit":5
+journal!~="reason":"done"
+journal!~="event":"milestone_closed".*"milestone":"M2"
+journal!~="step":"proven".*"milestone":"M2".*"assertions":\[[^]]*"A003"
+state~=^phase: halted
+state~=^milestone: M2
+file=validation/M2-behavior.md
+postcheck=grep -qE '^\| A003 \| .* \| interface \| F003 \| (unproven|claimed) \|' "$M/contract.md"
+# the judgment sees both words on one line, and the contract row that did not move
+postcheck=grep -q '^  A003 \[interface\] — reviewer F003: satisfied (validation/M2-review-F003.md); behavior: FAILED (validation/M2-behavior.md) — contract: claimed$' "$M/runs/negotiate-M2#1/prompt.md"
+postcheck=bash "$plugin/scripts/check.sh" "$M" >/dev/null

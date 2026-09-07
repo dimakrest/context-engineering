@@ -1,0 +1,1 @@
+    g.handoff_written = h.exists and files.fingerprint(files.handoff_path(mission_dir, fid)) != handoff_before

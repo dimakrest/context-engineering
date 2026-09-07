@@ -159,6 +159,12 @@ def preflight(mission_dir: Path, plugin: Path, harness: Optional[str] = None,
                 binary = section.get("bin", h)
                 if shutil.which(binary) is None:
                     problems.append("%s binary %r is not on PATH" % (h, binary))
+                else:
+                    # the adapter's own "can I actually work on this host" question, asked before
+                    # anything is spent: a harness that cannot run a command is a paid no-op
+                    ask = getattr(make_adapter(h, cfg), "preflight_problems", None)
+                    if ask is not None:
+                        problems.extend(ask())
     return problems, warnings, cfg
 
 

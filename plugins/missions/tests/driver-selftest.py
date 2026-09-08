@@ -461,6 +461,34 @@ class RequestTests(Fixture):
         return Context(mission_dir=self.m, checkout=self.tmp, plugin=PLUGIN, cfg=cfg or {"roles": {}},
                        adapter=None, run_id="r1", harness=harness)
 
+    def test_the_cap_is_shown_only_where_it_binds(self):
+        """codex passes no budget flag, so a cap printed or journalled for it is a promise nothing
+        keeps. capabilities()["budget"] has always said which is which; now something asks."""
+        from missions import steps
+        feats = files.read_features(self.m)
+        req = steps.build_request(self.ctx("claude"), feats[0], "F001#1", self.m / "runs" / "F001#1",
+                                  {"tools": []}, "implementing")
+
+        class Fake:
+            def __init__(self, budget):
+                self.b = budget
+
+            def capabilities(self):
+                return {"budget": self.b}
+
+        ctx = self.ctx("claude")
+        ctx.adapter = Fake(True)
+        self.assertEqual(steps._budget_line(ctx, req), " budget $8 (cut at $8.8)")
+        self.assertEqual(steps._cap_journal(ctx, req), {"budget_usd": 8.0, "cap_usd": 8.8})
+        ctx.adapter = Fake(False)
+        self.assertEqual(steps._budget_line(ctx, req), "")
+        self.assertEqual(steps._cap_journal(ctx, req), {})
+        # the real ones, so a change to either adapter's declaration fails here
+        from missions.adapters.claude import ClaudeAdapter
+        from missions.adapters.codex import CodexAdapter
+        self.assertTrue(ClaudeAdapter({}).capabilities()["budget"])
+        self.assertFalse(CodexAdapter({}).capabilities()["budget"])
+
     def test_budget_grace(self):
         """driver.json's budget_grace_pct, applied to every role: the budget is what the work is
         meant to cost, the cap is where the harness stops it, and the gap is the wrap-up (#21)."""
@@ -475,6 +503,9 @@ class RequestTests(Fixture):
         r = req({"roles": {}})
         self.assertEqual((r.budget_usd, r.budget_grace_pct, r.hard_budget_usd), (8.0, 10.0, 8.8))
         self.assertEqual(req({"roles": {}}, role="reviewer").hard_budget_usd, 6.6)
+        self.assertEqual(steps.grace_pct({}), 10.0)
+        self.assertEqual((steps.grace_pct({"budget_grace_pct": 0}), steps.grace_pct({"budget_grace_pct": None})),
+                         (0.0, 0.0))
         # the operator's own number wins, and 0 or null turns the grace off entirely
         r = req({"roles": {"worker": {"budget_usd": 4}}, "budget_grace_pct": 25})
         self.assertEqual((r.budget_usd, r.hard_budget_usd), (4.0, 5.0))
@@ -577,6 +608,11 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(classify(capped, self.written(status="blocked", sha=None)), "tests_failed")
         # nothing landed at all
         self.assertEqual(classify(capped, Grade(False)), "budget_exhausted")
+        # our own structured cap outranks a quota GUESSED from the harness's error prose: telling
+        # the operator to wait for a reset that is not coming is the #21 loop in another costume
+        self.assertEqual(classify(capped, Grade(False, quota="usage limit")), "budget_exhausted")
+        # ...but not at the price of losing a commit: that still reconstructs first
+        self.assertEqual(classify(capped, Grade(False, new_commit="b" * 40, quota="usage limit")), "handoff_missing")
         # a commit but no handoff is still reconstructed first: the work is recorded before the stop
         self.assertEqual(classify(capped, Grade(False, new_commit="b" * 40)), "handoff_missing")
         self.assertEqual(classify(capped, self.written(status="partial", reconstructed=True)), "budget_exhausted")
@@ -1921,6 +1957,24 @@ class PreflightPrepTests(RepoFixture):
         with contextlib.redirect_stdout(out):
             self.assertEqual(loop.run(self.tmp / "nowhere", self.ns()), loop.EXIT_CODES["preflight-failed"])
         self.assertIn("is not a mission directory", out.getvalue())
+
+    def test_budget_grace_pct_is_validated_before_it_is_spent(self):
+        """An operator-typed number the driver multiplies money by. Unchecked, a string takes the
+        run down with a traceback one dispatch in -- past the point preflight exists to stop at --
+        and a negative one silently inverts the knob, cutting BELOW the budget."""
+        self.cfg()                                                       # absent: the default
+        self.assertEqual(loop.preflight(self.m, PLUGIN)[0], [])
+        for value in (0, None, 25, 12.5):
+            self.cfg(budget_grace_pct=value)
+            self.assertEqual(loop.preflight(self.m, PLUGIN)[0], [], "rejected a valid %r" % (value,))
+        self.cfg(budget_grace_pct="ten")
+        self.assertEqual(loop.preflight(self.m, PLUGIN)[0], ["budget_grace_pct must be a number, not 'ten'"])
+        self.cfg(budget_grace_pct=True)      # a bool is an int in python, and is not a percentage
+        self.assertEqual(loop.preflight(self.m, PLUGIN)[0], ["budget_grace_pct must be a number, not True"])
+        self.cfg(budget_grace_pct=-50)
+        self.assertEqual(loop.preflight(self.m, PLUGIN)[0],
+                         ["budget_grace_pct is -50: a grace is headroom over the budget, never under it "
+                          "(0 or null turns it off)"])
 
     def test_unset_branch_fails_preflight(self):
         self.cfg(branch="")

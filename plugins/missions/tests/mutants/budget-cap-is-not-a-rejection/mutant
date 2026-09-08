@@ -5,4 +5,9 @@
 category=evidence
 file=driver/missions/outcome.py
 breaks=budget-cap-complete-handoff-ingested
-control=malformed-handoff-redispatched
+# The control must REACH the mutated clause, not merely pass: in malformed-handoff-redispatched
+# every run either returns at `grade.problems` first or exits 0, so `outcome.rc != 0` is False
+# and Python never evaluates `capped_usd is None` -- its green would be unfalsifiable here.
+# uncapped-nonzero-exit-rejected is the one trace that lands on the clause with a complete
+# handoff and a non-zero exit, and it must stay red-for-the-right-reason under the mutant.
+control=uncapped-nonzero-exit-rejected

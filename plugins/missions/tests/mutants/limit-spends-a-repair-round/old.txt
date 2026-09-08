@@ -1,0 +1,3 @@
+                # rejections, not attempts: a run the driver's own cap or the provider's quota cut
+                # off is explicitly not a rejection, so it does not spend a repair round either
+                n = journal.rejections(mdir, feat.id)

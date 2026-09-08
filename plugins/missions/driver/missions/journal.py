@@ -129,6 +129,15 @@ REJECTED = ("malformed_handoff", "tests_failed")
 CUT_OFF = ("budget_exhausted", "infra_quota")
 
 
+def rejections(mission_dir: Path, feature: str) -> int:
+    """How many of the feature's attempts were REJECTED -- not how many ran. The repair-round cap
+    is a budget for "the work came back wrong", so an attempt a limit cut off must not spend one:
+    it earned no verdict about the work at all, and charging it means a feature is blocked after
+    fewer real rejections than the cap allows, with a halt that says it was 'rejected N times'."""
+    return count(mission_dir, "step_done",
+                 lambda r: r.get("feature") == feature and r.get("cls") in REJECTED)
+
+
 def prior_attempt(mission_dir: Path, feature: str) -> Optional[Dict[str, Any]]:
     """The most recent step_done for the feature when it has something the next attempt must be
     told -- its handoff was refused, or a limit ended it -- and is also the most recent step_done

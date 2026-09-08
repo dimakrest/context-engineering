@@ -131,7 +131,9 @@ def cmd_grade(args) -> int:
         # valid evidence, but not of a finished feature: say what the driver does with it
         print("status %s: the driver will %s, citing your Left undone%s" % (
             g.status,
-            "halt the mission for a human decision" if g.status == "blocked" else "re-dispatch this feature",
+            "halt the mission for a human decision" if g.status == "blocked"
+            else "re-dispatch this feature -- or, if a budget cap or a quota ended your run, stop for "
+                 "the operator and hand your Left undone to whoever continues it",
             " -- which is empty: say what remains" if not g.undone else ""))
     return 0
 

@@ -1,0 +1,8 @@
+# Continuation: what a repair round is a budget FOR. The cap is a budget for "the work came back
+# wrong"; a run a limit cut off earned no verdict about the work at all. Counting dispatches
+# instead of rejections charges it anyway, so a feature blocks a dispatch early and the halt says
+# it was "rejected N times" -- counting a run the driver itself ended.
+category=continuation
+file=driver/missions/loop.py
+breaks=budget-cap-spends-no-repair-round
+control=malformed-handoff-redispatched

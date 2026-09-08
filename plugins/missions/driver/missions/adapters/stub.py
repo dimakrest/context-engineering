@@ -36,7 +36,10 @@ class StubAdapter:
         self.script_dir = Path(cfg.get("script_dir", "stub"))
 
     def capabilities(self) -> Dict:
-        return {"cost_unit": "unknown", "budget": False, "model": False, "read_only": False}
+        # budget: True because a stub script CAN end a run at the cap and say so (`"capped": true`
+        # in cost.json, below). The driver reads this to decide whether a cap is real enough to
+        # print and journal, and for the stub it is -- that is the whole point of a double.
+        return {"cost_unit": "unknown", "budget": True, "model": False, "read_only": False}
 
     def script_for(self, req: RunRequest) -> Path:
         names: List[str] = []
@@ -67,10 +70,11 @@ class StubAdapter:
         if cost_file.exists():
             try:
                 c = json.loads(cost_file.read_text(encoding="utf-8"))
-                if isinstance(c, dict) and c.get("unit") in ("usd", "tokens"):
-                    cost = {"unit": c["unit"], "value": float(c.get("value") or 0.0), "source": "stub:cost.json"}
-                if isinstance(c, dict) and c.get("capped") and req.hard_budget_usd is not None:
-                    capped = req.hard_budget_usd
+                if isinstance(c, dict):
+                    if c.get("unit") in ("usd", "tokens"):
+                        cost = {"unit": c["unit"], "value": float(c.get("value") or 0.0), "source": "stub:cost.json"}
+                    if c.get("capped") and req.hard_budget_usd is not None:
+                        capped = req.hard_budget_usd
             except (ValueError, TypeError):
                 pass
         return Outcome(task=req.task, rc=res.rc, elapsed_s=res.elapsed_s, timed_out=res.timed_out,

@@ -2,7 +2,7 @@
 
 `RunRequest` is what an adapter receives; `Outcome` is what it returns after the process is gone.
 `Grade` is what the driver found on disk and in git afterwards, keyed to the task that ran.
-`classify` turns the pair into exactly one of the eight classes.
+`classify` turns the pair into exactly one of the nine classes.
 """
 from __future__ import annotations
 
@@ -163,7 +163,19 @@ def classify(outcome: Outcome, grade: Grade) -> str:
                 outcome.rc, (" -- " + outcome.detail) if outcome.detail else ""))
             return "malformed_handoff"
         return "done"
-    if grade.quota:
+    if outcome.capped_usd is not None and not grade.new_commit:
+        # above quota, as in the partial arm above: `capped_usd` is the cap the driver itself set
+        # and the harness itself named, while `grade.quota` is a regex over the harness's error
+        # prose. When both fire the structured one is true, and the difference is not cosmetic --
+        # quota tells the operator to wait for a reset that is never coming.
+        # `not grade.new_commit` is what keeps a commit from being lost to the shortcut: a capped
+        # run that committed goes to handoff_missing below, is reconstructed `partial`, and comes
+        # back through the arm above as budget_exhausted with the work written down.
+        return "budget_exhausted"
+    if grade.quota and outcome.capped_usd is None:
+        # `and capped is None` completes the rule above: the provider's limit is read only when
+        # ours did not fire, in every arm. Without it a capped run that COMMITTED and whose error
+        # prose happens to match the quota regex lands here instead of being reconstructed.
         return "infra_quota"
     if grade.new_commit:
         if grade.tree_dirty:
@@ -173,11 +185,6 @@ def classify(outcome: Outcome, grade: Grade) -> str:
         return "handoff_missing"
     if outcome.timed_out or (outcome.killed_by or "").startswith("watchdog:"):
         return "stalled"
-    if outcome.capped_usd is not None:
-        # below `new_commit` on purpose, where quota sits above it: a capped run that committed
-        # without a handoff is still reconstructed, so the work is recorded before the stop, and
-        # the reconstruction's `partial` brings it back here as budget_exhausted anyway
-        return "budget_exhausted"
     if outcome.rc != 0:
         return "infra_crash"
     return "no_op"

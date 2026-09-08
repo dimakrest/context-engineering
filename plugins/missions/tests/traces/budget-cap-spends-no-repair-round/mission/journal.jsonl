@@ -1,0 +1,2 @@
+{"ts":"2026-09-01T00:00:00Z","event":"dispatch","agent":"mission-worker","class":"writer","feature":"F001","dispatch_id":"F001#1","task":"F001#1","harness":"stub","budget_usd":0.5,"cap_usd":0.55,"via":"driver"}
+{"ts":"2026-09-01T00:03:00Z","event":"step_done","step":"F001#1","feature":"F001","cls":"budget_exhausted","rc":1,"task":"F001#1","capped_usd":0.55,"problems":["the driver's own $0.55 cap ended the run before the work was finished"],"via":"driver"}

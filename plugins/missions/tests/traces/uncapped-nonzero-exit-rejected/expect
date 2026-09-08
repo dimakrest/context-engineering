@@ -1,0 +1,18 @@
+# The control for the budget-cap exemption, and the only case that reaches
+# `rc != 0 and not reconstructed and capped_usd is None` with a COMPLETE handoff: every other
+# trace returns earlier (a problem, a kill) or exits 0, so the clause is short-circuited away and
+# their green says nothing about it. Nothing capped this run, so rc 1 after a complete handoff is
+# what it has always been -- rejected, re-dispatched, and blocked when the rounds run out.
+rc=5
+journal~="event":"step_done".*"step":"F001#1".*"cls":"malformed_handoff"
+journal~="event":"dispatch".*"dispatch_id":"F001#2"
+journal~="event":"dispatch".*"dispatch_id":"F001#3"
+journal~="event":"halt".*"class":"block".*F001 rejected 3 times
+journal~="event":"stop".*"reason":"gate-blocked"
+journal!~="cls":"budget_exhausted"
+journal!~="cls":"done"
+journal!~="event":"handoff_ingested"
+stdout~=re-dispatching F001 with the rejection
+state~=^phase: halted
+postcheck=grep -q 'exited 1 after writing a complete handoff' "$M/journal.jsonl"
+postcheck=! grep -q '"capped_usd": [0-9]' "$M/runs/F001#1/outcome.json"

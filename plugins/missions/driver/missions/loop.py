@@ -106,6 +106,17 @@ def preflight(mission_dir: Path, plugin: Path, harness: Optional[str] = None,
     if cfg is not None and not cfg.get("host_lease", True):
         warnings.append("host_lease is false in driver.json: executor runs take no host lease, so another mission "
                         "on this machine may run its tests at the same time")
+    if cfg is not None and "budget_grace_pct" in cfg and cfg["budget_grace_pct"] is not None:
+        # a number the operator types that the driver multiplies money by: a string reaches
+        # build_request's float() one dispatch in and takes the run down with a traceback rather
+        # than a typed stop, and a negative one silently INVERTS the knob -- the harness would be
+        # told to cut below the budget while the console reports the budget as intended
+        g = cfg["budget_grace_pct"]
+        if isinstance(g, bool) or not isinstance(g, (int, float)):
+            problems.append("budget_grace_pct must be a number, not %r" % (g,))
+        elif g < 0:
+            problems.append("budget_grace_pct is %g: a grace is headroom over the budget, never under it "
+                            "(0 or null turns it off)" % g)
 
     env = dict(os.environ)
     env["CLAUDE_PLUGIN_ROOT"] = str(plugin)
@@ -363,9 +374,11 @@ def _run_locked(ctx: Context, args) -> int:
                 # same cap buys the same stop, so the queue does not step over it and does not
                 # repeat it either. The commit and the handoff stay where the run left them.
                 files.set_feature(mdir, feat.id, status="pending")
-                return steps.budget_stop(ctx, feat.id, outcome, grade)
+                return steps.budget_stop(ctx, "worker", feat.id, outcome, grade)
             if cls in ("malformed_handoff", "tests_failed"):
-                n = journal.attempts(mdir, feat.id)
+                # rejections, not attempts: a run the driver's own cap or the provider's quota cut
+                # off is explicitly not a rejection, so it does not spend a repair round either
+                n = journal.rejections(mdir, feat.id)
                 if n > repair_rounds:
                     files.set_feature(mdir, feat.id, status="blocked")
                     return stop(ctx, "gate-blocked", halt=True,

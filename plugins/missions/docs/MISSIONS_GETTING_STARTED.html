@@ -326,6 +326,17 @@ the loop first, then turn on real calls with the second mission.
 <section id="walk">
 <h2>4 · The walkthrough</h2>
 
+<div class="callout">
+<strong>Two runners, one plan.</strong> Everything through the contract and the design is the same
+whichever way you execute. This walkthrough runs the mission <em>from a Claude Code session</em>
+(<code>/missions:mission-run</code>), which is the right choice for a first mission — you can watch
+it, interrupt it, and it is the only path that reaches a reviewed draft PR today. The alternative is
+the out-of-process driver, <code>bin/missions</code>: the same loop driven by a program instead of a
+session, with workers as subprocesses, a deterministic grade after each one exits, and typed exit
+codes — better for long unattended stretches once you trust the plan. Both read and write the same
+<code>.missions/&lt;slug&gt;/</code>. The plugin README compares them side by side.
+</div>
+
 <ol class="steps">
 
 <li>
@@ -575,8 +586,8 @@ them is advisory. Here is the full set and what each one actually means.</p>
 <tr>
   <td><code>a writing agent is already active</code></td>
   <td>Two workers at once, or a stale marker left in <code>state.md</code> after a handoff landed.</td>
-  <td>If a worker really is running, wait. If not, the loop skipped its bookkeeping — set
-      <code>**Active writing agent:** none</code>.</td>
+  <td>If a worker really is running, wait — a stale lock expires on its own. Only as a last
+      resort, delete <code>.missions/&lt;slug&gt;/.writer</code> and journal why.</td>
 </tr>
 <tr>
   <td><code>progress is blocked by unresolved handoff issues</code></td>
@@ -598,8 +609,9 @@ them is advisory. Here is the full set and what each one actually means.</p>
 <tr>
   <td><code>phase is 'planning' — no product code yet</code></td>
   <td>Something tried to write code before the contract was finished.</td>
-  <td>Finish the contract. If planning really is done, set <code>**Phase:** implementing</code> and
-      dispatch a worker — the orchestrator does not write product code itself.</td>
+  <td>Finish the contract. If planning really is done, set <code>phase: implementing</code> in
+      <code>state.md</code>'s fenced <code>mission-state</code> block and dispatch a worker — the
+      orchestrator does not write product code itself.</td>
 </tr>
 <tr>
   <td><code>no pushing / no merging during a mission</code></td>
@@ -627,7 +639,7 @@ them is advisory. Here is the full set and what each one actually means.</p>
 
 <div class="callout ok">
 <strong>They are asleep unless a mission is live.</strong> All six check first for a
-<code>.missions/*/state.md</code> whose <code>**Phase:**</code> is something other than
+<code>.missions/*/state.md</code> whose <code>phase:</code> is something other than
 <code>done</code> or <code>halted</code>; without one they exit immediately. That is the first thing
 the test suite asserts, for every hook, including against a <code>state.md</code> too mangled to
 parse.
@@ -645,12 +657,13 @@ parse.
 </div>
 <div class="card">
   <h4><span class="dot" style="background:var(--a4)"></span>Stop the mission</h4>
-  <p>Set <code>**Phase:** halted</code> in <code>state.md</code>, with the reason. Every hook stands
-  down; the branch and commits stay exactly where they are.</p>
+  <p>Set <code>phase: halted</code> in <code>state.md</code>'s fenced <code>mission-state</code>
+  block, with the reason in <code>resume_next</code>. Every hook stands down; the branch and commits
+  stay exactly where they are.</p>
 </div>
 <div class="card">
   <h4><span class="dot" style="background:var(--a1)"></span>Finish and go back to normal</h4>
-  <p><code>**Phase:** done</code>. Or delete <code>.missions/&lt;slug&gt;/</code> — it is git-ignored
+  <p><code>phase: done</code>. Or delete <code>.missions/&lt;slug&gt;/</code> — it is git-ignored
   and the code is already committed on the branch.</p>
 </div>
 <div class="card">
@@ -739,13 +752,14 @@ did not personally read.
   <div><code>/missions:mission-run</code><span>Drive the loop. Start it, resume it, continue after a decision.</span></div>
   <div><code>/missions:mission-status</code><span>HTML page: coverage, spend, blockers.</span></div>
   <div><code>/missions:mission-resume</code><span>Rehydrate after a compaction or a new day.</span></div>
+  <div><code>bin/missions run</code><span>The other runner: the same loop driven by a program, unattended. See the plugin README.</span></div>
 </div>
 </div>
 <div>
 <h3>Steering by hand</h3>
 <div class="cheat">
-  <div><code>**Phase:**</code><span>planning · implementing · validating · negotiating · halted · done</span></div>
-  <div><code>**Active writing agent:**</code><span>Set to <em>none</em> to clear a stale block.</span></div>
+  <div><code>phase:</code><span>In the fenced <code>mission-state</code> block: planning · implementing · validating · negotiating · pr · halted · done</span></div>
+  <div><code>milestone:</code><span>Which milestone the loop is working on.</span></div>
   <div><code>## Open issues</code><span>Bullets here block the next feature. "none" clears it.</span></div>
   <div><code>rm -rf .missions/&lt;slug&gt;</code><span>Full stop. Git-ignored; commits survive on the branch.</span></div>
 </div>

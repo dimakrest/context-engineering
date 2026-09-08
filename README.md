@@ -25,8 +25,10 @@ Add the marketplace and install:
 ```
 
 This marketplace also ships **`missions`** — contract-first, multi-feature agent runs with serial
-workers, blind review, behaviour validation and hook-enforced caps. It is a separate plugin with
-its own enable flag; see [`plugins/missions/README.md`](plugins/missions/README.md).
+workers, blind review, behaviour validation and hook-enforced caps. A mission can be run two ways:
+from a Claude Code session (`/missions:mission-run`) or unattended by the out-of-process driver
+(`bin/missions`) — [`plugins/missions/README.md`](plugins/missions/README.md#running-a-mission--two-ways)
+compares them. It is a separate plugin with its own enable flag.
 
 ```bash
 /plugin install missions@dimakrest-context-engineering

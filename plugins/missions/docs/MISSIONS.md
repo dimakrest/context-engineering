@@ -36,7 +36,41 @@ possibly real spend on live systems. Don't spend it on a one-file change.
 
 ---
 
+## Two ways to run a mission
+
+**Planning is identical either way.** `/missions:mission-plan` and `/missions:mission-design` write
+the same five files under `.missions/<slug>/`, and both runners read them. What differs is *what
+drives the loop* once the plan exists.
+
+| | **The session loop** — `/missions:mission-run` | **The driver** — `bin/missions run` |
+|---|---|---|
+| What decides the next action | a Claude Code session following the skill | a Python program (stdlib only, ≥ 3.9) |
+| A worker is | a `mission-worker` subagent inside that session | a separate OS process — `claude -p` or `codex exec` |
+| Grading a handoff | the orchestrator model reads it and judges | deterministic: the schema function plus `git`, after the process exits |
+| The loop's own token cost | real, every turn — reload, ingest, bookkeeping | none; no model call happens outside a dispatch |
+| Surviving a compaction | `/missions:mission-resume` | nothing to survive — state is re-read from disk each iteration |
+| Caps | the hooks enforce them around each dispatch | checked in code before every paid dispatch |
+| How it ends | prose, plus `resume_next` | a typed exit code (0–130), plus `resume_next` |
+| Harness | Claude | Claude **or** codex, per mission |
+| Terminal steps (the `pr` phase) | **yes** — draft PR and whole-branch review | **not yet** (#10): it stops and hands the branch back |
+
+**Use the session loop** when you want to watch it, intervene, or take a mission all the way to a
+reviewed draft PR. **Use the driver** for long unattended stretches, for a dollar cap enforced
+before every dispatch, or when you want a grade that does not depend on a model's judgment.
+
+They are not exclusive. Both read and write the same `.missions/<slug>/`, so a mission can move
+between them mid-flight — and today it has to, because the driver stops at the `pr` phase.
+
+> **If you have been calling these v1 and v2** — yes, these are them. The docs use the descriptive
+> names because `v2` already means two other things in this project: the 2026-08-31 rework below,
+> and the fenced `mission-state` block that replaced the prose header in `state.md` (the driver
+> refuses a mission without it — *"the driver needs the v2 block"*).
+
+---
+
 ## Quick start
+
+### 1. Plan — the same either way
 
 ```
 /missions:mission-plan     # interview, then write the contract. No product code is written here.
@@ -53,14 +87,61 @@ possibly real spend on live systems. Don't spend it on a one-file change.
 /missions:mission-amend    # when the plan turns out to be wrong: a contract defect, a scope the
                   # user has narrowed, a design decision that reversed. Planning phase
                   # only -- and a contract amendment is not done until a crosscheck passes.
+```
 
+**Read the contract before running.** It is the one artifact the rest of the machinery cannot recover
+from being wrong about. Ten minutes there is worth more than anything you can do later.
+
+### 2a. Run it in a session
+
+```
 /missions:mission-run      # the loop: one worker at a time, blind validators at each milestone
 /missions:mission-status   # an HTML page: coverage, spend, what's running, what's blocked
 /missions:mission-resume   # after a compaction, a /clear, or a new day
 ```
 
-**Read the contract before running.** It is the one artifact the rest of the machinery cannot recover
-from being wrong about. Ten minutes there is worth more than anything you can do later.
+The session is the orchestrator: it reloads the digest each turn, dispatches one worker, ingests the
+handoff, and decides again. It stops on a BLOCK halt (below) and proceeds on an advisory one. The
+terminal steps happen here too — `phase: pr`, then `/missions:mission-pr-review`, then `phase: done`.
+
+### 2b. Run it with the driver
+
+```bash
+git checkout -b mission/<slug>          # the branch state.md names; the driver never creates one
+echo .missions/ >> .git/info/exclude    # preflight warns when .missions/ is tracked
+
+M=plugins/missions/bin/missions         # or put bin/ on your PATH
+
+$M init      .missions/<slug> --harness claude   # writes driver.json.        Costs nothing.
+$M preflight .missions/<slug>                    # refuses a bad setup.       Costs nothing.
+$M run       .missions/<slug> --dry-run          # the queue and the real argv. Costs nothing.
+$M run       .missions/<slug> --limit 1          # the first paid dispatch: one worker
+$M run       .missions/<slug>                    # let it go
+```
+
+Run it **from the checkout, on the mission branch** — preflight refuses a detached HEAD or a branch
+other than the one `state.md` names, because the worker's git hooks reject commits off it. Then read
+the exit code:
+
+| Exit | Reason | What it wants |
+|---|---|---|
+| `0` | done | nothing — the last milestone closed |
+| `1` | error | read the run directory it names |
+| `2` | preflight-failed | fix the setup; nothing was dispatched |
+| `3` | limit-reached | nothing — `--limit` / `--until` did what you asked |
+| `4` | budget | a cap raise in `mission.md`, journaled with the reason — or stop here |
+| `5` | gate-blocked | a decision: unblock a feature, amend the plan, reconcile the branch |
+| `6` | authority | an action the driver has no authority to take |
+| `7` | contract | the contract is wrong; `/missions:mission-amend` |
+| `8` | provider-quota | wait for the reset, then run again |
+| `130` | interrupted | check the active feature against git, then run again |
+
+Re-running is always safe: a closed milestone is never re-entered, and a validation round resumes at
+the step it did not reach. When it stops with `gate-blocked` at `phase: pr`, finish in a session —
+`/missions:mission-pr-review`.
+
+Full command reference, the codex sandbox note, and how grading works:
+`${CLAUDE_PLUGIN_ROOT}/README.md`.
 
 ---
 
@@ -77,7 +158,15 @@ from being wrong about. Ten minutes there is worth more than anything you can do
   validation/              # per-milestone verdicts
   followups.md             # defects, as new features
   journal.jsonl            # append-only event log
+
+  # the driver adds these, and nothing else:
+  driver.json              # harness, per-role deadline + dollar cap, sandbox, env passthrough
+  runs/<task>/             # the prompt it sent, the harness log, outcome.json with the grade
+  githooks/                # the git hooks the worker's process runs under
+  .driver.lock             # one driver per mission directory
 ```
+
+Every other file keeps the shape the skills wrote it in, whichever runner produced it.
 
 Schema and templates: `${CLAUDE_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md`.
 
@@ -99,6 +188,12 @@ The mission's **terminal state is a branch plus a draft PR**. Never a merge. A h
 | `/missions:mission-amend` | Changes a planned mission's contract, decomposition or scope without leaving half of it behind. Maps the blast radius before editing, applies edits that abort rather than half-apply, retires ids without renumbering, sweeps to zero live references, and gates on `check.sh` — a bidirectional coverage check, because the one-directional kind passes a mission whose two files disagree. **`planning` phase only**, and a contract amendment is not complete until `/missions:mission-crosscheck contract` passes on the result. |
 | `/missions:mission-status` | Renders `.missions/<slug>/` into a self-contained HTML page — assertion coverage by proof class, features, spend vs cap, open issues. |
 | `/missions:mission-resume` | Reconstructs position from disk and reconciles it against git. Git wins any disagreement. |
+
+### The driver
+
+| Runner | Is |
+|---|---|
+| `bin/missions` | The out-of-process alternative to `/missions:mission-run`: a stdlib-only Python program (≥ 3.9) that owns the loop instead of a session deciding whether to take another turn. `init` · `preflight` · `run` · `grade`. It runs each worker and each validator as a blocking subprocess under `claude -p` or `codex exec`, grades what they left behind after the process exits, and stops only through a typed exit code. It writes `driver.json`, `runs/<task>/`, `githooks/` and `.driver.lock` into the mission directory and nothing else new — every other file keeps the shape the skills wrote it in, and the hooks keep working alongside it. See *Two ways to run a mission* above. |
 
 ### Subagents
 
@@ -198,6 +293,9 @@ catches: the code is right, the tests pass, and the system still says the wrong 
 
 ## Rules the loop enforces
 
+**Both runners enforce all six.** In a session they are the skill's invariants, backed by the hooks;
+in the driver they are code paths the loop cannot step around.
+
 1. **One writing agent at a time.** Read-only agents fan out; writers never do. Naive parallelism
    produces conflicts, duplicated work, and inconsistent architecture — the coordination cost eats
    the gain.
@@ -221,6 +319,10 @@ assertion failed twice) · `halt at every milestone` ceiling · anything needing
 **ADVISORY** (journal the assumption, proceed, surface it next turn): everything else — first-pass
 validation failure, "cannot tell", a design-conformance defect, a milestone boundary under the
 default ceiling. The first full run idled ~85% of nine days, mostly waiting for "continue".
+
+**In the driver these are exit codes.** A BLOCK halt is `budget` (4), `gate-blocked` (5) or
+`contract` (7) and sets `phase: halted`; an advisory one is journaled and the loop continues. Either
+way `resume_next` in `state.md` says where it stood, and re-running is safe.
 
 **Expect validation to fail on the first pass at every milestone.** That is the normal case and it is
 what you're paying for — which is exactly why it is advisory, never a halt. A milestone that passes
@@ -274,30 +376,35 @@ claude|codex|both` is the paid live smoke; the suites never run it.
 
 ## Current status and honest limits
 
-**Built:** eight skills, five subagents, nine hooks, eight scripts, the file schema, and a hook
-regression suite (`tests/run.sh`), packaged as the `missions` plugin in the
-`dimakrest/context-engineering` marketplace.
+**Built:** eight skills, five subagents, nine hooks, eight scripts, the file schema, the
+out-of-process driver (`bin/missions`), and five test layers — hooks and scripts (`tests/run.sh`),
+driver traces (`tests/traces/run.sh`), driver mutants (`tests/mutants.sh`), driver unit tests
+(`tests/driver-selftest.py`) and a paid live smoke (`tests/harness/run.sh`, never run by the
+suites). Packaged as the `missions` plugin in the `dimakrest/context-engineering` marketplace.
 
 **v0.2 (2026-08-31)** wired the codebase intelligence (graphify / repowise) into the researcher,
 reviewer, scrutiny validator and the loop, made model seats executable and journaled, and moved the
 researcher and scrutiny seats from Haiku / Opus to Sonnet 5.
 
-**v2 (2026-08-31)** applied the five fixes from the analytics-hour-filter retro: bounded assurance
+**The 2026-08-31 rework** applied the five fixes from the analytics-hour-filter retro: bounded assurance
 (feature/file gate, proof budgets, finding registry, convergence gate); advisory vs blocking halts
 with the decision card; hot/cold state (fenced machine block, digest, archive, size cap, rehydrate
 on compaction); exact-range sealed review (patch files, no git for reviewers, host execution lease);
 and measured spend (dollar / dispatch / wall-clock / repair-round caps from the harness's cost-state).
 
-**Never run end to end.** No real mission has been *executed* with this. Planning has: one mission
-has been planned, designed, crosschecked twice and amended twice, which exercised
-`/missions:mission-plan`, `/missions:mission-design`, `/missions:mission-crosscheck` and `/missions:mission-amend` against a real
-codebase. The loop itself — `/missions:mission-run`, the workers, the validators — has not run. Expect the
-first execution to find gaps in the prompts, and treat it as the phase-0 dry run described in the
-plan rather than as production work.
+**Never run end to end on real work — either runner.** Planning has: one mission has been planned,
+designed, crosschecked twice and amended twice, which exercised `/missions:mission-plan`,
+`/missions:mission-design`, `/missions:mission-crosscheck` and `/missions:mission-amend` against a
+real codebase. The loop itself — the workers, the validators — has not run a real mission under
+`/missions:mission-run` or under the driver. What *has* run under the driver is a fixture repo with
+one real worker (`tests/harness/run.sh`, the paid smoke). Expect the first real execution to find
+gaps in the prompts, and treat it as the phase-0 dry run described in the plan rather than as
+production work.
 
 **Not validated — the validators.** Nothing has yet confirmed that `mission-reviewer` catches a
-planted defect. Until a mutation suite exists (plant an off-by-one, a swapped tenant filter, a dropped
-`await`; measure catch rate), treat validator verdicts as informative, not authoritative. Every
+planted defect. Until a *validator* mutation suite exists (plant an off-by-one, a swapped tenant filter, a
+dropped `await`; measure catch rate — `tests/mutants.sh` is a different thing, it mutates the
+driver), treat validator verdicts as informative, not authoritative. Every
 mechanism here increases confidence by construction, so an untested validator is an expensive machine
 for generating green checkmarks.
 
@@ -316,31 +423,37 @@ a weaker guarantee than the original, just in a narrower place than before.
 **Unconfirmed.** Whether a Claude Code subagent can itself spawn subagents. The design assumes the
 safe answer: all fan-out originates in the `/missions:mission-run` loop, never inside a validator.
 
-**The driver (0.3, in progress).** Three runs showed that every long stall had one root: the thing
-that should continue the mission was a model deciding whether to take another turn. `bin/missions`
-replaces that with a program — a `while True:` that runs each worker and each validator as a
-blocking subprocess under `claude -p` or `codex exec`, grades what it left behind after the
-process exits, and stops only through a typed reason. With D3 of #5 landed it drives a mission
-from its first feature to its last milestone's close: IMPLEMENT (grading once, after exit, keyed
-to the attempt — #4: eight outcome classes, the watchdog, handoff reconstruction, `missions grade
---self`), triage of the open issues a handoff raises, and VALIDATE — scrutiny, a blind review per
-feature, behavior validation where the contract needs it, negotiate, `proven` written only from
-validator verdicts, convergence, archive, the next milestone — with follow-ups and repair features
-registered from what a judgment step proposes and the driver applies. Enforcement no longer
-depends on the harness (#13), and each layer claims only what it holds: a run's environment is
-built from a whitelist, so no credential reaches a worker through its environment (no token, no
-agent socket, no askpass, an empty credential helper, an empty gh config — what `HOME` holds
-stays readable); git hooks scoped to that environment refuse a cooperating worker (a commit off
-the branch or without the prefix, a merge, a rebase, a push), and `--no-verify` bypasses them;
-the post-exit grade is the gate that does not depend on the worker. A reviewer runs with the
-handoffs and the other validators' files out of reach; one executor at a time per host. What
-remains: the terminal steps and the push (the `pr` phase, #10), `status` (#19), and `resume`
-with sleep-and-resume on a provider quota (#7). #6's mutation tests and live smoke are in
-`tests/mutants.sh` and `tests/harness/run.sh`. On Linux `codex exec` sandboxes each command with
-bubblewrap, which needs an unprivileged user namespace; where the host refuses one, preflight says
-so before anything is spent and names `adapters.codex.sandbox: "danger-full-access"` as the
-operator's opt-out for a host that is already a sandbox. See the README's "Developing"
-section for the commands, the trace tests and the paid harness smoke.
+**The driver (0.3).** Three runs showed that every long stall had one root: the thing that should
+continue the mission was a model deciding whether to take another turn. `bin/missions` replaces that
+with a program. *Two ways to run a mission* above is how to use it; the plugin README is how it
+works.
+
+*What it does:* drives a mission from its first feature to its last milestone's close — IMPLEMENT
+with the grade taken once, after the worker's process exits and keyed to the attempt (#4: eight
+outcome classes, the watchdog, handoff reconstruction, `missions grade --self`); triage of the open
+issues a handoff raises; and VALIDATE — scrutiny, a blind review per feature, behavior validation
+where the contract needs it, negotiate, `proven` written only from validator verdicts, converge,
+archive, the next milestone. Follow-ups and repair features are registered from what a judgment step
+proposes and the driver applies. Enforcement no longer depends on the harness (#13), and each layer
+claims only what it holds: a run's environment is built from a whitelist, so no credential reaches a
+worker through it (no token, no agent socket, no askpass, an empty credential helper, an empty `gh`
+config — what `HOME` holds stays readable); git hooks scoped to that environment refuse a
+cooperating worker, and `--no-verify` bypasses them; the post-exit grade is the gate that does not
+depend on the worker at all.
+
+*Still open:* the terminal steps and the push (the `pr` phase, #10), `status` (#19), and `resume`
+with sleep-and-resume on a provider quota (#7).
+
+*How far it is proven:* `tests/traces/run.sh` drives the real driver over a temporary repo with a
+stub worker; `tests/mutants.sh` breaks one driver rule at a time and asserts that the trace
+defending it fails; `tests/harness/run.sh claude|codex|both` is the paid live smoke with one real
+worker. Under the **claude** adapter that smoke has completed a feature end to end. **No codex
+worker has** — the codex adapter dispatches, grades and stops correctly, but treat it as plumbing
+that is tested rather than a worker that is proven. On Linux `codex exec` also sandboxes each
+command with bubblewrap, which needs an unprivileged user namespace; where the host refuses one,
+`init` warns and `preflight` refuses before anything is spent, and both name
+`adapters.codex.sandbox: "danger-full-access"` as the operator's opt-out for a host that is already
+a sandbox.
 
 ---
 

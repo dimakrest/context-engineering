@@ -5,14 +5,18 @@ Contract-first, multi-feature agent runs whose definition of done is written bef
 - `/missions:mission-plan` — interview, validation contract (assertions with proof classes and proof
   budgets), features sized to files, milestones, caps.
 - `/missions:mission-design` — architecture guidelines (D00n) with exemplars, before any code.
-- `/missions:mission-run` — the orchestrator loop: one worker at a time, blind per-feature review of
-  a materialised patch, behaviour validation, convergence gate, advisory vs blocking halts, a
-  reviewed draft PR as the terminal state.
+- `/missions:mission-run` — the orchestrator loop, driven by a Claude Code session: one worker at a
+  time, blind per-feature review of a materialised patch, behaviour validation, convergence gate,
+  advisory vs blocking halts, a reviewed draft PR as the terminal state.
+- `bin/missions` — the same loop, driven by a program instead of a session: workers as subprocesses,
+  a deterministic grade after each one exits, typed exit codes, unattended. **See *Running a mission*
+  below for which to use.**
 - `/missions:mission-status` · `/missions:mission-resume` · `/missions:mission-amend` ·
   `/missions:mission-crosscheck` · `/missions:mission-pr-review`.
 
 Five agents (`mission-worker`, `mission-reviewer`, `mission-researcher`,
-`mission-validator-scrutiny`, `mission-validator-behavior`), nine hooks, eight scripts.
+`mission-validator-scrutiny`, `mission-validator-behavior`), nine hooks, eight scripts, and the
+out-of-process driver.
 Everything is a file under `.missions/<slug>/` in the project you run it in; the plugin is
 project-agnostic and learns the repo's rules from the mission's `state.md`.
 
@@ -28,6 +32,97 @@ First run: `docs/MISSIONS_GETTING_STARTED.html`.
 
 The hooks are inert in any project without an active `.missions/*/state.md`.
 
+## Running a mission — two ways
+
+Planning is the same either way: `/missions:mission-plan`, then `/missions:mission-design`, writing
+the five files under `.missions/<slug>/`. What differs is what drives the loop afterwards.
+
+| | **A session** — `/missions:mission-run` | **The driver** — `bin/missions run` |
+|---|---|---|
+| Decides the next action | a Claude Code session following the skill | a Python program (stdlib only, ≥ 3.9) |
+| A worker is | a `mission-worker` subagent in that session | a separate process — `claude -p` or `codex exec` |
+| Grades a handoff by | the orchestrator model reading it | the schema function plus `git`, after the process exits |
+| Costs, per iteration | orchestrator tokens every turn | nothing outside the dispatches |
+| After a compaction | `/missions:mission-resume` | nothing to resume — state is re-read from disk |
+| Caps | hooks enforce them at each dispatch | checked in code before every paid dispatch |
+| Ends with | prose, plus `resume_next` | a typed exit code (0–130), plus `resume_next` |
+| Harness | Claude | Claude **or** codex |
+| The `pr` phase | **yes** — draft PR, whole-branch review, `done` | **not yet** (#10) — it stops and hands the branch back |
+
+Use a session when you want to watch it, intervene, or take the mission all the way to a reviewed
+draft PR. Use the driver for long unattended stretches, a dollar cap enforced before every dispatch,
+or a grade that does not depend on a model's judgment. Both read and write the same
+`.missions/<slug>/`, so a mission can move between them — and today it must, because the driver
+stops before the terminal steps.
+
+*(If you have been calling these v1 and v2: yes, these are them. `v2` is avoided as a label here
+because it already means the fenced `mission-state` block format — "the driver needs the v2 block".)*
+
+### In a session
+
+```
+/missions:mission-run      # the loop: one worker at a time, blind validators at each milestone
+/missions:mission-status   # an HTML page: coverage, spend, what's running, what's blocked
+/missions:mission-resume   # after a compaction, a /clear, or a new day
+```
+
+The terminal steps live here: `phase: pr` → `/missions:mission-pr-review` → `phase: done`, and the
+hooks go inert for that mission. A human merges.
+
+### With the driver
+
+```bash
+git checkout -b mission/<slug>          # the branch state.md names; the driver never creates one
+echo .missions/ >> .git/info/exclude    # preflight warns when .missions/ is tracked
+
+M=plugins/missions/bin/missions         # or put bin/ on your PATH
+
+$M init      .missions/<slug> --harness claude|codex   # writes driver.json.        Costs nothing.
+$M preflight .missions/<slug>                          # refuses a bad setup.       Costs nothing.
+$M run       .missions/<slug> --dry-run                # the queue and the real argv. Costs nothing.
+$M run       .missions/<slug> --limit 1                # the first paid dispatch: one worker
+$M run       .missions/<slug>                          # let it go
+```
+
+Full form:
+
+```
+plugins/missions/bin/missions init      .missions/<slug> --harness claude|codex [--stub-dir DIR] [--force]
+plugins/missions/bin/missions preflight .missions/<slug>
+plugins/missions/bin/missions run       .missions/<slug> [--limit N] [--milestone M] [--until validate|milestone] [--dry-run]
+plugins/missions/bin/missions grade     .missions/<slug> F0nn [--self] [--json]
+```
+
+Run it **from the checkout, on the mission branch** — preflight refuses a detached HEAD or the wrong
+branch, because the worker's git hooks reject commits off the one `state.md` names. `--until
+validate` stops when the milestone's features are done and VALIDATE would begin; `--until milestone`
+stops after it closes. `grade` is the check the worker is told to run on itself before it exits
+(`--self`); the driver applies the same one after.
+
+Then read the exit code:
+
+| Exit | Reason | What it wants from you |
+|---|---|---|
+| `0` | done | nothing — the last milestone closed |
+| `1` | error | read the run directory it names |
+| `2` | preflight-failed | fix the setup; nothing was dispatched |
+| `3` | limit-reached | nothing — `--limit` / `--until` did what you asked |
+| `4` | budget | a cap raise in `mission.md`, journaled with the reason — or stop here |
+| `5` | gate-blocked | a decision: unblock a feature, amend the plan, reconcile the branch |
+| `6` | authority | an action the driver has no authority to take |
+| `7` | contract | the contract is wrong — `/missions:mission-amend` |
+| `8` | provider-quota | wait for the reset, then run again |
+| `130` | interrupted | check the active feature against git, then run again |
+
+Re-running is always safe: a closed milestone is never re-entered, and a validation round resumes at
+the step it did not reach. Every stop rewrites `resume_next` in `state.md` with where it stood.
+
+The driver writes `driver.json`, `runs/<task>/`, `githooks/` and `.driver.lock` into the mission
+directory **and nothing else new** — `validation/`, `patches/`, `followups.md` and the rest are the
+same files in the same shapes the skills write, and the hooks keep working alongside it (it takes
+and releases `.writer` / `.lease` in their format). A `codex` worker runs your `~/.codex/hooks.json`
+hooks and gets no dollar budget — its cost is reported in tokens.
+
 ## What the hooks enforce
 
 | Guard | How |
@@ -40,55 +135,11 @@ The hooks are inert in any project without an active `.missions/*/state.md`.
 | State stays small | `state.md` capped at 200 lines; agents are briefed with a ≤ 2 KB digest |
 | No push outside phase `pr`, no merge, no `--no-verify` | commit-discipline |
 
-## Developing
+## How the driver works
 
-Iterate against the local checkout without pushing:
-
-```
-claude --plugin-dir /path/to/context-engineering/plugins/missions
-```
-
-Run the regression suite (every hook and script against fixture missions, inertness first):
-
-```
-bash plugins/missions/tests/run.sh
-```
-
-Cases live in `tests/gen-cases.py` (one `case(...)` call each: a script, a stdin payload, a fixture
-mission tree, and an `expect` of `rc=`, `stderr~=`, `stdout~=`, `postcheck=`); `run.sh` regenerates
-`tests/cases/` from it on every run. Add a case for every new block. To see what a hook actually
-receives from the harness, run a session with `MISSION_HOOK_DEBUG=1` and read
-`.missions/<slug>/.hook-debug.log`. Bump `.claude-plugin/plugin.json` on every behaviour change; the
-marketplace fetches by version.
-
-### The driver (0.3, in progress — #5)
-
-`bin/missions` is the out-of-process driver: a Python program (stdlib only, ≥ 3.9) that owns the run
-loop instead of a Claude session deciding whether to take another turn. It drives a mission from
-its first feature to its last milestone's close — select the pending feature, render its prompt,
-run a worker as a blocking subprocess under `claude -p` or `codex exec`, grade the handoff after
-the process exits, write `features.md` / `contract.md` / `state.md` / `journal.jsonl`, loop; when
-a milestone's features are all done, run VALIDATE the same way (below) — and stops with a typed
-reason and exit code (`0` done · `1` error · `2` preflight-failed · `3` limit-reached · `4` budget ·
-`5` gate-blocked · `7` contract · `8` provider-quota · `130` interrupted). Not driven yet: the
-terminal steps and the push (the `pr` phase, #10); `status` (#19), `resume` and
-sleep-and-resume on a quota (#7). The mutation tests and the live smoke of #6 are in
-`tests/mutants.sh` and `tests/harness/run.sh`; what stays open there is the same trace under
-both adapters — runnable wherever codex can execute (see the codex sandbox note below).
-
-```
-plugins/missions/bin/missions init      .missions/<slug> --harness claude|codex
-plugins/missions/bin/missions preflight .missions/<slug>
-plugins/missions/bin/missions run       .missions/<slug> [--limit N] [--milestone M] [--until validate|milestone] [--dry-run]
-plugins/missions/bin/missions grade     .missions/<slug> F0nn [--self] [--json]
-```
-
-Run it from the checkout on the mission branch. It writes `driver.json`, `runs/<task>/`,
-`githooks/` and `.driver.lock` into the mission directory and nothing else new — `validation/`,
-`patches/`, `followups.md` and the rest are the 0.2 files, written in their 0.2 shapes; the 0.2
-hooks keep working alongside it (it takes and releases `.writer` / `.lease` in their format). Note that a `codex`
-worker runs your `~/.codex/hooks.json` hooks and gets no dollar budget — cost is reported in
-tokens.
+Reference for `bin/missions` — see *Running a mission* above for the commands. What is not
+driven yet: the terminal steps and the push (the `pr` phase, #10), `status` (#19), `resume`
+and sleep-and-resume on a provider quota (#7).
 
 **codex needs unprivileged user namespaces.** On Linux `codex exec` sandboxes every command it
 runs with bubblewrap, which needs a user namespace it can write a uid map in. Plenty of hosts
@@ -214,12 +265,28 @@ overrides the path), so two missions in two worktrees never run their tests at t
 driver that waits journals `lease_wait` naming the holder. `"host_lease": false` in `driver.json`
 opts out (preflight warns). `driver.json` also carries per-role `timeout_s` / `budget_usd` /
 `model` under `roles`, and `env.passthrough`, the operator's explicit list of extra variable
-names (or `PREFIX_*` globs) the runs may see. `bash tests/harness/run.sh claude|codex|both` is the
-paid smoke: one real worker run over the fixture repo with a $2.00 budget, asserting the journal
-shape (`dispatch` → `agent_return` → `cost` → `step_done`, cost in usd under claude and tokens
-under codex), that the class means the worker did the work, that a commit landed, and that no
-credential reached the child's own environment. `both` runs each adapter and compares the shape,
-the class and the evidence — the harness-agnostic claim as a test. The suites never run it.
+names (or `PREFIX_*` globs) the runs may see.
+
+## Developing
+
+Iterate against the local checkout without pushing:
+
+```
+claude --plugin-dir /path/to/context-engineering/plugins/missions
+```
+
+Run the regression suite (every hook and script against fixture missions, inertness first):
+
+```
+bash plugins/missions/tests/run.sh
+```
+
+Cases live in `tests/gen-cases.py` (one `case(...)` call each: a script, a stdin payload, a fixture
+mission tree, and an `expect` of `rc=`, `stderr~=`, `stdout~=`, `postcheck=`); `run.sh` regenerates
+`tests/cases/` from it on every run. Add a case for every new block. To see what a hook actually
+receives from the harness, run a session with `MISSION_HOOK_DEBUG=1` and read
+`.missions/<slug>/.hook-debug.log`. Bump `.claude-plugin/plugin.json` on every behaviour change; the
+marketplace fetches by version.
 
 Trace tests run the real driver over a temporary repo with a stub worker (a shell script):
 
@@ -246,3 +313,15 @@ honest: a mutation that reddens everything proves nothing — so pick a control 
 mutated line without depending on it. The `breaks` trace is run once on the unmutated copy first,
 so a renamed trace cannot read as a passing mutant, and an anchor that no longer matches the
 driver is reported as `anchor not found` rather than a quiet pass.
+
+The paid live smoke — **never run by any suite**, it spends real money:
+
+```
+bash plugins/missions/tests/harness/run.sh claude|codex|both
+```
+
+One real worker run over the fixture repo with a $2.00 budget, asserting the journal shape
+(`dispatch` → `agent_return` → `cost` → `step_done`, cost in usd under claude and tokens under
+codex), that the class means the worker did the work, that a commit landed, and that no credential
+reached the child's own environment. `both` runs each adapter and compares the shape, the class and
+the evidence — the harness-agnostic claim as a test.

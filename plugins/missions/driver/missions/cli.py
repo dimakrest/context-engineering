@@ -52,6 +52,7 @@ def cmd_init(args) -> int:
         "checkout": ".",
         "branch": st.branch,
         "roles": roles,
+        "budget_grace_pct": steps.BUDGET_GRACE_PCT,
         "watchdog": dict(watchdog.DEFAULTS),
         "host_lease": True,
         "env": {"passthrough": []},

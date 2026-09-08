@@ -8,6 +8,11 @@ The prompt goes in on stdin (non-interactive `-p` skips the trust dialog). The r
 object on stdout: `total_cost_usd` is the cost, `modelUsage` names what ran, `is_error`/`subtype`/
 `result` say how it ended -- and the `result` text is the CLI's own words on why, which beat any
 mapping (a 529 arrives as subtype "success" with is_error true).
+
+`--max-budget-usd` carries the request's HARD cap (the role budget plus its grace), and the exit it
+produces is the one non-zero exit the driver caused itself: subtype `error_max_budget_usd`, rc 1.
+That pair -- we set a cap, and the harness named the cap -- is the only thing that sets
+`Outcome.capped_usd`, so `classify` never has to guess a limit from prose.
 """
 from __future__ import annotations
 
@@ -18,6 +23,8 @@ from ..outcome import Outcome, RunRequest, unknown_cost
 from . import base
 
 READ_ONLY_DISALLOWED = "Write,Edit,NotebookEdit,MultiEdit"
+# the envelope subtype `claude -p` reports when --max-budget-usd is what ended the turn
+BUDGET_SUBTYPE = "error_max_budget_usd"
 
 
 class ClaudeAdapter:
@@ -37,8 +44,8 @@ class ClaudeAdapter:
             cmd += ["--allowedTools", ",".join(req.tools)]
         if req.read_only:
             cmd += ["--disallowedTools", READ_ONLY_DISALLOWED]
-        if req.budget_usd is not None:
-            cmd += ["--max-budget-usd", ("%g" % req.budget_usd)]
+        if req.hard_budget_usd is not None:
+            cmd += ["--max-budget-usd", ("%g" % req.hard_budget_usd)]
         if req.model:
             cmd += ["--model", req.model]
         if req.effort:
@@ -55,6 +62,7 @@ class ClaudeAdapter:
         cost: Dict[str, Any] = unknown_cost("claude:no-json-envelope")
         model: Optional[str] = None
         detail = ""
+        capped: Optional[float] = None
         session_id: Optional[str] = None
         if envelope is not None:
             usd = envelope.get("total_cost_usd")
@@ -68,6 +76,8 @@ class ClaudeAdapter:
             if isinstance(result, str):
                 req.output_path.write_text(result, encoding="utf-8")
             subtype = str(envelope.get("subtype") or "")
+            if subtype == BUDGET_SUBTYPE and req.hard_budget_usd is not None:
+                capped = req.hard_budget_usd
             if envelope.get("is_error") or subtype.startswith("error"):
                 text = (result or "").strip().replace("\n", " ") if isinstance(result, str) else ""
                 detail = ("%s: %s" % (subtype or "error", text[:200])).strip(": ")
@@ -76,7 +86,8 @@ class ClaudeAdapter:
         return Outcome(task=req.task, rc=res.rc, elapsed_s=res.elapsed_s, timed_out=res.timed_out,
                        killed_by=res.killed_by, cost=cost, harness=self.name, model=model,
                        stdout_path=req.run_dir / "stdout", stderr_path=req.run_dir / "stderr",
-                       detail=detail, session_id=session_id, orphans_killed=res.orphans_killed)
+                       detail=detail, session_id=session_id, orphans_killed=res.orphans_killed,
+                       capped_usd=capped)
 
 
 def parse_envelope(stdout: str) -> Optional[Dict[str, Any]]:

@@ -1,0 +1,12 @@
+# #21: with no handoff and no commit this used to be infra_crash, which the loop retries once and
+# then stops with `error` -- two runs at the cap to learn what the first one already said.
+rc=4
+journal~="event":"dispatch".*"dispatch_id":"F001#1"
+journal~="event":"step_done".*"step":"F001#1".*"cls":"budget_exhausted"
+journal~="event":"stop".*"reason":"budget"
+journal!~="dispatch_id":"F001#2"
+journal!~="cls":"infra_crash"
+state~=^phase: halted
+state~=^resume_next: budget
+postcheck=sed -n '/^### F001/,/^##/p' "$M/features.md" | grep 'Status:\*\* pending' >/dev/null
+postcheck=grep -q 'it left no handoff' "$M/journal.jsonl"

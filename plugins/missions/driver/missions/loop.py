@@ -358,6 +358,12 @@ def _run_locked(ctx: Context, args) -> int:
                             detail="%s reports %s blocked: %s" % (
                                 outcome.task, feat.id, "; ".join(grade.undone[:3]) or "no reason given under Left undone"),
                             needs="decide: fix the brief or the contract (/missions:mission-amend), or set %s back to pending" % feat.id)
+            if cls == "budget_exhausted":
+                # the driver's own cap, not a fault and not a rejection: a re-dispatch under the
+                # same cap buys the same stop, so the queue does not step over it and does not
+                # repeat it either. The commit and the handoff stay where the run left them.
+                files.set_feature(mdir, feat.id, status="pending")
+                return steps.budget_stop(ctx, feat.id, outcome, grade)
             if cls in ("malformed_handoff", "tests_failed"):
                 n = journal.attempts(mdir, feat.id)
                 if n > repair_rounds:

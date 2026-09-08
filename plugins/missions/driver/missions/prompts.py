@@ -23,7 +23,7 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from . import files
+from . import files, journal
 
 # role -> the agent whose definition is its system prompt and whose name the journal records
 AGENTS = {
@@ -167,7 +167,7 @@ def _design_lines(feature_id: str, design: Tuple[str, List[str]]) -> List[str]:
 
 def worker_prompt(mission_dir: Path, feature: files.Feature, digest_text: str,
                   assertions: List[files.Assertion], design: Tuple[str, List[str]],
-                  plugin: Path, rejection: Optional[Dict] = None,
+                  plugin: Path, prior: Optional[Dict] = None,
                   inherited: Optional[List[str]] = None) -> str:
     slug = mission_dir.name
     parts: List[str] = []
@@ -204,13 +204,26 @@ def worker_prompt(mission_dir: Path, feature: files.Feature, digest_text: str,
         parts.append("The working tree carries uncommitted changes from a previous attempt (%s%s)." % (
             ", ".join("`%s`" % f for f in inherited[:6]), ", ..." if len(inherited) > 6 else ""))
         parts.append("Review them before you start: keep what is right and commit it with your work, discard the rest.")
-    if rejection:
+    if prior:
         parts.append("")
-        parts.append("Your previous attempt (%s) was rejected after it exited:" % rejection.get("step", "?"))
-        for p in rejection.get("problems") or ["it left no usable handoff"]:
-            parts.append("  - %s" % p)
+        parts += _prior_attempt_lines(prior)
         parts.append("Its commits, if any, are already on the branch: build on them, do not redo them.")
     return "\n".join(parts) + "\n"
+
+
+def _prior_attempt_lines(prior: Dict) -> List[str]:
+    """What the last attempt left, in the terms it actually earned. A run a limit cut off -- the
+    driver's own spend cap, the provider's quota -- was not rejected, and saying it was sends the
+    next worker to redo code that is already committed and already graded clean. Only a class that
+    refused the handoff gets the word `rejected`."""
+    step = prior.get("step", "?")
+    problems = prior.get("problems") or []
+    if prior.get("cls") in journal.CUT_OFF:
+        return ["Your previous attempt (%s) did not finish: it was cut off before the work was done, "
+                "not rejected." % step] + ["  - %s" % p for p in problems] + [
+            "Continue it. What it already did is right; what it did not reach is yours."]
+    return ["Your previous attempt (%s) was rejected after it exited:" % step] + [
+        "  - %s" % p for p in (problems or ["it left no usable handoff"])]
 
 
 def reviewer_prompt(mission_dir: Path, feature: files.Feature, assertions: List[files.Assertion],

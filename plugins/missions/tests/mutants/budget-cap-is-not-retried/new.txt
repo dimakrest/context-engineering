@@ -1,0 +1,2 @@
+            if cls == "budget_exhausted":
+                cls = "tests_failed"      # MUTANT: a cap is a rejection, so retry it

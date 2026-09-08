@@ -177,10 +177,10 @@ features' ranges point at history that is gone. The contract is marked
 its own reason on the decision card; `partial` is re-dispatched with its "Left undone" as the
 rejection. The worker is told to run the same check before it exits (`missions grade … --self`);
 the two agree by construction, and `--self` says what the driver will do with a partial or
-blocked handoff. Every run ends in one of eight
-classes — `done` · `handoff_missing` · `malformed_handoff` · `tests_failed` · `infra_quota` ·
-`infra_crash` · `stalled` · `no_op` — and `runs/<task>/outcome.json` records the class with the
-grade. The old `PostToolUse: Agent` wiring of the schema hook is gone: it graded at dispatch, which
+blocked handoff. Every run ends in one of nine
+classes — `done` · `handoff_missing` · `malformed_handoff` · `tests_failed` · `budget_exhausted` ·
+`infra_quota` · `infra_crash` · `stalled` · `no_op` — and `runs/<task>/outcome.json` records the
+class with the grade. The old `PostToolUse: Agent` wiring of the schema hook is gone: it graded at dispatch, which
 is the wrong moment, and fired 29 false alarms across the recorded runs.
 
 **The watchdog.** While a worker runs, a thread polls the branch, the handoff, the run's output and
@@ -198,6 +198,19 @@ rate-limit message in the harness's own error text or stderr (never the worker's
 `infra_quota`, even after a WIP commit: the feature goes back to pending and the driver exits `8`
 without halting the mission — wait for the reset, run again (the driver's own sleep-and-resume
 is #7). A 529 `overloaded` is a crash and is retried like one.
+
+**The driver's own cap, and its grace (#21).** A role's `budget_usd` is what its *work* is meant to
+cost; the harness is told to cut at that plus `budget_grace_pct` (default 10). The gap is the
+wrap-up window — a run that reaches its budget must still be able to write its handoff and commit,
+and a cut exactly at the budget lands on whatever it was doing, losing the whole run for its last
+cent. `mission.md`'s dollar cap is untouched and still binds before every dispatch. When the cap
+does bind, the adapter that set it reports so from the harness's own words (`error_max_budget_usd`
+under claude; codex has no budget flag), and a cap is never read as a defect: a run cut off after it
+wrote a complete handoff and landed the commit is `done`, because every check the driver makes of
+any other run passed; one cut off with the work unfinished is `budget_exhausted`, which stops the
+mission at exit `4` naming the cap and the spend. It is never re-dispatched — the same cap ends the
+next attempt in the same place, and before this the loop spent four times the cap discovering that.
+The worker's own `blocked` is the one verdict a cap does not touch.
 
 **Prep: enforcement without harness hooks (#13).** A run's environment is built from a whitelist,
 never inherited: `PATH`, `HOME`, locale and proxy variables, the harness's own auth (`ANTHROPIC_*`
@@ -264,7 +277,8 @@ reviewer, scrutiny, behavior — takes `~/.missions/host.lock` (fcntl; `MISSIONS
 overrides the path), so two missions in two worktrees never run their tests at the same time; a
 driver that waits journals `lease_wait` naming the holder. `"host_lease": false` in `driver.json`
 opts out (preflight warns). `driver.json` also carries per-role `timeout_s` / `budget_usd` /
-`model` under `roles`, and `env.passthrough`, the operator's explicit list of extra variable
+`model` under `roles`, the mission-wide `budget_grace_pct` (default 10; `0` or `null` turns it
+off), and `env.passthrough`, the operator's explicit list of extra variable
 names (or `PREFIX_*` globs) the runs may see.
 
 ## Developing

@@ -19,7 +19,7 @@ class RunRequest:
     cwd: Path                       # the checkout
     env: Dict[str, str]             # built by the adapter base, not inherited blindly
     timeout_s: int
-    budget_usd: Optional[float]
+    budget_usd: Optional[float]     # the role's budget: what this run is meant to cost
     model: Optional[str]
     effort: Optional[str]
     read_only: bool
@@ -32,6 +32,19 @@ class RunRequest:
     mission_dir: Path = Path(".")
     watchdog: Any = None                 # watchdog.Watchdog; started and stopped by run_process
     step: str = ""                       # reviewer | scrutiny | behavior | negotiate | triage; "" for the worker
+    budget_grace_pct: float = 0.0        # headroom over budget_usd before the harness cuts
+
+    @property
+    def hard_budget_usd(self) -> Optional[float]:
+        """What the harness is actually told to cut at -- the budget plus the grace, derived here so
+        the two can never drift. The grace is the wrap-up window: a run that reaches its budget must
+        still be able to write its record and commit, and a hard cut exactly at the budget takes
+        that away, losing the whole run for its last cent. `None` means no cap flag at all."""
+        if self.budget_usd is None:
+            return None
+        # rounded: this is money, and the raw product is float noise ($8 + 10% is 8.800000000000001)
+        # that would reach the harness flag, the journal and every message that quotes the cap
+        return round(self.budget_usd * (1.0 + self.budget_grace_pct / 100.0), 4)
 
 
 @dataclass
@@ -50,6 +63,7 @@ class Outcome:
     detail: str = ""                # the harness's own words on how it ended, when it said
     session_id: Optional[str] = None
     orphans_killed: bool = False    # something was still alive in the process group after exit
+    capped_usd: Optional[float] = None  # the driver's own spend cap that ended this run, when one did
 
     @property
     def killed(self) -> bool:
@@ -96,26 +110,44 @@ class Grade:
 
 
 CLASSES = ("done", "handoff_missing", "malformed_handoff", "tests_failed",
-           "infra_quota", "infra_crash", "stalled", "no_op")
+           "budget_exhausted", "infra_quota", "infra_crash", "stalled", "no_op")
 
 
 def classify(outcome: Outcome, grade: Grade) -> str:
     """One class per run. Evidence outranks the claim: a handoff this attempt did not write is not
     its handoff; a handoff written by a worker that was killed or exited non-zero is not `done`.
 
-    The order matters. Quota is recognised only when the run left no handoff (the text alone is
-    not the outcome) but before any commit is weighed: a quota after a WIP commit is still a quota,
-    not a finished feature. A commit without a handoff is then `handoff_missing` however the run
+    The order matters. Quota is never read from a run that finished (the text alone is not the
+    outcome) -- only from one that left no handoff, or wrote a `partial` one -- but it is read
+    before any commit is weighed: a quota after a WIP commit is still a quota, not a finished
+    feature. A commit without a handoff is then `handoff_missing` however the run
     ended, unless the tree is also dirty, which is a shape no reconstruction can honestly record;
     how the run ended decides what the reconstruction says (complete or partial), not whether one
     is made.
 
     `grade.reconstructed` marks a handoff the driver wrote from the commit after the run was
     already over. The kill or the crash that left the record missing is what the reconstruction
-    explains (a cut-off run is reconstructed `partial`, so it lands in `tests_failed` above), so it
-    is not also held against it: such a grade is judged on its own evidence."""
+    explains (a cut-off run is reconstructed `partial`, so it lands on the `partial` arm above),
+    so it is not also held against it: such a grade is judged on its own evidence.
+
+    A limit is not a defect. `outcome.capped_usd` is the driver's OWN spend cap, reported by the
+    adapter that passed it from the harness's own words -- so a run it ended is one the driver cut
+    off, not one that went wrong, and the generic non-zero exit below is not the reading for it.
+    Evidence still outranks the claim in both directions: a run cut off after it wrote a complete
+    handoff and landed the commit is `done`, because every check the driver makes of any other run
+    passed and the grace exists for exactly that last stretch; one cut off with the work unfinished
+    is `budget_exhausted`, which the loop stops on rather than re-dispatching -- the same cap ends
+    the next attempt in the same place. `blocked` is the one verdict a limit does not touch: the
+    worker said why it cannot proceed, and that answer does not change with a bigger purse."""
     if grade.handoff_written:
-        if grade.status in ("partial", "blocked"):
+        if grade.status == "partial":
+            if outcome.capped_usd is not None:
+                return "budget_exhausted"
+            if grade.quota:
+                # the run met the provider's limit, not a defect: a re-dispatch meets it again
+                return "infra_quota"
+            return "tests_failed"
+        if grade.status == "blocked":
             return "tests_failed"
         if grade.problems:
             return "malformed_handoff"
@@ -126,7 +158,7 @@ def classify(outcome: Outcome, grade: Grade) -> str:
             grade.problems.append("the run was ended by the driver (%s) after it wrote a complete handoff" % (
                 outcome.killed_by or "timeout"))
             return "malformed_handoff"
-        if outcome.rc != 0 and not grade.reconstructed:
+        if outcome.rc != 0 and not grade.reconstructed and outcome.capped_usd is None:
             grade.problems.append("the worker exited %d after writing a complete handoff%s" % (
                 outcome.rc, (" -- " + outcome.detail) if outcome.detail else ""))
             return "malformed_handoff"
@@ -141,6 +173,11 @@ def classify(outcome: Outcome, grade: Grade) -> str:
         return "handoff_missing"
     if outcome.timed_out or (outcome.killed_by or "").startswith("watchdog:"):
         return "stalled"
+    if outcome.capped_usd is not None:
+        # below `new_commit` on purpose, where quota sits above it: a capped run that committed
+        # without a handoff is still reconstructed, so the work is recorded before the stop, and
+        # the reconstruction's `partial` brings it back here as budget_exhausted anyway
+        return "budget_exhausted"
     if outcome.rc != 0:
         return "infra_crash"
     return "no_op"

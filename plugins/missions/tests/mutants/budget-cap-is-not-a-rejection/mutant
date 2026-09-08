@@ -1,0 +1,8 @@
+# Evidence: what the driver's own cap proves. Removing the exemption restores the pre-#21 reading,
+# where the one non-zero exit the DRIVER caused is judged the same as a mystery crash -- so a
+# complete, committed, schema-valid handoff is called malformed and the loop re-dispatches it into
+# the identical wall, three times, at four times the cap.
+category=evidence
+file=driver/missions/outcome.py
+breaks=budget-cap-complete-handoff-ingested
+control=malformed-handoff-redispatched

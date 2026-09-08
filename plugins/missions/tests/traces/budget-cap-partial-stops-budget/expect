@@ -1,0 +1,19 @@
+# #21: the cap cut the work short. Before the fix this was cls tests_failed -> "your handoff was
+# rejected" -> three more attempts into the identical wall, at 4x the cap. The `F001#2` guard IS
+# the point of the case: a stop whose cause is deterministic is never repeated.
+rc=4
+journal~="event":"dispatch".*"dispatch_id":"F001#1"
+journal~="event":"step_done".*"step":"F001#1".*"cls":"budget_exhausted"
+journal~="event":"halt".*"class":"block".*the worker's own cap ended it
+journal~="event":"stop".*"reason":"budget"
+journal!~="dispatch_id":"F001#2"
+journal!~="cls":"tests_failed"
+journal!~="event":"handoff_ingested"
+state~=^phase: halted
+state~=^resume_next: budget
+git~=F001: stub work
+postcheck=sed -n '/^### F001/,/^##/p' "$M/features.md" | grep 'Status:\*\* pending' >/dev/null
+postcheck=grep -q '"cls": "budget_exhausted"' "$M/runs/F001#1/outcome.json"
+postcheck=grep -q 'budget \$0.5 + 10% grace' "$M/journal.jsonl"
+postcheck=grep -q 'the tenant scoping test is not written' "$M/journal.jsonl"
+

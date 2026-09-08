@@ -158,7 +158,10 @@ from missions.outcome import CLASSES
 from missions.loop import EXIT_CODES as TYPED_STOPS
 PRODUCTIVE = ("done", "handoff_missing", "malformed_handoff", "tests_failed")
 NOTHING_HAPPENED = ("no_op", "infra_crash", "stalled")
-NOT_OUR_FAULT = ("infra_quota",)   # the provider said no; the driver handled it (exit 8)
+# a limit ended the run, not a defect in it, and the driver handled it: the provider's quota
+# (exit 8) or the driver's own spend cap (exit 4). Neither says anything about the driver, so
+# either one makes this smoke inconclusive rather than red -- see the verdict below.
+LIMIT_NOT_DEFECT = ("infra_quota", "budget_exhausted")
 want_unit = {"claude": "usd", "codex": "tokens"}[harness]
 recs = [json.loads(ln) for ln in (mdir / "journal.jsonl").read_text(encoding="utf-8").splitlines() if ln.strip()]
 mine = [r for r in recs if r.get("task") == "F001#1"
@@ -183,8 +186,8 @@ check("step_done carries a class and elapsed_s",
 check("missions run exited %d, a typed stop and not an error" % driver_rc,
       driver_rc in set(TYPED_STOPS.values()) and driver_rc != TYPED_STOPS["error"])
 check("the class partition covers outcome.CLASSES (%d) without overlap" % len(CLASSES),
-      set(PRODUCTIVE) | set(NOTHING_HAPPENED) | set(NOT_OUR_FAULT) == set(CLASSES)
-      and len(PRODUCTIVE) + len(NOTHING_HAPPENED) + len(NOT_OUR_FAULT) == len(CLASSES))
+      set(PRODUCTIVE) | set(NOTHING_HAPPENED) | set(LIMIT_NOT_DEFECT) == set(CLASSES)
+      and len(PRODUCTIVE) + len(NOTHING_HAPPENED) + len(LIMIT_NOT_DEFECT) == len(CLASSES))
 
 cls = s.get("cls")
 run_dir = mdir / "runs" / "F001#1"
@@ -252,9 +255,15 @@ blob = "\n".join((run_dir / n).read_text(encoding="utf-8", errors="replace")[:HE
 blocked = re.search(r"(bwrap: [^\n\"`\\]{0,70}|landlock[^\n\"`]{0,40}not permitted|"
                     r"seccomp[^\n\"`]{0,40}not permitted|"
                     r"sandbox[^\n\"`]{0,40}(?:failed to start|startup failure))", blob, re.I)
-if (blocked and not log) or cls in NOT_OUR_FAULT:
-    why = ("%s could not run here: %s" % (harness, blocked.group(0).strip()[:120])) if blocked else (
-        "the provider reported a quota or limit; the driver stopped correctly")
+if (blocked and not log) or cls in LIMIT_NOT_DEFECT:
+    if blocked:
+        why = "%s could not run here: %s" % (harness, blocked.group(0).strip()[:120])
+    elif cls == "budget_exhausted":
+        why = ("the driver's own $%s cap ended the run before the work was done; the purse was too "
+               "small, not the driver wrong -- raise roles.worker.budget_usd and run again"
+               % s.get("capped_usd"))
+    else:
+        why = "the provider reported a quota or limit; the driver stopped correctly"
     print("  --   " + why)
     print("smoke: NOT ESTABLISHED -- nothing was proved about the driver%s" % (
         "" if ok else ", AND checks above already failed"))

@@ -11,6 +11,14 @@
 #
 #   claude | codex   one adapter
 #
+# MISSIONS_SMOKE_CLAUDE_BUDGET overrides the claude worker's roles.worker.budget_usd (default
+# 2.00). The default is sized to FINISH the fixture feature, which is what the assertions below
+# need; a smaller purse is how an operator reproduces #21 deliberately -- at $0.50 (a $0.55 cap
+# after the 10% grace) this feature does not fit, the driver's own cap ends the run, and the
+# expected result is `budget_exhausted`, exit 4 and NOT ESTABLISHED. That is the smoke reporting
+# a purse too small, not a driver at fault, and telling the two apart is the whole point of the
+# class: before it, the same run was `malformed_handoff` and the loop paid for it three more times.
+#
 # MISSIONS_SMOKE_CODEX_SANDBOX overrides adapters.codex.sandbox for the run. On a host that
 # refuses unprivileged user namespaces codex's bubblewrap cannot start, and preflight now refuses
 # the run; `MISSIONS_SMOKE_CODEX_SANDBOX=danger-full-access` is how an operator says "this host is
@@ -27,7 +35,8 @@
 #   - the outcome class is one that means the worker did the work (never no_op, infra_crash,
 #     stalled): a harness that launched, burned a dollar and produced nothing used to exit 0 here.
 #     The purse must be big enough for the fixture feature -- at $0.50 a claude worker is cut off
-#     mid-feature every time, and the run's class then says more about the budget than the adapter;
+#     mid-feature every time, and the run's class then says more about the budget than the adapter
+#     (which is now `budget_exhausted` and says so; MISSIONS_SMOKE_CLAUDE_BUDGET is how you ask);
 #   - the mission branch moved -- a commit is the evidence a handoff is graded against;
 #   - the child's OWN environment carries no credential. The driver's `bin` is pointed at a shim
 #     that dumps `env` and then becomes the real binary, so this reads what the process received.
@@ -109,7 +118,7 @@ with open(path, encoding="utf-8") as fh:
 # never enforces; its bound is the deadline
 cfg["roles"]["worker"]["timeout_s"] = 900
 if harness == "claude":
-    cfg["roles"]["worker"]["budget_usd"] = 2.0
+    cfg["roles"]["worker"]["budget_usd"] = float(os.environ.get("MISSIONS_SMOKE_CLAUDE_BUDGET") or 2.0)
 else:
     cfg["roles"]["worker"]["budget_usd"] = None
     sandbox = os.environ.get("MISSIONS_SMOKE_CODEX_SANDBOX")

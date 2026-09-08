@@ -15,10 +15,24 @@ import json
 import signal
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from . import __version__, files, grade as grading, loop, steps, watchdog
-from .adapters import NAMES
+from .adapters import NAMES, make_adapter
+
+
+def adapter_cannot_work_here(cfg: Dict, harness: str) -> List[str]:
+    """The chosen adapter's own "can I run a command on this host" question, asked at `init` while
+    the operator is still here and the answer is free to act on. `preflight` asks the same question
+    and refuses -- but by then it is refusing the very config this command just wrote, and the fix
+    is a line in that file. A warning here and a problem there on purpose: init spends nothing, and
+    what the answer implies (turning codex's own sandbox off) is the operator's call to make, never
+    the driver's to write for them."""
+    try:
+        ask = getattr(make_adapter(harness, cfg), "preflight_problems", None)
+    except Exception as e:                       # pragma: no cover - init wrote this config itself
+        return ["adapters.%s is not usable: %s: %s" % (harness, type(e).__name__, e)]
+    return list(ask()) if ask is not None else []
 
 
 def cmd_init(args) -> int:
@@ -49,6 +63,13 @@ def cmd_init(args) -> int:
     }
     files.write_config(mdir, cfg)
     print("wrote %s (harness %s, branch %s)" % (files.config_path(mdir), args.harness, st.branch or "unset"))
+    cannot = adapter_cannot_work_here(cfg, args.harness)
+    for w in cannot:
+        print("warning: " + w)
+    if cannot:
+        # name the consequence: without it this reads as advice, and the operator finds out at
+        # preflight -- or, if they skip it, one dispatch later with the tokens already gone
+        print("`missions preflight %s` will refuse this config until that is settled." % args.mission_dir)
     return 0
 
 

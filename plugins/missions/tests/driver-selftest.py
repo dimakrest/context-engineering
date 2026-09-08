@@ -1816,8 +1816,12 @@ class PreflightPrepTests(RepoFixture):
 
 class CliInitTests(Fixture):
     def test_init_writes_roles_lease_and_env(self):
-        with contextlib.redirect_stdout(io.StringIO()):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
             self.assertEqual(cli.main(["init", str(self.m), "--harness", "stub", "--stub-dir", str(self.tmp)]), 0)
+        # an adapter with no preflight_problems() is asked nothing and warns nothing -- the probe
+        # is a getattr, so a new adapter that never grew one must not make init noisy or raise
+        self.assertNotIn("warning:", out.getvalue())
         cfg = files.read_config(self.m)
         self.assertEqual(sorted(cfg["roles"]), ["behavior", "judgment", "reviewer", "scrutiny", "worker"])
         self.assertEqual(cfg["roles"]["reviewer"], {"timeout_s": 1500, "budget_usd": 6, "model": None, "effort": None})
@@ -1827,6 +1831,35 @@ class CliInitTests(Fixture):
         self.assertIs(cfg["host_lease"], True)
         self.assertEqual(cfg["env"], {"passthrough": []})
         self.assertEqual(cfg["adapters"]["stub"]["script_dir"], str(self.tmp))
+
+    def test_init_warns_when_the_adapter_cannot_work_here(self):
+        """init writes the config, then asks the adapter whether this host can run it. A
+        `workspace-write` codex on a host that refuses user namespaces is refused by preflight
+        seconds later -- saying so here costs nothing, and the fix is a line in the file just
+        written. It stays a warning: init reports what the host said, it does not choose
+        `danger-full-access` for the operator."""
+        from missions.adapters import codex as cx
+        saved = cx.user_namespaces_usable
+        try:
+            cx.user_namespaces_usable = lambda: False
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(cli.main(["init", str(self.m), "--harness", "codex"]), 0)
+            text = out.getvalue()
+            self.assertIn("warning:", text)
+            self.assertIn("user namespace", text)
+            self.assertIn("danger-full-access", text)      # the message names the way out
+            self.assertIn("preflight", text)               # and what happens if it is ignored
+            # rc is still 0 and the config is written exactly as asked: a warning, not a refusal
+            self.assertEqual(files.read_config(self.m)["adapters"]["codex"]["sandbox"], "workspace-write")
+
+            cx.user_namespaces_usable = lambda: True
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(cli.main(["init", str(self.m), "--harness", "codex", "--force"]), 0)
+            self.assertNotIn("warning:", out.getvalue())
+        finally:
+            cx.user_namespaces_usable = saved
 
     def test_until_choices(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

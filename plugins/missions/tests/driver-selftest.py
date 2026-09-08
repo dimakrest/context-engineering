@@ -343,8 +343,48 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(with_probe(probe, {"sandbox": "danger-full-access"}), [])
         # the default is one that needs it, so the check is reachable without configuration
         self.assertIn(cx.CodexAdapter({}).sandbox, cx.SANDBOX_NEEDS_USERNS)
-        # and the probe answers one of the three things it promises
-        self.assertIn(cx.user_namespaces_usable(), (True, False, None))
+    def test_codex_probe_child_never_escapes(self):
+        """The probe forks. A child that let an exception escape would unwind the PARENT's stack
+        inside the child -- including the `with DriverLock(...)` the loop holds, whose __exit__
+        calls flock(LOCK_UN) on the inherited file description and would free the lock the parent
+        still believes it owns. It must os._exit instead, whatever goes wrong.
+
+        Run in a subprocess on purpose: inside unittest an escaped child is swallowed by
+        _Outcome's bare `except` and then goes on running the rest of the suite as a second
+        process, so the parent still prints OK and only the doubled runtime hints at it. Here a
+        child that reaches the end prints a second line, which no exit code can hide."""
+        script = (
+            "import ctypes, os, sys\n"
+            "sys.path.insert(0, %r)\n"
+            "from missions.adapters import codex as cx\n"
+            "class Exploding:\n"
+            "    def __getattr__(self, n): raise AttributeError(n)   # e.g. musl behind libc.so.6\n"
+            "ctypes.CDLL = lambda *a, **k: Exploding()\n"
+            "class Marker:\n"
+            "    def __enter__(self): return self\n"
+            "    def __exit__(self, *a): print('unwound', os.getpid())   # what DriverLock does\n"
+            "with Marker():\n"
+            "    r = cx.user_namespaces_usable()\n"
+            "print('returned', r, os.getpid())\n"
+        ) % str(PLUGIN / "driver")
+        res = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60)
+        lines = [ln for ln in res.stdout.splitlines() if ln.strip()]
+        returned = [ln for ln in lines if ln.startswith("returned")]
+        self.assertEqual(len(returned), 1, "a forked child escaped and ran on: %r" % lines)
+        self.assertTrue(returned[0].startswith("returned False"), returned[0])
+        self.assertEqual([ln for ln in lines if ln.startswith("unwound")].__len__(), 1, lines)
+        self.assertEqual(res.returncode, 0, res.stderr[-400:])
+
+    def test_outcome_classes_partition(self):
+        """The smoke splits CLASSES into productive / nothing-happened / not-our-fault and judges a
+        paid run by it. Assert the split here, where it is free: a ninth class must fail a suite
+        someone runs, not a $2 run someone might not."""
+        from missions.outcome import CLASSES
+        productive = ("done", "handoff_missing", "malformed_handoff", "tests_failed")
+        nothing = ("no_op", "infra_crash", "stalled")
+        not_ours = ("infra_quota",)
+        self.assertEqual(set(productive) | set(nothing) | set(not_ours), set(CLASSES))
+        self.assertEqual(len(productive) + len(nothing) + len(not_ours), len(CLASSES))
 
 
 class RequestTests(Fixture):

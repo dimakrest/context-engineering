@@ -30,9 +30,10 @@
 #     mid-feature every time, and the run's class then says more about the budget than the adapter;
 #   - the mission branch moved -- a commit is the evidence a handoff is graded against;
 #   - the child's OWN environment carries no credential. The driver's `bin` is pointed at a shim
-#     that dumps `os.environ` and then becomes the real binary, so this reads what the process
-#     received, not what the driver believed it built (runs/*/env-names.txt is the latter, and a
-#     bug between building the env and spawning would not show there).
+#     that dumps `env` and then becomes the real binary, so this reads what the process received.
+#     runs/*/env-names.txt is now written at the spawn site too, after the adapter's extra_env is
+#     merged, so the two agree -- but the shim is the independent witness: it is the only one of
+#     the pair the driver does not write itself.
 #
 # Exit 0 when all of that holds, 1 when the driver produced the wrong shape or verdict, and 2 when
 # the harness could not run here at all -- not on PATH, or its own sandbox refused to start (codex
@@ -69,9 +70,12 @@ smoke_one() {
   bash "$plugin/bin/missions" init "$m" --harness "$h" || return 1
 
   # the shim: the driver launches this instead of the harness, so the environment it dumps is the
-  # one the child process actually got
+  # one the child process actually got. The heredoc is QUOTED and the harness path substituted
+  # afterwards -- unquoted, a backtick or a $ in the prose below would run at generation time and
+  # splice its output into the script (an 18-line comment once produced a 189-line shim whose body
+  # was the operator's variable names as bare commands).
   mkdir -p "$tmp/bin"
-  cat > "$tmp/bin/$h-shim" <<SHIM
+  shim=$(cat <<'SHIM'
 #!/bin/bash
 # missions smoke: record this process's own environment, then become the real harness. env.txt is
 # `env | cut -d= -f1` -- byte for byte what tests/traces/worker-env-stripped's stub writes, so the
@@ -81,16 +85,18 @@ smoke_one() {
 # JUDGE rather than merely find: GH_CONFIG_DIR, GIT_ASKPASS and GIT_SSH_COMMAND are stripped from
 # the operator's environment and then re-set by the driver to its own, so their presence proves
 # nothing and their absence would be a different bug -- only the value says which.
-if [ -n "\${MISSIONS_RUN_DIR:-}" ]; then
-  env | cut -d= -f1 | sort > "\$MISSIONS_RUN_DIR/env.txt"
-  { printf 'GH_CONFIG_DIR=%s\n' "\${GH_CONFIG_DIR:-}"
-    printf 'GH_ENTRIES=%s\n' "\$(ls -A "\${GH_CONFIG_DIR:-/nonexistent}" 2>/dev/null | wc -l)"
-    printf 'GIT_ASKPASS=%s\n' "\${GIT_ASKPASS:-}"
-    printf 'GIT_SSH_COMMAND=%s\n' "\${GIT_SSH_COMMAND:-}"
-  } > "\$MISSIONS_RUN_DIR/redirects.txt"
+if [ -n "${MISSIONS_RUN_DIR:-}" ]; then
+  env | cut -d= -f1 | sort > "$MISSIONS_RUN_DIR/env.txt"
+  { printf 'GH_CONFIG_DIR=%s\n' "${GH_CONFIG_DIR:-}"
+    printf 'GH_ENTRIES=%s\n' "$(ls -A "${GH_CONFIG_DIR:-/nonexistent}" 2>/dev/null | wc -l | tr -d ' ')"
+    printf 'GIT_ASKPASS=%s\n' "${GIT_ASKPASS:-}"
+    printf 'GIT_SSH_COMMAND=%s\n' "${GIT_SSH_COMMAND:-}"
+  } > "$MISSIONS_RUN_DIR/redirects.txt"
 fi
-exec "$real" "\$@"
+exec "@REAL@" "$@"
 SHIM
+)
+  printf '%s\n' "${shim//@REAL@/$real}" > "$tmp/bin/$h-shim"
   chmod +x "$tmp/bin/$h-shim"
 
   # a real worker on a small purse and a short leash, launched through the shim
@@ -117,8 +123,10 @@ EOF
     echo "smoke: could not cap the purse or install the shim in driver.json" >&2; return 1; }
 
   start=$(date +%s)
-  # every one of these is on prep.NEVER_EXACT, or falls off the whitelist, so every one MUST be
-  # absent from the child. A canary that is never planted is a check that cannot fail.
+  # A canary that is never planted is a check that cannot fail, so plant every name asserted on.
+  # Two kinds: the tokens, which must be ABSENT from the child, and GIT_ASKPASS / GH_CONFIG_DIR,
+  # which the driver strips and then re-sets to its own -- those are judged by VALUE below, and
+  # adding them to `planted` would fail every correct run.
   ( cd "$tmp/repo" && \
     GH_TOKEN="${GH_TOKEN:-smoke-canary}" GITHUB_TOKEN=canary GH_ENTERPRISE_TOKEN=canary \
     GITHUB_ENTERPRISE_TOKEN=canary MISSIONS_PUSH_TOKEN=canary SSH_AUTH_SOCK=/tmp/smoke-agent.sock \
@@ -147,6 +155,7 @@ driver_rc = int(sys.argv[6])
 # ninth class fails loudly here instead of silently landing in whichever bucket the code guessed.
 sys.path.insert(0, str(Path(plugin) / "driver"))
 from missions.outcome import CLASSES
+from missions.loop import EXIT_CODES as TYPED_STOPS
 PRODUCTIVE = ("done", "handoff_missing", "malformed_handoff", "tests_failed")
 NOTHING_HAPPENED = ("no_op", "infra_crash", "stalled")
 NOT_OUR_FAULT = ("infra_quota",)   # the provider said no; the driver handled it (exit 8)
@@ -171,9 +180,11 @@ check("cost unit is %s (got %r from %r)" % (want_unit, c.get("unit"), c.get("sou
       c.get("unit") == want_unit)
 check("step_done carries a class and elapsed_s",
       isinstance(s.get("cls"), str) and isinstance(s.get("elapsed_s"), (int, float)))
-check("missions run exited %d (limit-reached)" % driver_rc, driver_rc == 3)
-check("the class partition covers outcome.CLASSES (%d)" % len(CLASSES),
-      set(PRODUCTIVE) | set(NOTHING_HAPPENED) | set(NOT_OUR_FAULT) == set(CLASSES))
+check("missions run exited %d, a typed stop and not an error" % driver_rc,
+      driver_rc in set(TYPED_STOPS.values()) and driver_rc != TYPED_STOPS["error"])
+check("the class partition covers outcome.CLASSES (%d) without overlap" % len(CLASSES),
+      set(PRODUCTIVE) | set(NOTHING_HAPPENED) | set(NOT_OUR_FAULT) == set(CLASSES)
+      and len(PRODUCTIVE) + len(NOTHING_HAPPENED) + len(NOT_OUR_FAULT) == len(CLASSES))
 
 cls = s.get("cls")
 run_dir = mdir / "runs" / "F001#1"
@@ -183,8 +194,12 @@ run_dir = mdir / "runs" / "F001#1"
 # survives a dead harness, and on a host where codex cannot start it is the only one there is.
 child = run_dir / "env.txt"
 names = child.read_text(encoding="utf-8").split() if child.exists() else None
-check("the child's own environment was captured (%s)" % child.name, names is not None)
-if names is not None:
+# a name every child must have: without it the capture is empty or malformed, and "no credential
+# is in this list" would be true of an empty list. The leak check is only evidence with a floor.
+captured = bool(names) and "PATH" in names
+check("the child's own environment was captured (%s, %d names)" % (
+    child.name, len(names or [])), captured)
+if captured:
     # exactly the names planted before the run, every one of them on prep.NEVER_EXACT or off the
     # whitelist. The harness's OWN key (ANTHROPIC_API_KEY, OPENAI_API_KEY) is forwarded by design
     # via prep.HARNESS_ENV and is not a leak -- asserting its absence would fail a correct driver.
@@ -218,14 +233,22 @@ log = subprocess.run(["git", "-C", repo, "log", "--oneline", "main..mission/demo
 
 # Could the harness run here at all? Two ways it could not, neither of them the driver's fault.
 # A definite failure above DOMINATES: exit 2 says "nothing was established", which would be a lie
-# if something already failed. Reading the harness's transcript for this is the same technique
-# grade.py's quota_signature uses on the harness's error text -- but note the honest limit: under
-# codex, stdout IS the agent's own messages, so an agent that merely QUOTES a sandbox error trips
-# this. That is tolerable only because the consequence is downgrading a paid smoke to "not
-# established", never a driver decision, and only in combination with no commit at all.
-TAIL = 2_000_000        # adapters.base.read_output's cap, for the same reason
-blob = "\n".join((run_dir / n).read_text(encoding="utf-8", errors="replace")[-TAIL:]
-                 for n in ("stderr", "stdout") if (run_dir / n).exists())
+# if something already failed.
+#
+# stderr ONLY, deliberately. The case this was written for -- codex's bubblewrap refusing to start
+# -- is now caught structurally by CodexAdapter.preflight_problems() before a token is spent, so
+# this is only a backstop for a harness that fails a way preflight did not predict. And stdout
+# would be a bad backstop: measured over three codex runs, every `bwrap:` occurrence was inside an
+# `agent_message` item and none in any other channel or in stderr, so reading stdout buys no
+# detection codex does not already give the agent's prose -- it only adds the way this check can
+# LIE, an agent that quotes a sandbox error into a false "nothing was established". grade.py's
+# quota_signature draws the same line for the same reason: "a test named after a rate limit is not
+# a rate limit".
+HEAD = 2_000_000        # adapters.base.read_output's cap and its direction: the FIRST 2 MB.
+                        # A sandbox that refuses fails before the first shell, so it speaks at the
+                        # start of stderr; a tail slice would discard exactly the evidence.
+blob = "\n".join((run_dir / n).read_text(encoding="utf-8", errors="replace")[:HEAD]
+                 for n in ("stderr",) if (run_dir / n).exists())
 blocked = re.search(r"(bwrap: [^\n\"`\\]{0,70}|landlock[^\n\"`]{0,40}not permitted|"
                     r"seccomp[^\n\"`]{0,40}not permitted|"
                     r"sandbox[^\n\"`]{0,40}(?:failed to start|startup failure))", blob, re.I)

@@ -3,4 +3,5 @@
 category=continuation
 file=driver/missions/loop.py
 breaks=malformed-handoff-redispatched
-control=two-feature-happy-path
+control=none
+why-no-control=the mutated lines are the re-dispatch branch itself, reached only on a rejected handoff; every trace that reaches it is a second breaks, and one that does not never executes the line (verified: a raise planted there leaves two-feature-happy-path green)

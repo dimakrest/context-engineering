@@ -17,7 +17,8 @@ journal!~="step":"proven".*"milestone":"M2".*"assertions":\[[^]]*"A003"
 state~=^phase: halted
 state~=^milestone: M2
 file=validation/M2-behavior.md
-postcheck=grep -qE '^\| A003 \| .* \| interface \| F003 \| (unproven|claimed) \|' "$M/contract.md"
+# claimed with NO evidence: a FAILED behaviour run must not become the row's proof reference
+postcheck=grep -qE '^\| A003 \| .* \| interface \| F003 \| claimed \| — \|' "$M/contract.md"
 # the judgment sees both words on one line, and the contract row that did not move
 postcheck=grep -q '^  A003 \[interface\] — reviewer F003: satisfied (validation/M2-review-F003.md); behavior: FAILED (validation/M2-behavior.md) — contract: claimed$' "$M/runs/negotiate-M2#1/prompt.md"
 postcheck=bash "$plugin/scripts/check.sh" "$M" >/dev/null

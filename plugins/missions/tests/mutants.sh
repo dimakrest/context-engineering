@@ -8,14 +8,20 @@
 # Each mutant asserts in BOTH directions:
 #   breaks=<trace>    passes UNMUTATED, then must fail under the mutant -- the rule is defended
 #   control=<trace>   must still pass under it   -- the mutation is surgical, not a broken driver
+#   control=none      no trace can serve; requires why-no-control= saying why
 # The second half is what keeps a mutant honest: deleting a random line also turns a trace red.
 # Pick a control that actually EXECUTES the mutated code on a healthy driver -- a VALIDATE mutant
-# controlled by a trace that stops before VALIDATE proves nothing about being surgical.
+# controlled by a trace that stops before VALIDATE proves nothing about being surgical, and
+# neither does one that never reaches the branch being mutated. Where the mutated line's ONLY
+# observable effect is the behaviour it defends, no control can exist: say so with `control=none`
+# and a reason, rather than naming a trace whose green is unfalsifiable at that site. Such a
+# mutant is weaker by construction -- the import check is then all that stands between it and a
+# blunt breakage -- and it should say so out loud instead of implying a guarantee it lacks.
 # The unmutated baseline is what keeps the first half honest: traces/run.sh exits non-zero when a
 # glob matches nothing, so without it a `breaks` naming a renamed trace would read as a pass.
 #
 # Case layout: tests/mutants/<name>/
-#   mutant     category= file= breaks= control=   (plus # comment lines saying what the rule is)
+#   mutant     category= file= breaks= control= [why-no-control=]  (plus # comment lines)
 #   old.txt    the exact source text to replace; must occur EXACTLY ONCE in <file>
 #   new.txt    what replaces it
 # One trailing newline is stripped from old.txt/new.txt (the editor's, not the anchor's), so an
@@ -53,7 +59,7 @@ PY
 }
 
 run_mutant() {
-  local case_dir="$1" name tmp mod category="" file="" breaks="" control="" line ok=1
+  local case_dir="$1" name tmp mod category="" file="" breaks="" control="" why="" line ok=1
   name=$(basename "$case_dir")
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
@@ -61,6 +67,7 @@ run_mutant() {
       file=*)     file="${line#file=}" ;;
       breaks=*)   breaks="${line#breaks=}" ;;
       control=*)  control="${line#control=}" ;;
+      why-no-control=*) why="${line#why-no-control=}" ;;
       ''|'#'*)    ;;
       *)          echo "FAIL $name: bad mutant line: $line"; return 1 ;;
     esac
@@ -72,6 +79,9 @@ run_mutant() {
     *" $category "*) ;;
     *) echo "FAIL $name: category=$category is not one of: $CATEGORIES"; return 1 ;;
   esac
+  if [ "$control" = none ] && [ -z "$why" ]; then
+    echo "FAIL $name: control=none needs why-no-control= saying why no trace can serve"; return 1
+  fi
 
   tmp=$(mktemp -d)
   # exclude rather than copy-then-delete: keep() leaves a whole plugin copy under .out on every
@@ -84,7 +94,7 @@ run_mutant() {
   if [ ! -f "$tmp/plugin/$file" ]; then
     echo "FAIL $name [$category]: $file does not exist"; rm -rf "$tmp"; return 1
   fi
-  local -a why=()
+  local -a whys=()
   # baseline FIRST, on the unmutated copy: a `breaks` naming a renamed or misspelled trace makes
   # traces/run.sh exit non-zero for its own reasons, and without this that reads as a passing
   # mutant. It also makes "the trace failed" attributable to the mutation and nothing else.
@@ -103,16 +113,21 @@ run_mutant() {
     sed 's/^/      /' "$tmp/.import.log" | tail -5; keep "$name" "$tmp"; return 1
   fi
   if bash "$tmp/plugin/tests/traces/run.sh" "$breaks" >"$tmp/.breaks.log" 2>&1; then
-    ok=0; why+=("$breaks still PASSES under this mutant -- the trace does not defend $category")
+    ok=0; whys+=("$breaks still PASSES under this mutant -- the trace does not defend $category")
   fi
-  if ! bash "$tmp/plugin/tests/traces/run.sh" "$control" >"$tmp/.control.log" 2>&1; then
-    ok=0; why+=("$control also fails -- the mutation is not surgical, so breaking $breaks proves nothing")
+  if [ "$control" != none ] && ! bash "$tmp/plugin/tests/traces/run.sh" "$control" >"$tmp/.control.log" 2>&1; then
+    ok=0; whys+=("$control also fails -- the mutation is not surgical, so breaking $breaks proves nothing")
   fi
   if [ "$ok" = 1 ]; then
-    echo "ok   $name [$category]  broke $breaks, kept $control"; rm -rf "$tmp"; return 0
+    if [ "$control" = none ]; then
+      echo "ok   $name [$category]  broke $breaks, NO CONTROL ($why)"
+    else
+      echo "ok   $name [$category]  broke $breaks, kept $control"
+    fi
+    rm -rf "$tmp"; return 0
   fi
   echo "FAIL $name [$category]"
-  for w in "${why[@]}"; do echo "      $w"; done
+  for w in "${whys[@]}"; do echo "      $w"; done
   tail -4 "$tmp/.breaks.log" | sed 's/^/      breaks: /'
   tail -4 "$tmp/.control.log" | sed 's/^/      control: /'
   keep "$name" "$tmp"

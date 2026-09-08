@@ -95,17 +95,23 @@ runs with bubblewrap, which needs a user namespace it can write a uid map in. Pl
 refuse that — an unprivileged container, a hardened kernel — and the failure is quiet and
 expensive: bwrap exits before the shell for *every* command, so the worker reads no file, runs no
 test, explains the blockage in prose and exits 0. That is a truthful `no_op`, but the driver would
-then tell you the brief is not landing. Preflight asks the question first, so it costs nothing:
+then tell you the brief is not landing. `init` and `preflight` both ask the question first, so it
+costs nothing — `init` because the config it has just written is the one that would be refused, and
+the fix is a line in that file:
 
 ```
-problem: codex sandbox 'workspace-write' needs an unprivileged user namespace, and this host refuses one …
+$ missions init .missions/demo --harness codex
+wrote …/driver.json (harness codex, branch mission/demo)
+warning: codex sandbox 'workspace-write' needs an unprivileged user namespace, and this host refuses one …
+`missions preflight .missions/demo` will refuse this config until that is settled.
 ```
 
 Run somewhere user namespaces are allowed, or — **only when the host is already a sandbox you
 accept the worker having the run of**, such as a container or VM — set `adapters.codex.sandbox`
 to `"danger-full-access"` in `driver.json`. That turns codex's own sandbox off and leaves the
 driver's env whitelist, git hooks, blindness and post-exit grade as the enforcement. It is a
-deliberate choice and never a default; the driver will not make it for you.
+deliberate choice and never a default: `init` warns, `preflight` refuses, and neither writes it
+for you.
 
 **Grading happens once, after exit (#4).** A launch grades nothing. When the worker process is
 gone the driver grades the handoff — the schema function `hooks/mission-handoff-schema.sh`, the

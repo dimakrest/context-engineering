@@ -124,10 +124,26 @@ def task_attempts(mission_dir: Path, prefix: str) -> int:
     return count(mission_dir, "dispatch", lambda r: str(r.get("task") or "").startswith(prefix + "#"))
 
 
-def last_rejection(mission_dir: Path, feature: str) -> Optional[Dict[str, Any]]:
-    """The most recent step_done for the feature whose class rejects the handoff, if it is also
-    the most recent step_done for the feature at all."""
+# what the previous attempt's class means to the next one: its work was refused, or it was cut off
+REJECTED = ("malformed_handoff", "tests_failed")
+CUT_OFF = ("budget_exhausted", "infra_quota")
+
+
+def rejections(mission_dir: Path, feature: str) -> int:
+    """How many of the feature's attempts were REJECTED -- not how many ran. The repair-round cap
+    is a budget for "the work came back wrong", so an attempt a limit cut off must not spend one:
+    it earned no verdict about the work at all, and charging it means a feature is blocked after
+    fewer real rejections than the cap allows, with a halt that says it was 'rejected N times'."""
+    return count(mission_dir, "step_done",
+                 lambda r: r.get("feature") == feature and r.get("cls") in REJECTED)
+
+
+def prior_attempt(mission_dir: Path, feature: str) -> Optional[Dict[str, Any]]:
+    """The most recent step_done for the feature when it has something the next attempt must be
+    told -- its handoff was refused, or a limit ended it -- and is also the most recent step_done
+    for the feature at all. The class comes back on the record: a run a limit cut off was not
+    rejected, and telling the next worker it was is how work that already landed gets redone."""
     rec = last(mission_dir, "step_done", lambda r: r.get("feature") == feature)
-    if rec and rec.get("cls") in ("malformed_handoff", "tests_failed"):
+    if rec and rec.get("cls") in REJECTED + CUT_OFF:
         return rec
     return None

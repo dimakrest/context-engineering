@@ -219,6 +219,10 @@ def _validator(ctx: Context, role: str, milestone: str, round_no: int, prompt: s
                                        validation_file=name)
         if outcome.cls == "ok":
             return task, "validation/" + name, text
+        if outcome.cls == "budget_exhausted":
+            # not a retry: the second run meets the same cap at the same point, and the `error`
+            # this used to become blamed the environment for a purse the operator chose
+            return steps.budget_stop(ctx, role, "%s %s" % (role, fid or milestone), outcome)
         how = ("was ended by the driver (%s)" % outcome.killed_by) if outcome.killed else ("exited %d" % outcome.rc)
         detail = "%s %s%s" % (task, how, " with no report" if not text.strip() else "")
         if attempt == 0:

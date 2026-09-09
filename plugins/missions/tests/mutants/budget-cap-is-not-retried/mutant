@@ -1,0 +1,7 @@
+# Continuation: which stops may be retried. A cap is deterministic -- the same cap ends the next
+# attempt in the same place -- so the loop stops on it. Treating it as a rejection instead is the
+# pre-#21 behaviour, and it costs repair_rounds+1 runs at the cap to learn what the first one said.
+category=continuation
+file=driver/missions/loop.py
+breaks=budget-cap-partial-stops-budget
+control=malformed-handoff-redispatched

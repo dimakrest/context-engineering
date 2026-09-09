@@ -11,6 +11,14 @@
 #
 #   claude | codex   one adapter
 #
+# MISSIONS_SMOKE_CLAUDE_BUDGET overrides the claude worker's roles.worker.budget_usd (default
+# 2.00). The default is sized to FINISH the fixture feature, which is what the assertions below
+# need; a smaller purse is how an operator reproduces #21 deliberately -- at $0.50 (a $0.55 cap
+# after the 10% grace) this feature does not fit, the driver's own cap ends the run, and the
+# expected result is `budget_exhausted`, exit 4 and NOT ESTABLISHED. That is the smoke reporting
+# a purse too small, not a driver at fault, and telling the two apart is the whole point of the
+# class: before it, the same run was `malformed_handoff` and the loop paid for it three more times.
+#
 # MISSIONS_SMOKE_CODEX_SANDBOX overrides adapters.codex.sandbox for the run. On a host that
 # refuses unprivileged user namespaces codex's bubblewrap cannot start, and preflight now refuses
 # the run; `MISSIONS_SMOKE_CODEX_SANDBOX=danger-full-access` is how an operator says "this host is
@@ -27,7 +35,8 @@
 #   - the outcome class is one that means the worker did the work (never no_op, infra_crash,
 #     stalled): a harness that launched, burned a dollar and produced nothing used to exit 0 here.
 #     The purse must be big enough for the fixture feature -- at $0.50 a claude worker is cut off
-#     mid-feature every time, and the run's class then says more about the budget than the adapter;
+#     mid-feature every time, and the run's class then says more about the budget than the adapter
+#     (which is now `budget_exhausted` and says so; MISSIONS_SMOKE_CLAUDE_BUDGET is how you ask);
 #   - the mission branch moved -- a commit is the evidence a handoff is graded against;
 #   - the child's OWN environment carries no credential. The driver's `bin` is pointed at a shim
 #     that dumps `env` and then becomes the real binary, so this reads what the process received.
@@ -109,7 +118,7 @@ with open(path, encoding="utf-8") as fh:
 # never enforces; its bound is the deadline
 cfg["roles"]["worker"]["timeout_s"] = 900
 if harness == "claude":
-    cfg["roles"]["worker"]["budget_usd"] = 2.0
+    cfg["roles"]["worker"]["budget_usd"] = float(os.environ.get("MISSIONS_SMOKE_CLAUDE_BUDGET") or 2.0)
 else:
     cfg["roles"]["worker"]["budget_usd"] = None
     sandbox = os.environ.get("MISSIONS_SMOKE_CODEX_SANDBOX")
@@ -158,7 +167,10 @@ from missions.outcome import CLASSES
 from missions.loop import EXIT_CODES as TYPED_STOPS
 PRODUCTIVE = ("done", "handoff_missing", "malformed_handoff", "tests_failed")
 NOTHING_HAPPENED = ("no_op", "infra_crash", "stalled")
-NOT_OUR_FAULT = ("infra_quota",)   # the provider said no; the driver handled it (exit 8)
+# a limit ended the run, not a defect in it, and the driver handled it: the provider's quota
+# (exit 8) or the driver's own spend cap (exit 4). Neither says anything about the driver, so
+# either one makes this smoke inconclusive rather than red -- see the verdict below.
+LIMIT_NOT_DEFECT = ("infra_quota", "budget_exhausted")
 want_unit = {"claude": "usd", "codex": "tokens"}[harness]
 recs = [json.loads(ln) for ln in (mdir / "journal.jsonl").read_text(encoding="utf-8").splitlines() if ln.strip()]
 mine = [r for r in recs if r.get("task") == "F001#1"
@@ -183,8 +195,8 @@ check("step_done carries a class and elapsed_s",
 check("missions run exited %d, a typed stop and not an error" % driver_rc,
       driver_rc in set(TYPED_STOPS.values()) and driver_rc != TYPED_STOPS["error"])
 check("the class partition covers outcome.CLASSES (%d) without overlap" % len(CLASSES),
-      set(PRODUCTIVE) | set(NOTHING_HAPPENED) | set(NOT_OUR_FAULT) == set(CLASSES)
-      and len(PRODUCTIVE) + len(NOTHING_HAPPENED) + len(NOT_OUR_FAULT) == len(CLASSES))
+      set(PRODUCTIVE) | set(NOTHING_HAPPENED) | set(LIMIT_NOT_DEFECT) == set(CLASSES)
+      and len(PRODUCTIVE) + len(NOTHING_HAPPENED) + len(LIMIT_NOT_DEFECT) == len(CLASSES))
 
 cls = s.get("cls")
 run_dir = mdir / "runs" / "F001#1"
@@ -252,9 +264,15 @@ blob = "\n".join((run_dir / n).read_text(encoding="utf-8", errors="replace")[:HE
 blocked = re.search(r"(bwrap: [^\n\"`\\]{0,70}|landlock[^\n\"`]{0,40}not permitted|"
                     r"seccomp[^\n\"`]{0,40}not permitted|"
                     r"sandbox[^\n\"`]{0,40}(?:failed to start|startup failure))", blob, re.I)
-if (blocked and not log) or cls in NOT_OUR_FAULT:
-    why = ("%s could not run here: %s" % (harness, blocked.group(0).strip()[:120])) if blocked else (
-        "the provider reported a quota or limit; the driver stopped correctly")
+if (blocked and not log) or cls in LIMIT_NOT_DEFECT:
+    if blocked:
+        why = "%s could not run here: %s" % (harness, blocked.group(0).strip()[:120])
+    elif cls == "budget_exhausted":
+        why = ("the driver's own $%s cap ended the run before the work was done; the purse was too "
+               "small, not the driver wrong -- raise roles.worker.budget_usd and run again"
+               % s.get("capped_usd"))
+    else:
+        why = "the provider reported a quota or limit; the driver stopped correctly"
     print("  --   " + why)
     print("smoke: NOT ESTABLISHED -- nothing was proved about the driver%s" % (
         "" if ok else ", AND checks above already failed"))

@@ -12,12 +12,18 @@ may commit, write or omit a handoff, sleep, spawn a background child, write
 `$MISSIONS_RUN_DIR/cost.json` ({"unit": "usd", "value": 1.5}), write `$MISSIONS_RUN_DIR/output.md`
 as its final message (that is `req.output_path`), and exit with any rc. The driver treats it
 exactly like a real harness.
+
+`cost.json` may also carry `"capped": true`, which plays a harness whose own budget flag ended the
+turn -- the stub's stand-in for claude's `error_max_budget_usd` subtype. It reports the cap the
+driver set, exactly as the real adapter does, and like the real adapter it reports nothing unless
+the driver actually set one. The stub does not ENFORCE a budget; a script that says it was capped
+is a script saying so, which is the whole of what a test double owes here.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from ..outcome import Outcome, RunRequest, unknown_cost
 from . import base
@@ -30,7 +36,10 @@ class StubAdapter:
         self.script_dir = Path(cfg.get("script_dir", "stub"))
 
     def capabilities(self) -> Dict:
-        return {"cost_unit": "unknown", "budget": False, "model": False, "read_only": False}
+        # budget: True because a stub script CAN end a run at the cap and say so (`"capped": true`
+        # in cost.json, below). The driver reads this to decide whether a cap is real enough to
+        # print and journal, and for the stub it is -- that is the whole point of a double.
+        return {"cost_unit": "unknown", "budget": True, "model": False, "read_only": False}
 
     def script_for(self, req: RunRequest) -> Path:
         names: List[str] = []
@@ -56,15 +65,19 @@ class StubAdapter:
                  "MISSIONS_READ_ONLY": "1" if req.read_only else "0", "MISSIONS_STEP": req.step}
         res = base.run_process(["bash", str(script)], req, extra_env=extra)
         cost = unknown_cost("stub:no-cost.json")
+        capped: Optional[float] = None
         cost_file = req.run_dir / "cost.json"
         if cost_file.exists():
             try:
                 c = json.loads(cost_file.read_text(encoding="utf-8"))
-                if isinstance(c, dict) and c.get("unit") in ("usd", "tokens"):
-                    cost = {"unit": c["unit"], "value": float(c.get("value") or 0.0), "source": "stub:cost.json"}
+                if isinstance(c, dict):
+                    if c.get("unit") in ("usd", "tokens"):
+                        cost = {"unit": c["unit"], "value": float(c.get("value") or 0.0), "source": "stub:cost.json"}
+                    if c.get("capped") and req.hard_budget_usd is not None:
+                        capped = req.hard_budget_usd
             except (ValueError, TypeError):
                 pass
         return Outcome(task=req.task, rc=res.rc, elapsed_s=res.elapsed_s, timed_out=res.timed_out,
                        killed_by=res.killed_by, cost=cost, harness=self.name, model=None,
                        stdout_path=req.run_dir / "stdout", stderr_path=req.run_dir / "stderr",
-                       orphans_killed=res.orphans_killed)
+                       orphans_killed=res.orphans_killed, capped_usd=capped)

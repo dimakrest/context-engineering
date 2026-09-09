@@ -1,0 +1,19 @@
+# #21 review: a limit is not a rejection, so it must not spend a repair round either. The seeded
+# journal is a previous run that the driver's own cap stopped -- the state an operator resumes from
+# after raising the cap. repair_rounds is 2, so F001 is owed THREE real rejections before it
+# blocks. Counting dispatches instead of rejections charges the capped attempt as one of them, and
+# the feature blocks a dispatch early with a halt that says "rejected 3 times" -- counting a run
+# the driver itself ended. `F001#4` is that assertion.
+rc=5
+journal~="event":"step_done".*"step":"F001#2".*"cls":"malformed_handoff"
+journal~="event":"step_done".*"step":"F001#3".*"cls":"malformed_handoff"
+journal~="event":"dispatch".*"dispatch_id":"F001#4"
+journal~="event":"halt".*"class":"block".*F001 rejected 3 times
+journal!~="F001 rejected 4 times
+state~=^phase: halted
+stdout~=re-dispatching F001 with the rejection \(1 of 3\)
+stdout~=re-dispatching F001 with the rejection \(2 of 3\)
+# the seeded cap is what the next worker is told about, and it is NOT called a rejection
+postcheck=grep -q 'cut off before the work was done, not rejected' "$M/runs/F001#2/prompt.md"
+postcheck=! grep -q 'was rejected after it exited' "$M/runs/F001#2/prompt.md"
+postcheck=grep -q 'was rejected after it exited' "$M/runs/F001#3/prompt.md"

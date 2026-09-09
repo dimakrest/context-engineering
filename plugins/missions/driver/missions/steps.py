@@ -49,6 +49,20 @@ ROLE_DEFAULTS = {
     "behavior": {"timeout_s": 2400, "budget_usd": 10},
     "judgment": {"timeout_s": 300, "budget_usd": 2},
 }
+# How far over its budget a run may go before the harness cuts it, in percent (driver.json's
+# `budget_grace_pct`; 0 or null turns it off). A role's budget is what its WORK is meant to cost,
+# and a cut exactly at that number lands on whatever the run was doing at the time -- often writing
+# the handoff and committing, which is the one stretch whose loss costs the whole run. The grace is
+# that wrap-up window. It is not a bigger budget: mission.md's own dollar cap is untouched and
+# still binds before every dispatch (check_caps below).
+BUDGET_GRACE_PCT = 10
+
+
+def grace_pct(cfg: Dict) -> float:
+    """driver.json's `budget_grace_pct`, defaulted -- the one reader, so build_request and the stop
+    that reports the cap can never answer this differently. A missing key means the default; `null`
+    and `0` both mean no grace."""
+    return float(cfg.get("budget_grace_pct", BUDGET_GRACE_PCT) or 0)
 # design §7.1: the roles that run things take the host lease and hold `.lease`; judgment reads
 # and answers. design §7 item 4: the roles that may not write to the tree.
 EXECUTOR_ROLES = ("worker", "reviewer", "scrutiny", "behavior")
@@ -118,6 +132,35 @@ def stop(ctx: Context, reason: str, detail: str = "", needs: str = "", halt: boo
     return code
 
 
+def budget_stop(ctx: Context, role: str, what: str, outcome: Outcome,
+                grade: Optional[Grade] = None) -> int:
+    """The driver's own cap ended a run before its work was finished. Not a rejection, and not
+    something to retry: the cap that ended this attempt ends the next one in the same place, so the
+    round stops here and a human decides whether the purse or the work is the wrong size. What the
+    run did land -- a commit, a partial handoff -- stays on disk, so the re-run after a cap raise
+    continues instead of starting over.
+
+    Every role, not just the worker: a reviewer or a judgment run cut off by its own budget is the
+    same event, and its callers retry it into the same cap unless it stops here. `grade` is the
+    worker's; a validator has none, and then what the run left undone is not knowable.
+
+    Both money numbers are named because the grace makes them different: an operator told only the
+    cap ($8.80) would go looking for it in driver.json, where the knob says 8. So is the phase --
+    this stop halts (`budget` is in ALWAYS_HALT), so "run again" alone would send the operator into
+    a gate-blocked exit 5 to discover the rest."""
+    budget = role_cfg(ctx.cfg, role).get("budget_usd", ROLE_DEFAULTS[role]["budget_usd"])
+    left = ""
+    if grade is not None:
+        left = " -- " + ("; ".join(grade.undone[:3]) or ("the handoff says nothing under Left undone"
+                                                         if grade.handoff_written else "it left no handoff"))
+    return stop(ctx, "budget", detail="%s: the %s's own cap ended it, %s of $%s (budget $%s + %g%% grace)%s" % (
+        outcome.task, role, _fmt_cost(outcome.cost),
+        ("%g" % outcome.capped_usd) if outcome.capped_usd is not None else "?",
+        ("%g" % budget) if budget is not None else "?", grace_pct(ctx.cfg), left),
+        needs="raise roles.%s.budget_usd in driver.json (or narrow %s), then set `phase: implementing` "
+              "in state.md and missions run again -- %s keeps what this attempt landed" % (role, what, what))
+
+
 def check_caps(ctx: Context, budget: Dict) -> Optional[int]:
     """mission.md's caps (files.read_budget): the exit code of stop("budget") when one is reached,
     else None. Asked before every dispatch that costs something -- the loop's, and VALIDATE's
@@ -174,6 +217,7 @@ def build_request(ctx: Context, feature: Optional[files.Feature], task: str, run
     timeout = int(rc.get("timeout_s", defaults["timeout_s"]))
     budget = rc.get("budget_usd", defaults["budget_usd"])
     budget = float(budget) if budget is not None else None
+    grace = grace_pct(ctx.cfg)
     branch = ctx.cfg.get("branch") or files.read_state(ctx.mission_dir).branch
     fid = feature.id if feature is not None else ""
     env = base.build_env(ctx.mission_dir, run_dir, role, fid, task, phase, ctx.harness,
@@ -181,7 +225,8 @@ def build_request(ctx: Context, feature: Optional[files.Feature], task: str, run
                          passthrough=list((ctx.cfg.get("env") or {}).get("passthrough") or []))
     return RunRequest(
         role=role, task=task, prompt_path=run_dir / "prompt.md", cwd=ctx.checkout, env=env,
-        timeout_s=timeout, budget_usd=budget, model=model, effort=effort, read_only=role in READ_ONLY_ROLES,
+        timeout_s=timeout, budget_usd=budget, budget_grace_pct=grace, model=model, effort=effort,
+        read_only=role in READ_ONLY_ROLES,
         output_path=run_dir / "output.md", system_path=run_dir / "system.md", run_dir=run_dir,
         tools=list(meta.get("tools") or []), feature=fid, mission_dir=ctx.mission_dir, step=step)
 
@@ -227,11 +272,44 @@ def materialise_patch(ctx: Context, fid: str, base: str, head: str) -> Optional[
     return None
 
 
+def _budget_line(ctx: Context, req: RunRequest) -> str:
+    """`budget $8 (cut at $8.80)` -- both numbers, because they are two different promises: what
+    the run is meant to cost, and where the harness actually stops it. `%g` throughout, the same
+    format the flag, the journal and budget_stop use, so the four places an operator can read this
+    number never show four numbers.
+
+    Silent when the adapter has no budget to enforce (codex declares none): printing a cut that
+    cannot happen is worse than printing nothing."""
+    if req.budget_usd is None or not _enforces_budget(ctx):
+        return ""
+    hard = req.hard_budget_usd
+    if hard is None or hard == req.budget_usd:
+        return " budget $%g" % req.budget_usd
+    return " budget $%g (cut at $%g)" % (req.budget_usd, hard)
+
+
+def _enforces_budget(ctx: Context) -> bool:
+    """Whether this harness actually stops a run at the cap. The adapters have always declared it
+    (`capabilities()["budget"]`); until now nothing asked, so a codex mission printed and journalled
+    a hard cap that no flag was ever passed for."""
+    try:
+        return bool(ctx.adapter.capabilities().get("budget"))
+    except Exception:                       # pragma: no cover - a capabilities() that raises
+        return False
+
+
+def _cap_journal(ctx: Context, req: RunRequest) -> Dict:
+    """The cap fields for a `dispatch` record: empty when the harness enforces none, so a later
+    reading of `cap_usd` across journal.jsonl never counts an uncapped run as capped."""
+    if not _enforces_budget(ctx):
+        return {}
+    return {"budget_usd": req.budget_usd, "cap_usd": req.hard_budget_usd}
+
+
 def _log_dispatch(ctx: Context, req: RunRequest) -> None:
     ctx.log(">> %s  %s%s  timeout %ds%s%s  in %s" % (
         req.task, ctx.harness, (" " + req.model) if req.model else "", req.timeout_s,
-        (" budget $%g" % req.budget_usd) if req.budget_usd is not None else "",
-        "  read-only" if req.read_only else "", ctx.checkout))
+        _budget_line(ctx, req), "  read-only" if req.read_only else "", ctx.checkout))
 
 
 def _journal_return(ctx: Context, agent: str, task: str, outcome: Outcome, feature: Optional[str] = None) -> None:
@@ -272,9 +350,9 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
     digest_text = prompts.digest(mdir, ctx.plugin)
     assertions = [a for a in files.read_contract(mdir) if a.id in feature.assertions]
     design = design_for(mdir, feature)
-    rejection = journal.last_rejection(mdir, fid)
+    prior = journal.prior_attempt(mdir, fid)
     inherited = files.dirty_paths(ctx.checkout)
-    user = prompts.worker_prompt(mdir, feature, digest_text, assertions, design, ctx.plugin, rejection,
+    user = prompts.worker_prompt(mdir, feature, digest_text, assertions, design, ctx.plugin, prior,
                                  inherited=inherited)
     files.write_text(run_dir / "prompt.md", user)
     files.write_text(run_dir / "system.md", system)
@@ -292,7 +370,8 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
         files.write_lock(mdir / ".writer", "mission-worker", fid, task, ctx.session)
         files.write_lock(mdir / ".lease", "mission-worker", fid, task, ctx.session)
         journal.append(mdir, "dispatch", agent="mission-worker", **{"class": "writer"}, model=req.model,
-                       feature=fid, dispatch_id=task, session_id=ctx.session, task=task, harness=ctx.harness)
+                       feature=fid, dispatch_id=task, session_id=ctx.session, task=task,
+                       harness=ctx.harness, **_cap_journal(ctx, req))
         _log_dispatch(ctx, req)
         try:
             outcome = ctx.adapter.run(req)            # BLOCKS until the process is gone
@@ -317,7 +396,12 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
         # deadline or a crash is recorded partial, and comes back as a re-dispatch, not as done.
         commit = grade.new_commit or ""
         finished = outcome.killed_by == watchdog.COMMIT_NO_HANDOFF or (not outcome.killed and outcome.rc == 0)
-        how = ("was ended by the driver (%s)" % outcome.killed_by) if outcome.killed else ("exited %d" % outcome.rc)
+        if outcome.killed:
+            how = "was ended by the driver (%s)" % outcome.killed_by
+        elif outcome.capped_usd is not None:
+            how = "was ended by its own $%g budget cap" % outcome.capped_usd
+        else:
+            how = "exited %d" % outcome.rc
         reconstruct(mdir, fid, ctx.checkout, head_before, commit, task, feature.assertions, how, finished=finished)
         journal.append(mdir, "handoff_reconstructed", task=task, feature=fid, commit=commit[:7],
                        status="complete" if finished else "partial", killed_by=outcome.killed_by, rc=outcome.rc)
@@ -334,12 +418,19 @@ def step_worker(ctx: Context, feature: files.Feature, state: files.State) -> Tup
         problems.append("the run exited %d but produced no commit and no handoff" % outcome.rc)
     if cls == "infra_quota":
         problems.append("the harness reported a quota or rate limit: %s" % grade.quota)
-    if cls == "tests_failed":
+    if cls == "budget_exhausted":
+        problems.append("the driver's own $%g cap ended the run before the work was finished" % (
+            outcome.capped_usd or 0))
+    if cls in ("tests_failed", "budget_exhausted", "infra_quota") and grade.handoff_written:
+        # every class that leaves a handoff behind carries what it left: this record is what
+        # journal.prior_attempt hands the next attempt, and "continue it" without the undone list
+        # is an instruction to guess. The cut-off classes need it MORE than tests_failed does --
+        # they are the ones told they were not at fault.
         problems.append("the handoff reports status %s%s" % (
             grade.status, (": " + "; ".join(grade.undone[:3])) if grade.undone else " and says nothing under Left undone"))
     journal.append(mdir, "step_done", step=task, feature=fid, cls=cls, elapsed_s=round(outcome.elapsed_s, 1),
                    rc=outcome.rc, problems=problems or None, task=task, killed_by=outcome.killed_by,
-                   reconstructed=True if grade.reconstructed else None)
+                   reconstructed=True if grade.reconstructed else None, capped_usd=outcome.capped_usd)
     mark = "ok" if cls == "done" else "xx"
     ctx.log("%s %s  %s  rc=%d  %.1fs  cost=%s%s" % (
         mark, task, cls, outcome.rc, outcome.elapsed_s, _fmt_cost(outcome.cost),
@@ -402,7 +493,8 @@ def run_role(ctx: Context, role: str, step: str, task: str, prompt: str,
             files.write_lock(mdir / ".lease", agent, fid or milestone, task, ctx.session)
         journal.append(mdir, "dispatch", agent=agent, **{"class": "executor" if executor else "static"},
                        model=req.model, feature=fid or None, milestone=milestone or None, dispatch_id=task,
-                       session_id=ctx.session, task=task, harness=ctx.harness, step=step)
+                       session_id=ctx.session, task=task, harness=ctx.harness, step=step,
+                       **_cap_journal(ctx, req))
         _log_dispatch(ctx, req)
         try:
             with blind:
@@ -414,7 +506,11 @@ def run_role(ctx: Context, role: str, step: str, task: str, prompt: str,
                     journal.append(mdir, "lease_released", reason="returned", lock=line)
     _journal_return(ctx, agent, task, outcome, feature=fid or None)
     text = base.read_output(req.output_path)
-    if outcome.killed or outcome.rc != 0:
+    if outcome.capped_usd is not None and not outcome.killed:
+        # the same rule the worker path got: a limit is not a fault, and its callers must not
+        # retry it -- the cap that ended this run ends the next one at the same point
+        cls = "budget_exhausted"
+    elif outcome.killed or outcome.rc != 0:
         cls = "error"
     elif not text.strip():
         cls = "no_output"
@@ -422,10 +518,11 @@ def run_role(ctx: Context, role: str, step: str, task: str, prompt: str,
         cls = "ok"
     outcome.cls = cls
     _write_outcome(run_dir, outcome, None)
-    # no `feature` on this record: journal.last_rejection reads a feature's latest step_done as the
+    # no `feature` on this record: journal.prior_attempt reads a feature's latest step_done as the
     # worker's verdict, and a review of the feature is not one
     journal.append(mdir, "step_done", step=task, role=role, cls=cls, elapsed_s=round(outcome.elapsed_s, 1),
-                   rc=outcome.rc, task=task, killed_by=outcome.killed_by, milestone=milestone or None)
+                   rc=outcome.rc, task=task, killed_by=outcome.killed_by, milestone=milestone or None,
+                   capped_usd=outcome.capped_usd)
     ctx.log("%s %s  %s  rc=%d  %.1fs  cost=%s" % (
         "ok" if cls == "ok" else "xx", task, cls, outcome.rc, outcome.elapsed_s, _fmt_cost(outcome.cost)))
     if outcome.detail:
@@ -455,6 +552,8 @@ def run_judgment(ctx: Context, step: str, prefix: str, prompt: str,
             text = prompt.rstrip("\n") + "\n\nYour previous reply (%s) could not be applied: %s\n%s\n" % (
                 prev, error, prompts.ANSWER_LINE)
         outcome, reply = run_role(ctx, "judgment", step, task, text, milestone=milestone)
+        if outcome.cls == "budget_exhausted":
+            return budget_stop(ctx, "judgment", step, outcome)
         if outcome.cls != "ok":
             how = ("was ended by the driver (%s)" % outcome.killed_by) if outcome.killed else "exited %d" % outcome.rc
             error = "the run %s%s" % (how, " with no reply" if not reply.strip() else "")

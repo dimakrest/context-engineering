@@ -261,13 +261,35 @@ class PromptTests(Fixture):
         rows = [a for a in files.read_contract(self.m) if a.id in feats[0].assertions]
         text = prompts.worker_prompt(self.m, feats[0], "```mission-state\nphase: implementing\n```", rows,
                                      files.design_section(self.m, "F001"), PLUGIN,
-                                     rejection={"step": "F001#1", "problems": ["missing sections: ## Left undone"]})
+                                     prior={"step": "F001#1", "cls": "malformed_handoff",
+                                            "problems": ["missing sections: ## Left undone"]})
         self.assertTrue(text.startswith("Mission: demo. Feature: F001 — feature F001.\n"))
         self.assertIn("A001 — Omitting the window equals the whole day  [structural]  proof: min: named test", text)
         self.assertIn("| D001 |", text)
         self.assertIn('starts with "F001:"', text)
         self.assertIn("was rejected", text)
         self.assertIn("Do not spawn background work", text)
+
+    def test_worker_prompt_does_not_call_a_limit_a_rejection(self):
+        """#21: an attempt the driver's own cap cut off did not earn the word. Telling the next
+        worker it was rejected is how committed, graded-clean work gets redone."""
+        feats = files.read_features(self.m)
+        rows = [a for a in files.read_contract(self.m) if a.id in feats[0].assertions]
+
+        def text(cls):
+            return prompts.worker_prompt(
+                self.m, feats[0], "```mission-state\nphase: implementing\n```", rows,
+                files.design_section(self.m, "F001"), PLUGIN,
+                prior={"step": "F001#1", "cls": cls, "problems": ["the driver's own $8.8 cap ended the run"]})
+
+        for cls in ("budget_exhausted", "infra_quota"):
+            t = text(cls)
+            self.assertNotIn("was rejected", t, cls)
+            self.assertIn("did not finish", t)
+            self.assertIn("cut off before the work was done, not rejected", t)
+            self.assertIn("the driver's own $8.8 cap ended the run", t)
+            self.assertIn("build on them, do not redo them", t)
+        self.assertIn("was rejected", text("tests_failed"))
 
 
 class AdapterTests(unittest.TestCase):
@@ -292,6 +314,51 @@ class AdapterTests(unittest.TestCase):
         self.assertIn("--disallowedTools", ro)
         self.assertNotIn("--max-budget-usd", ro)
         self.assertEqual(ro[ro.index("--effort") + 1], "high")
+
+    def test_claude_budget_grace(self):
+        """--max-budget-usd carries the HARD cap, not the budget: a cut exactly at the budget lands
+        on whatever the run was doing, which is often writing the handoff (#21)."""
+        cmd = ClaudeAdapter({}).command(self.req(budget_usd=2.5, budget_grace_pct=10))
+        self.assertEqual(cmd[cmd.index("--max-budget-usd") + 1], "2.75")
+        # no grace configured is exactly today's behaviour, and no budget is still no flag
+        plain = ClaudeAdapter({}).command(self.req(budget_usd=2.5))
+        self.assertEqual(plain[plain.index("--max-budget-usd") + 1], "2.5")
+        self.assertNotIn("--max-budget-usd", ClaudeAdapter({}).command(
+            self.req(budget_usd=None, budget_grace_pct=10)))
+
+    def test_claude_reports_its_own_cap(self):
+        """Both halves must hold before a run counts as capped: the driver passed a cap, AND the
+        harness named the cap as why it stopped. A budgeted run that failed some other way is not
+        one, and neither is `error_max_budget_usd` from a run we never capped."""
+        tmp = Path(tempfile.mkdtemp())
+        fake = tmp / "fake-claude"
+        fake.write_text("#!/bin/bash\ncat >/dev/null\nprintf '%s' \"$FAKE_ENVELOPE\"\nexit \"$FAKE_RC\"\n",
+                        encoding="utf-8")
+        fake.chmod(0o755)
+        prompt = tmp / "p.md"
+        prompt.write_text("go", encoding="utf-8")
+        n = [0]
+
+        def run(subtype, rc, **over):
+            n[0] += 1
+            rd = tmp / ("run%d" % n[0])
+            envelope = json.dumps({"type": "result", "subtype": subtype, "is_error": rc != 0,
+                                   "result": "stopped", "total_cost_usd": 0.55})
+            kw = dict(budget_usd=0.5, budget_grace_pct=10)
+            kw.update(over)
+            req = self.req(prompt_path=prompt, run_dir=rd, output_path=rd / "o.md", cwd=tmp,
+                           env={"FAKE_ENVELOPE": envelope, "FAKE_RC": str(rc)}, **kw)
+            return ClaudeAdapter({"bin": str(fake)}).run(req)
+
+        capped = run("error_max_budget_usd", 1)
+        self.assertEqual((capped.rc, capped.capped_usd), (1, 0.55))
+        self.assertEqual(capped.cost["value"], 0.55)
+        self.assertIn("error_max_budget_usd", capped.detail)
+        self.assertIsNone(run("error_during_execution", 1).capped_usd, "a crash is not a cap")
+        self.assertIsNone(run("success", 0).capped_usd)
+        self.assertIsNone(run("error_max_budget_usd", 1, budget_usd=None).capped_usd,
+                          "we passed no cap, so this exit is not ours to claim")
+        shutil.rmtree(tmp, ignore_errors=True)
 
     def test_claude_envelope(self):
         env = parse_envelope('{"type":"result","subtype":"success","is_error":false,"duration_ms":1234,'
@@ -382,9 +449,10 @@ class AdapterTests(unittest.TestCase):
         from missions.outcome import CLASSES
         productive = ("done", "handoff_missing", "malformed_handoff", "tests_failed")
         nothing = ("no_op", "infra_crash", "stalled")
-        not_ours = ("infra_quota",)
-        self.assertEqual(set(productive) | set(nothing) | set(not_ours), set(CLASSES))
-        self.assertEqual(len(productive) + len(nothing) + len(not_ours), len(CLASSES))
+        # a limit ended the run, not a defect in it: the provider's (exit 8) or the driver's own (4)
+        limits = ("infra_quota", "budget_exhausted")
+        self.assertEqual(set(productive) | set(nothing) | set(limits), set(CLASSES))
+        self.assertEqual(len(productive) + len(nothing) + len(limits), len(CLASSES))
 
 
 class RequestTests(Fixture):
@@ -392,6 +460,59 @@ class RequestTests(Fixture):
         from missions.steps import Context
         return Context(mission_dir=self.m, checkout=self.tmp, plugin=PLUGIN, cfg=cfg or {"roles": {}},
                        adapter=None, run_id="r1", harness=harness)
+
+    def test_the_cap_is_shown_only_where_it_binds(self):
+        """codex passes no budget flag, so a cap printed or journalled for it is a promise nothing
+        keeps. capabilities()["budget"] has always said which is which; now something asks."""
+        from missions import steps
+        feats = files.read_features(self.m)
+        req = steps.build_request(self.ctx("claude"), feats[0], "F001#1", self.m / "runs" / "F001#1",
+                                  {"tools": []}, "implementing")
+
+        class Fake:
+            def __init__(self, budget):
+                self.b = budget
+
+            def capabilities(self):
+                return {"budget": self.b}
+
+        ctx = self.ctx("claude")
+        ctx.adapter = Fake(True)
+        self.assertEqual(steps._budget_line(ctx, req), " budget $8 (cut at $8.8)")
+        self.assertEqual(steps._cap_journal(ctx, req), {"budget_usd": 8.0, "cap_usd": 8.8})
+        ctx.adapter = Fake(False)
+        self.assertEqual(steps._budget_line(ctx, req), "")
+        self.assertEqual(steps._cap_journal(ctx, req), {})
+        # the real ones, so a change to either adapter's declaration fails here
+        from missions.adapters.claude import ClaudeAdapter
+        from missions.adapters.codex import CodexAdapter
+        self.assertTrue(ClaudeAdapter({}).capabilities()["budget"])
+        self.assertFalse(CodexAdapter({}).capabilities()["budget"])
+
+    def test_budget_grace(self):
+        """driver.json's budget_grace_pct, applied to every role: the budget is what the work is
+        meant to cost, the cap is where the harness stops it, and the gap is the wrap-up (#21)."""
+        from missions import steps
+        feats = files.read_features(self.m)
+        meta = {"tools": ["Read"]}
+
+        def req(cfg, role="worker"):
+            return steps.build_request(self.ctx("claude", cfg), feats[0], "F001#1",
+                                       self.m / "runs" / "F001#1", meta, "implementing", role=role)
+
+        r = req({"roles": {}})
+        self.assertEqual((r.budget_usd, r.budget_grace_pct, r.hard_budget_usd), (8.0, 10.0, 8.8))
+        self.assertEqual(req({"roles": {}}, role="reviewer").hard_budget_usd, 6.6)
+        self.assertEqual(steps.grace_pct({}), 10.0)
+        self.assertEqual((steps.grace_pct({"budget_grace_pct": 0}), steps.grace_pct({"budget_grace_pct": None})),
+                         (0.0, 0.0))
+        # the operator's own number wins, and 0 or null turns the grace off entirely
+        r = req({"roles": {"worker": {"budget_usd": 4}}, "budget_grace_pct": 25})
+        self.assertEqual((r.budget_usd, r.hard_budget_usd), (4.0, 5.0))
+        self.assertEqual(req({"roles": {}, "budget_grace_pct": 0}).hard_budget_usd, 8.0)
+        self.assertEqual(req({"roles": {}, "budget_grace_pct": None}).hard_budget_usd, 8.0)
+        # no budget means no cap to grace
+        self.assertIsNone(req({"roles": {"worker": {"budget_usd": None}}}).hard_budget_usd)
 
     def test_model_vocabulary_per_harness(self):
         from missions import steps
@@ -415,10 +536,10 @@ class RequestTests(Fixture):
 
 
 class ClassifyTests(unittest.TestCase):
-    def out(self, rc=0, timed_out=False, killed_by=None):
+    def out(self, rc=0, timed_out=False, killed_by=None, capped_usd=None):
         return Outcome(task="F001#1", rc=rc, elapsed_s=1.0, timed_out=timed_out, killed_by=killed_by,
                        cost={"unit": "unknown", "value": None, "source": ""}, harness="stub", model=None,
-                       stdout_path=Path("/x"), stderr_path=Path("/y"))
+                       stdout_path=Path("/x"), stderr_path=Path("/y"), capped_usd=capped_usd)
 
     def written(self, **kw):
         g = Grade(handoff_exists=True, handoff_written=True, status="complete", sha="a" * 40, commit_on_branch=True)
@@ -426,7 +547,7 @@ class ClassifyTests(unittest.TestCase):
             setattr(g, k, v)
         return g
 
-    def test_eight_classes(self):
+    def test_nine_classes(self):
         self.assertEqual(classify(self.out(), self.written()), "done")
         self.assertEqual(classify(self.out(), self.written(status="partial")), "tests_failed")
         self.assertEqual(classify(self.out(), self.written(status="blocked", sha=None)), "tests_failed")
@@ -438,6 +559,7 @@ class ClassifyTests(unittest.TestCase):
         # a quota after a WIP commit is still a quota, not a finished feature
         self.assertEqual(classify(self.out(rc=1), Grade(False, new_commit="b" * 40, quota="usage limit")), "infra_quota")
         self.assertEqual(classify(self.out(rc=1), Grade(False)), "infra_crash")
+        self.assertEqual(classify(self.out(rc=1, capped_usd=8.8), Grade(False)), "budget_exhausted")
         self.assertEqual(classify(self.out(timed_out=True), Grade(False)), "stalled")
         self.assertEqual(classify(self.out(), Grade(False)), "no_op")
 
@@ -463,6 +585,44 @@ class ClassifyTests(unittest.TestCase):
 
     def test_quota_needs_no_handoff(self):
         self.assertEqual(classify(self.out(rc=1), self.written(quota="rate limit")), "malformed_handoff")
+
+    def test_quota_under_a_partial_handoff_is_still_a_quota(self):
+        """The handoff branch returns before the quota arm below it, so a partial handoff from a
+        quota-limited run used to be re-dispatched as tests_failed -- into the same quota."""
+        self.assertEqual(classify(self.out(rc=1), self.written(status="partial", quota="usage limit")), "infra_quota")
+        # the worker's own `blocked` is its answer, not the provider's: a bigger quota does not change it
+        self.assertEqual(classify(self.out(rc=1), self.written(status="blocked", quota="usage limit")), "tests_failed")
+
+    def test_the_drivers_own_cap_is_not_a_defect(self):
+        """#21. The claude adapter passes --max-budget-usd, so the cap's own exit is rc 1 -- which
+        the generic non-zero arm read as a malformed handoff and the loop re-dispatched, three
+        times, into the identical wall."""
+        capped = self.out(rc=1, capped_usd=8.8)
+        # complete, committed, nothing wrong with it: the grace is the wrap-up window, and it worked
+        g = self.written()
+        self.assertEqual(classify(capped, g), "done")
+        self.assertEqual(g.problems, [], "a capped run that finished has nothing held against it")
+        # cut off with the work unfinished: stop, do not retry -- the same cap ends the next attempt
+        self.assertEqual(classify(capped, self.written(status="partial")), "budget_exhausted")
+        # the worker's own verdict is untouched by how much money was left
+        self.assertEqual(classify(capped, self.written(status="blocked", sha=None)), "tests_failed")
+        # nothing landed at all
+        self.assertEqual(classify(capped, Grade(False)), "budget_exhausted")
+        # our own structured cap outranks a quota GUESSED from the harness's error prose: telling
+        # the operator to wait for a reset that is not coming is the #21 loop in another costume
+        self.assertEqual(classify(capped, Grade(False, quota="usage limit")), "budget_exhausted")
+        # ...but not at the price of losing a commit: that still reconstructs first
+        self.assertEqual(classify(capped, Grade(False, new_commit="b" * 40, quota="usage limit")), "handoff_missing")
+        # a commit but no handoff is still reconstructed first: the work is recorded before the stop
+        self.assertEqual(classify(capped, Grade(False, new_commit="b" * 40)), "handoff_missing")
+        self.assertEqual(classify(capped, self.written(status="partial", reconstructed=True)), "budget_exhausted")
+        # and a cap does not excuse a handoff that is actually bad, or a run the driver killed
+        self.assertEqual(classify(capped, self.written(problems=["x"])), "malformed_handoff")
+        self.assertEqual(classify(capped, self.written(commit_on_branch=False)), "malformed_handoff")
+        self.assertEqual(classify(self.out(rc=1, capped_usd=8.8, timed_out=True, killed_by="timeout"),
+                                  self.written()), "malformed_handoff")
+        # the regression guard: an uncapped non-zero exit is what it always was
+        self.assertEqual(classify(self.out(rc=1), self.written()), "malformed_handoff")
 
 
 class QuotaTests(unittest.TestCase):
@@ -1798,6 +1958,24 @@ class PreflightPrepTests(RepoFixture):
             self.assertEqual(loop.run(self.tmp / "nowhere", self.ns()), loop.EXIT_CODES["preflight-failed"])
         self.assertIn("is not a mission directory", out.getvalue())
 
+    def test_budget_grace_pct_is_validated_before_it_is_spent(self):
+        """An operator-typed number the driver multiplies money by. Unchecked, a string takes the
+        run down with a traceback one dispatch in -- past the point preflight exists to stop at --
+        and a negative one silently inverts the knob, cutting BELOW the budget."""
+        self.cfg()                                                       # absent: the default
+        self.assertEqual(loop.preflight(self.m, PLUGIN)[0], [])
+        for value in (0, None, 25, 12.5):
+            self.cfg(budget_grace_pct=value)
+            self.assertEqual(loop.preflight(self.m, PLUGIN)[0], [], "rejected a valid %r" % (value,))
+        self.cfg(budget_grace_pct="ten")
+        self.assertEqual(loop.preflight(self.m, PLUGIN)[0], ["budget_grace_pct must be a number, not 'ten'"])
+        self.cfg(budget_grace_pct=True)      # a bool is an int in python, and is not a percentage
+        self.assertEqual(loop.preflight(self.m, PLUGIN)[0], ["budget_grace_pct must be a number, not True"])
+        self.cfg(budget_grace_pct=-50)
+        self.assertEqual(loop.preflight(self.m, PLUGIN)[0],
+                         ["budget_grace_pct is -50: a grace is headroom over the budget, never under it "
+                          "(0 or null turns it off)"])
+
     def test_unset_branch_fails_preflight(self):
         self.cfg(branch="")
         text = files.read_text(self.m / "state.md")
@@ -2085,7 +2263,7 @@ class RunRoleTests(LockEnv, RepoFixture):
         self.assertEqual((evs[3]["task"], evs[3]["unit"]), ("review-F001#1", "unknown"))
         self.assertEqual((evs[4]["step"], evs[4]["role"], evs[4]["cls"], evs[4]["rc"], evs[4]["milestone"]), ("review-F001#1", "reviewer", "ok", 0, "M1"))
         self.assertNotIn("feature", evs[4])
-        self.assertIsNone(journal.last_rejection(self.m, "F001"))
+        self.assertIsNone(journal.prior_attempt(self.m, "F001"))
         self.assertEqual(journal.attempts(self.m, "F001"), 0)
         self.assertEqual(journal.task_attempts(self.m, "review-F001"), 1)
 

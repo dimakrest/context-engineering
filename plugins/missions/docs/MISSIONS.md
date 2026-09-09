@@ -429,7 +429,7 @@ with a program. *Two ways to run a mission* above is how to use it; the plugin R
 works.
 
 *What it does:* drives a mission from its first feature to its last milestone's close — IMPLEMENT
-with the grade taken once, after the worker's process exits and keyed to the attempt (#4: eight
+with the grade taken once, after the worker's process exits and keyed to the attempt (#4: nine
 outcome classes, the watchdog, handoff reconstruction, `missions grade --self`); triage of the open
 issues a handoff raises; and VALIDATE — scrutiny, a blind review per feature, behavior validation
 where the contract needs it, negotiate, `proven` written only from validator verdicts, converge,

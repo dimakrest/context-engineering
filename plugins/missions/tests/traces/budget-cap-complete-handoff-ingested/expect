@@ -1,0 +1,20 @@
+# #21: a worker cut off by the driver's own cap after it finished is done, not "rejected".
+# F001 is capped (stub/F001.sh); F002 runs the well-behaved base worker, so a green case also
+# proves the loop CONTINUED past the capped feature instead of halting or re-dispatching it.
+rc=3
+args=--until validate
+journal~="event":"dispatch".*"dispatch_id":"F001#1"
+journal~="event":"step_done".*"step":"F001#1".*"cls":"done".*"capped_usd":0.55
+journal~="event":"handoff_ingested".*"feature":"F001"
+journal~="event":"dispatch".*"dispatch_id":"F002#1"
+journal~="event":"handoff_ingested".*"feature":"F002"
+journal~="event":"stop".*"reason":"limit-reached"
+journal!~="dispatch_id":"F001#2"
+journal!~="cls":"malformed_handoff"
+journal!~="event":"halt"
+state~=^phase: validating
+git~=F001: stub work
+postcheck=[ "$(grep -cE '^- \*\*Status:\*\* done · commit `[0-9a-f]{7}`' "$M/features.md")" = 2 ]
+postcheck=grep -q '"cls": "done"' "$M/runs/F001#1/outcome.json"
+postcheck=grep -q '"capped_usd": 0.55' "$M/runs/F001#1/outcome.json"
+postcheck=grep -q '"cap_usd":0.55' "$M/journal.jsonl"

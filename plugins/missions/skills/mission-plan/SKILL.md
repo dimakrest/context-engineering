@@ -28,10 +28,17 @@ possibly real spend on live systems. Don't spend it on a one-file change.
 
 ## Step 0 — read before planning
 
-1. The repo's own documentation for the affected area — `CLAUDE.md`, a wiki index, `docs/`.
+1. **`.missions/<slug>/prd.md`, when one exists** — written or repaired by `/missions:mission-prd`.
+   It is the product intent, and the contract is *lifted* from it rather than re-derived: its
+   decision matrix and acceptance rows are most of `contract.md`, and its "decisions deferred to
+   `/missions:mission-plan`" section is your interview agenda. Adopt the slug it chose. If there is
+   no PRD but the user has a requirements document that was not written for a mission, offer
+   `/missions:mission-prd` in audit mode before you plan from it — a PRD written for a human review
+   carries passages that read as requirements to you and are not.
+2. The repo's own documentation for the affected area — `CLAUDE.md`, a wiki index, `docs/`.
    If the project has a docs-first rule, it applies here.
-2. The actual code for the seams you intend to change — enough to size features honestly.
-3. **The project's own rules** — test layers, database safety, git discipline, review process.
+3. The actual code for the seams you intend to change — enough to size features honestly.
+4. **The project's own rules** — test layers, database safety, git discipline, review process.
    You are going to write these into the mission's `state.md`, because the agents that execute the
    mission are project-agnostic and `state.md` is the only place they learn what this repo requires.
 
@@ -184,6 +191,8 @@ is wrong. Say which, and fix it before handing over.
 Create `.missions/<slug>/` (git-ignored) with `mission.md`, `contract.md`, `features.md`, `state.md`
 (fenced `mission-state` block first — `phase: planning`, `resume_next`, `state_cap_lines: 200`),
 an empty `handoffs/`, `validation/`, `patches/`, an empty `followups.md`, and an empty `journal.jsonl`.
+When `/missions:mission-prd` ran first the directory already exists holding `prd.md` — populate
+around it and never clobber it; it is the record of what the mission was asked for.
 Keep the standing-constraints section under ~1.5 KB by referencing the repo's own rules by path;
 `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>` must print without
 complaint before you hand over — it is what every agent will be briefed with.

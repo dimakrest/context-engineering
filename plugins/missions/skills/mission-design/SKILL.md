@@ -31,6 +31,10 @@ the graph — `query_graph` / `get_community` for the feature's seam, and the co
 `god_nodes` — so the exemplar it returns is the pattern the codebase converges on, not the first
 grep hit; ask it to say which it found.
 
+When `.missions/<slug>/prd.md` exists, its *Engineering questions for the design step* section was
+written to seed exactly this fan-out — start from those questions, and note any it turns out the
+repo already answers. It also strips its own line anchors on purpose; re-anchoring is your job.
+
 Cover, at minimum, whatever of these the mission touches:
 
 - The closest existing analogue to each feature — the thing to imitate, and how it is shaped

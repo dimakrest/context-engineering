@@ -68,6 +68,11 @@ single summary sentence in `state.md`. Editing first and searching after is how 
 Include `docs/plans/<slug>-plan.*` in the sweep. It is not mission state, but it is the human-facing
 document, and a plan doc that contradicts the contract is worse than no plan doc.
 
+`prd.md`, when the mission has one, is inside the directory and so is already on the list. It is the
+product intent as it stood when the mission was planned, and the contract governs after that — so
+amend it when this amendment changed **what the product does**, and when it only changed the
+decomposition, leave it and say in the amendment record that you did and why.
+
 ## Step 3 — apply edits that abort rather than half-apply
 
 Every replacement **asserts it matched exactly once** before anything is written, and one missed

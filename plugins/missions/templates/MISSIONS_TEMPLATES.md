@@ -1,6 +1,6 @@
 # Mission file templates
 
-The on-disk schema for `.missions/<slug>/`. Read by `/missions:mission-plan` (writes them), `/missions:mission-design`
+The on-disk schema for `.missions/<slug>/`. Read by `/missions:mission-prd` (writes `prd.md`), `/missions:mission-plan` (writes them), `/missions:mission-design`
 (writes `design.md`), `/missions:mission-run` (reads and updates them), `mission-worker` (writes handoffs),
 the validators (write verdicts), and `/missions:mission-pr-review` (writes `validation/pr-review*`).
 
@@ -10,6 +10,8 @@ human reviewer can see what "done" was defined as without reading the run state.
 
 ```
 .missions/<slug>/
+  prd.md              optional — product intent from /missions:mission-prd, written before the plan;
+                      frozen once contract.md exists, which governs from then on
   mission.md          goal, non-goals, constraints, model seats, budget (dollar / dispatch / wall-clock caps)
   contract.md         THE artifact — assertions with proof budgets, written before any code
   design.md           architecture — guidelines D001.. + pattern inventory, written before any code
@@ -27,6 +29,33 @@ human reviewer can see what "done" was defined as without reading the run state.
   baseline/health.json  `repowise health` at plan time, when the repo is indexed — the scrutiny
                        validator reports the delta against it
 ```
+
+---
+
+## prd.md
+
+Optional, and the only mission file written before `/missions:mission-plan` runs — by
+`/missions:mission-prd`, which also chooses the slug and creates the directory. A directory holding
+only `prd.md` is inert: every hook and both runners find a mission by its `state.md`, so nothing
+treats it as live until the planner writes one.
+
+It has no fixed machine schema; nothing parses it. Its shape is the eleven sections of
+`${CLAUDE_PLUGIN_ROOT}/skills/mission-prd/references/prd-template.md`, in that order, because each
+downstream step lifts its material from a known place: goal / non-goals / blast radius become
+`mission.md`, the requirement table and decision matrix become most of `contract.md`, the
+engineering questions seed `/missions:mission-design`'s research fan-out, and the release-gates
+section becomes nothing at all, on purpose.
+
+An audited PRD carries its origin on the first line, because the copy here is not its home:
+
+```markdown
+Source: docs/prd/<name>.md, read <date>.
+```
+
+**Precedence.** `prd.md` is product intent as it stood at planning time. Once `contract.md` exists
+the contract governs, and a PRD sentence that contradicts an assertion is a contract defect to route
+through `/missions:mission-amend` — whose blast-radius sweep greps the whole mission directory and
+will list `prd.md` among the sites.
 
 ---
 

@@ -16,5 +16,5 @@ Out of scope: ${out_of_scope}
 
 Deliverables: working code, tests at the layer named above, one commit whose message
 starts with "${feature_id}:", and .missions/${slug}/handoffs/${feature_id}.md written to the schema in
-${plugin_root}/templates/MISSIONS_TEMPLATES.md. Do not push.
+${CLAUDE_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md. Do not push.
 Changes outside the files named above are allowed only when the handoff names them under Completed with the reason.

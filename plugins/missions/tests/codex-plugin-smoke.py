@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import queue
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -17,9 +18,8 @@ import time
 
 PLUGIN = Path(__file__).resolve().parent.parent
 PLUGIN_ID = "missions@dimakrest-context-engineering"
-# What an installation never carries: the ignore set tests/driver-selftest.py's
-# PackagingTests.copy_plugin passes to shutil.copytree. Keep the two in step.
-INSTALL_IGNORE = ("tests", "__pycache__", "*.pyc")
+sys.path.insert(0, str(PLUGIN / "driver"))  # as tests/driver-selftest.py and tests/gen-cases.py do
+from missions import INSTALL_IGNORE  # noqa: E402  -- what an installation never carries
 
 
 def installed_files():

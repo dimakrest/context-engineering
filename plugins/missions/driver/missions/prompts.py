@@ -18,7 +18,8 @@ paraphrase them, and end with the JSON shape the driver parses.
 The briefs are prose anyone edits. One that cannot be rendered -- a bare `$`, a placeholder the
 driver does not fill, a driver field it dropped, no file at all -- is a BriefError, and preflight
 renders both (`check_briefs`) so the refusal comes before the phase flips, not one dispatch in.
-Every text the driver hands out has `${CLAUDE_PLUGIN_ROOT}` resolved (`resolve_plugin_root`): a
+Every text the driver hands out has `${CLAUDE_PLUGIN_ROOT}` resolved -- `resolve_plugin_root` for
+the agent bodies and the quoted SKILL sections, the brief field of that name for the briefs: a
 harness the driver launches has no such variable.
 """
 from __future__ import annotations
@@ -49,7 +50,7 @@ JUDGMENT_TOOLS = ["Read", "Glob", "Grep"]
 # exactly these, preflight (check_briefs) renders with these, so the check and the dispatch
 # cannot drift apart.
 WORKER_FIELDS = ("slug", "feature_id", "title", "digest", "assertions", "design", "procedures",
-                 "files", "out_of_scope", "plugin_root")
+                 "files", "out_of_scope", "CLAUDE_PLUGIN_ROOT")
 REVIEWER_FIELDS = ("slug", "feature_id", "title", "assertions", "design", "patch_path", "base",
                    "head", "intelligence")
 BRIEF_FIELDS = {"worker": WORKER_FIELDS, "reviewer": REVIEWER_FIELDS}
@@ -219,8 +220,8 @@ def _brief(plugin: Path, role: str, **values: str) -> str:
     and nothing would say so. Substitutions are one-pass, so dollar signs in repository evidence
     or paths are preserved literally."""
     path = plugin / "skills" / "mission-run" / "references" / (role + "-brief.md")
-    fields = BRIEF_FIELDS.get(role)
-    if fields is not None and set(values) != set(fields):
+    fields = BRIEF_FIELDS[role]
+    if set(values) != set(fields):
         # the driver's own drift, not the brief's: preflight renders with the constant and the
         # dispatch with the caller's keywords, and a run must not pass the one and fail the other
         raise BriefError("the driver renders the %s brief with %s but %s_FIELDS names %s: prompts.py drifted, "
@@ -271,7 +272,8 @@ def worker_prompt(mission_dir: Path, feature: files.Feature, digest_text: str,
                     assertions="\n".join(assertion_lines), design="\n".join(_design_lines(feature.id, design)),
                     procedures=feature.procedures or "as in the standing constraints above",
                     files=", ".join("`%s`" % f for f in feature.files) or "none named",
-                    out_of_scope=feature.out_of_scope or "everything not named above", plugin_root=str(plugin))]
+                    out_of_scope=feature.out_of_scope or "everything not named above",
+                    CLAUDE_PLUGIN_ROOT=str(plugin))]
     # Driver-specific process ownership and recovery stay outside the shared dispatch content.
     parts.append("Do not spawn background work or sub-agents; the driver waits only for this process.")
     parts.append("Before you exit, run `bash %s grade %s %s --self` and fix what it reports:" % (

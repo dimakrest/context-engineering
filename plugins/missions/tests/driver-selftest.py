@@ -32,15 +32,14 @@ from missions.outcome import Grade, Outcome, RunRequest, classify  # noqa: E402
 BASE = HERE / "traces" / "_base" / "mission"
 STUBS = HERE / "traces" / "_base" / "stub"
 
-# What an installation never carries. tests/codex-plugin-smoke.py mirrors this tuple under the
-# same name; keep the two in step.
-INSTALL_IGNORE = ("tests", "__pycache__", "*.pyc")
 
-
-def copy_plugin(target):
-    """Install the plugin the way a host does: the whole tree minus INSTALL_IGNORE, symlinks kept."""
-    target = Path(target)
-    shutil.copytree(PLUGIN, target, symlinks=True, ignore=shutil.ignore_patterns(*INSTALL_IGNORE))
+def copy_plugin(parent, name="installed missions"):
+    """Install the plugin the way a host does: the whole tree minus INSTALL_IGNORE, symlinks kept.
+    `parent` is where the installation goes, `name` its directory -- the default is the name every
+    test that does not care about the path uses."""
+    target = Path(parent) / name
+    shutil.copytree(PLUGIN, target, symlinks=True,
+                    ignore=shutil.ignore_patterns(*missions.INSTALL_IGNORE))
     return target
 
 
@@ -63,22 +62,16 @@ class PackagingTests(unittest.TestCase):
         return json.loads((plugin / (".%s-plugin" % host) / "plugin.json").read_text())
 
     def skill_root(self, host, plugin=PLUGIN):
-        # Claude discovers skills/ by default; Codex's manifest selects it explicitly.
-        path = self.manifest(host, plugin).get("skills", "./skills" if host == "claude" else None)
-        self.assertIsInstance(path, str)
+        # both manifests select skills/ outright, so neither host depends on a discovery default
+        path = self.manifest(host, plugin)["skills"]
         self.assertEqual(Path(path), Path("skills"))
         return (plugin / path).resolve()
 
-    @staticmethod
-    def copy_plugin(parent):
-        return copy_plugin(Path(parent) / "installed missions")   # the module helper, at a fixed name
-
-    def manifest_version(self, path, plugin=None):
+    def marketplace_version(self, path, plugin):
+        """The version a marketplace entry pins for `plugin`."""
         if not path.exists():
             self.skipTest("%s is not in this checkout" % path.name)
         obj = json.loads(path.read_text())
-        if plugin is None:
-            return obj["version"]
         for entry in obj.get("plugins", []):
             if entry.get("name") == plugin:
                 return entry["version"]
@@ -90,7 +83,7 @@ class PackagingTests(unittest.TestCase):
                 self.assertEqual(self.manifest(host)["version"], missions.__version__)
 
     def test_marketplace_version_agrees_with_the_driver(self):
-        market = self.manifest_version(PLUGIN.parent.parent / ".claude-plugin" / "marketplace.json", "missions")
+        market = self.marketplace_version(PLUGIN.parent.parent / ".claude-plugin" / "marketplace.json", "missions")
         self.assertEqual(market, missions.__version__)
 
     def test_codex_marketplace_installs_the_shared_plugin_directory(self):
@@ -152,7 +145,7 @@ class PackagingTests(unittest.TestCase):
 
     def test_a_copied_plugin_contains_its_runtime_assets_and_launches(self):
         with tempfile.TemporaryDirectory() as tmp:
-            installed = self.copy_plugin(tmp)
+            installed = copy_plugin(tmp)
             for path in installed.rglob("*"):
                 if path.is_symlink():
                     self.assertIn(installed.resolve(), path.resolve().parents, "external symlink: %s" % path)
@@ -178,7 +171,7 @@ class PackagingTests(unittest.TestCase):
 
     def test_editing_canonical_sources_reaches_both_hosts_and_driver_prompts(self):
         with tempfile.TemporaryDirectory() as tmp:
-            installed = self.copy_plugin(tmp)
+            installed = copy_plugin(tmp)
             skill = installed / "skills" / "mission-run" / "SKILL.md"
             text = skill.read_text()
             marker = "Canonical rule added by the packaging regression."
@@ -195,34 +188,43 @@ class PackagingTests(unittest.TestCase):
             agent.write_text(agent.read_text() + "\n" + agent_marker + "\n")
             self.assertIn(agent_marker, prompts.system_prompt(installed, "worker")[1])
 
+    def brief_fixture(self, tmp):
+        """An installed plugin with the fixture mission beside it, and `render(role, digest=...)`
+        -- the one place either brief test spells a worker_prompt/reviewer_prompt call, so a
+        signature change lands once."""
+        installed = copy_plugin(tmp)
+        mission = Path(tmp) / ".missions" / "demo"
+        shutil.copytree(BASE, mission)
+        feature = files.read_features(mission)[0]
+        assertions = [a for a in files.read_contract(mission) if a.id in feature.assertions]
+        design = files.design_section(mission, feature.id)
+
+        def render(role, digest="digest"):
+            if role == "worker":
+                return prompts.worker_prompt(mission, feature, digest, assertions, design, installed)
+            return prompts.reviewer_prompt(mission, feature, assertions, design,
+                                           mission / "patches" / "F001.patch", "a" * 40, "b" * 40,
+                                           "none", installed)
+        return installed, render
+
     def test_editing_shared_dispatch_briefs_reaches_sessions_and_driver(self):
         """A wording change in either brief must reach the actual worker/reviewer prompt, not
         only the judgment role that quotes the surrounding mission-run skill."""
         with tempfile.TemporaryDirectory() as tmp:
-            installed = self.copy_plugin(tmp)
-            mission = Path(tmp) / ".missions" / "demo"
-            shutil.copytree(BASE, mission)
-            feature = files.read_features(mission)[0]
-            assertions = [a for a in files.read_contract(mission) if a.id in feature.assertions]
-            design = files.design_section(mission, feature.id)
-            skill = installed / "skills" / "mission-run" / "SKILL.md"
+            installed, render = self.brief_fixture(tmp)
+            refs = installed / "skills" / "mission-run" / "references"
             for role in ("worker", "reviewer"):
                 with self.subTest(role=role):
                     relative = "references/%s-brief.md" % role
                     for host in ("claude", "codex"):
                         loaded = self.skill_root(host, installed) / "mission-run" / "SKILL.md"
                         self.assertIn("](%s)" % relative, loaded.read_text())
-                    template = skill.parent / relative
+                    template = refs / (role + "-brief.md")
                     marker = "Canonical %s instruction: evidence can contain $$5." % role
                     template.write_text(template.read_text() + "\n" + marker + "\n")
+                    rendered = render(role, digest="digest: $literal")
                     if role == "worker":
-                        rendered = prompts.worker_prompt(mission, feature, "digest: $literal", assertions,
-                                                         design, installed)
-                        self.assertIn("digest: $literal", rendered)
-                    else:
-                        rendered = prompts.reviewer_prompt(mission, feature, assertions, design,
-                                                           mission / "patches" / "F001.patch", "a" * 40,
-                                                           "b" * 40, "none", installed)
+                        self.assertIn("digest: $literal", rendered)     # one pass: evidence is literal
                     self.assertIn(marker.replace("$$", "$"), rendered)
 
     def test_a_dispatch_brief_that_cannot_render_is_refused_by_name(self):
@@ -231,21 +233,10 @@ class PackagingTests(unittest.TestCase):
         with no references/ at all must be one typed BriefError naming the cause -- and a
         preflight problem -- not a traceback after the phase flipped to implementing."""
         with tempfile.TemporaryDirectory() as tmp:
-            installed = self.copy_plugin(tmp)
-            mission = Path(tmp) / ".missions" / "demo"
-            shutil.copytree(BASE, mission)
-            feature = files.read_features(mission)[0]
-            assertions = [a for a in files.read_contract(mission) if a.id in feature.assertions]
-            design = files.design_section(mission, feature.id)
+            installed, render = self.brief_fixture(tmp)
             refs = installed / "skills" / "mission-run" / "references"
             worker, reviewer = refs / "worker-brief.md", refs / "reviewer-brief.md"
             shipped = {p: p.read_text() for p in (worker, reviewer)}
-
-            def render(role):
-                if role == "worker":
-                    return prompts.worker_prompt(mission, feature, "digest", assertions, design, installed)
-                return prompts.reviewer_prompt(mission, feature, assertions, design, mission / "patches" / "F001.patch",
-                                               "a" * 40, "b" * 40, "none", installed)
 
             self.assertEqual(prompts.check_briefs(installed), [])
             for role in ("worker", "reviewer"):
@@ -977,7 +968,7 @@ class GradeTests(RepoFixture):
         self.m = self.repo / ".missions" / "demo"
         self.commit()
         self.handoff()
-        installed = copy_plugin(self.tmp / "installed missions 'quoted' $plugin")
+        installed = copy_plugin(self.tmp, "installed missions 'quoted' $plugin")
         feature = files.read_features(self.m)[0]
         prompt = prompts.worker_prompt(self.m, feature, "digest", files.read_contract(self.m),
                                        files.design_section(self.m, feature.id), installed)
@@ -2295,7 +2286,7 @@ class PreflightPrepTests(RepoFixture):
         event, no resume_next. Preflight renders both briefs now, so run refuses before the flip;
         and a brief broken after preflight, or a run that bypassed it, ends in a typed stop that
         leaves the feature pending."""
-        installed = PackagingTests.copy_plugin(self.tmp)
+        installed = copy_plugin(self.tmp)
         brief = installed / "skills" / "mission-run" / "references" / "worker-brief.md"
         brief.write_text(brief.read_text() + "\nThe fix costs $5.\n")
         self.cfg()

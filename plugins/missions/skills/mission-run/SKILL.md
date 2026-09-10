@@ -85,10 +85,14 @@ guideline.
 `model:` on the Agent call; otherwise omit `model:` and the definition's default runs. Never widen
 an agent's `tools:` on the call. The hooks journal whichever model actually ran.
 
-Read [the shared worker brief](references/worker-brief.md) and use its text as the Agent
-`prompt`, with `subagent_type: mission-worker` and the seat above. Substitute its `${...}`
-placeholders with the mission `slug`, `feature_id`, `title`, resolved `plugin_root`, and the
-feature's `procedures`, `files` and `out_of_scope`. The three multiline fields take the
+Read [the shared worker brief](references/worker-brief.md) and
+[the shared reviewer brief](references/reviewer-brief.md) once when you enter the loop, and
+reuse their text for every dispatch — they do not change while the mission runs.
+
+Use the worker brief's text as the Agent `prompt`, with `subagent_type: mission-worker` and the
+seat above. Substitute its `${...}` placeholders with the mission `slug`, `feature_id`, `title`,
+`${CLAUDE_PLUGIN_ROOT}` (the plugin root, as the runtime guide resolves it everywhere else), and
+the feature's `procedures`, `files` and `out_of_scope`. The three multiline fields take the
 driver's row shapes, one row per line, indented two spaces: `digest` is the output of
 `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>`; `assertions` is
 one row per contract assertion — id, text, class, budget — with contract.md's table pipes and
@@ -160,16 +164,16 @@ reviewer prompt that names a git command or omits the patch path.
 Reviewers hold the execution lease (they may run tests), so they run **one at a time** on this
 host; dispatch the next when the previous returns. Static research may fan out meanwhile.
 
-Read [the shared reviewer brief](references/reviewer-brief.md) and use its text as the Agent
-`prompt`, with `subagent_type: mission-reviewer`. Pass `mission.md`'s `Reviewer seat` as
-`model:` when present; otherwise omit it. Substitute `slug`, `feature_id`, `title`,
-`patch_path`, `base` and `head` from the materialised feature patch. Fill `assertions` with
-the feature's verbatim assertions and proof budgets, in the worker's row shape without the
-class — `  A003 — <text>  proof budget: min: named test; max: 1 pinning feature` — and
-`design` with its pre-code guidelines and exemplars in the worker's shape, both indented by
-two spaces. Set `intelligence` from the state's
-codebase-intelligence line, or `none`. Use the same placeholder rules as the worker brief.
-The driver reads this reference too; keep dispatch wording in the reference.
+Use [the shared reviewer brief](references/reviewer-brief.md) you read at loop entry as the
+Agent `prompt`, with `subagent_type: mission-reviewer`. Pass `mission.md`'s `Reviewer seat` as
+`model:` when present; otherwise omit it. Substitute
+`slug`, `feature_id`, `title`, `patch_path`, `base` and `head` from the materialised feature
+patch. Fill `assertions` with the feature's verbatim assertions and proof budgets, in the
+worker's row shape without the class — `  A003 — <text>  proof budget: min: named test; max: 1
+pinning feature` — and `design` with its pre-code guidelines and exemplars in the worker's
+shape, both indented by two spaces. Set `intelligence` from the state's codebase-intelligence
+line, or `none`. Use the same placeholder rules as the worker brief. The driver reads this
+reference too; keep dispatch wording in the reference.
 
 The reviewer's tool list is fixed by its definition — read-only graph and call-graph tools, and
 none that return commit messages or PR bodies. Do not widen it on the call.

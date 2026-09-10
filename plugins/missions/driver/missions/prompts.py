@@ -6,8 +6,8 @@ agent file. Its system prompt is the constant below, because what it must do -- 
 nothing, answer with one JSON object -- is the driver's contract (design §6.3), not a persona
 anyone dispatches by hand.
 
-The user parts are the dispatch templates from skills/mission-run/SKILL.md, rendered verbatim in
-shape: the worker's ("Dispatching a worker") with the digest, the feature's assertions from
+The worker and reviewer user parts are rendered from skills/mission-run/references/*-brief.md,
+the same templates the session skill reads: the worker's with the digest, the feature's assertions from
 contract.md, its design section from design.md and its procedures; the reviewer's (VALIDATE step
 2) with the patch path and nothing that came after the code -- hooks/mission-blind-review.sh's
 rules are the test of that prompt, and a selftest runs the hook over it. The first line is
@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
+from string import Template
 from typing import Dict, List, Optional, Tuple
 
 from . import files, journal
@@ -165,39 +167,31 @@ def _design_lines(feature_id: str, design: Tuple[str, List[str]]) -> List[str]:
     return out
 
 
+def _brief(plugin: Path, role: str, **values: str) -> str:
+    """Render the shared session/driver dispatch brief. Missing fields fail loudly: a template
+    edit must not leave an unfilled placeholder in a paid dispatch. Substitutions are one-pass,
+    so dollar signs in repository evidence or paths are preserved literally."""
+    path = plugin / "skills" / "mission-run" / "references" / (role + "-brief.md")
+    return Template(files.read_text(path)).substitute(values).rstrip("\n")
+
+
 def worker_prompt(mission_dir: Path, feature: files.Feature, digest_text: str,
                   assertions: List[files.Assertion], design: Tuple[str, List[str]],
                   plugin: Path, prior: Optional[Dict] = None,
                   inherited: Optional[List[str]] = None) -> str:
     slug = mission_dir.name
-    parts: List[str] = []
-    parts.append("Mission: %s. Feature: %s \u2014 %s." % (slug, feature.id, feature.title or feature.id))
-    parts.append("")
-    parts.append("Mission state (digest \u2014 this is your briefing; do not read state.md wholesale):")
-    parts.append(_indent(digest_text))
-    parts.append("")
-    parts.append("Assertions you must satisfy (verbatim from contract.md, with their proof budget):")
-    if assertions:
-        for a in assertions:
-            parts.append(_assertion_line(a, True, "proof:"))
-    else:
-        parts.append("  (contract.md names no assertion for %s \u2014 say so in the handoff)" % feature.id)
-    parts.append("")
-    parts.append("Design guidelines that bind you (verbatim from design.md, with exemplars):")
-    parts += _design_lines(feature.id, design)
-    parts.append("Deviating from a guideline is allowed only if declared in the handoff with the reason.")
-    parts.append("")
-    parts.append("Procedures that apply: %s" % (feature.procedures or "as in the standing constraints above"))
-    parts.append("Files worth starting from: %s" % (", ".join("`%s`" % f for f in feature.files) or "none named"))
-    parts.append("Out of scope: %s" % (feature.out_of_scope or "everything not named above"))
-    parts.append("")
-    parts.append("Deliverables: working code, tests at the layer named above, one commit whose message")
-    parts.append("starts with \"%s:\", and .missions/%s/handoffs/%s.md written to the schema in" % (feature.id, slug, feature.id))
-    parts.append("%s/templates/MISSIONS_TEMPLATES.md. Do not push." % plugin)
-    parts.append("Changes outside the files named above are allowed only when the handoff names them under Completed with the reason.")
+    assertion_lines = [_assertion_line(a, True, "proof:") for a in assertions] or [
+        "  (contract.md names no assertion for %s \u2014 say so in the handoff)" % feature.id]
+    parts = [_brief(plugin, "worker", slug=slug, feature_id=feature.id,
+                    title=feature.title or feature.id, digest=_indent(digest_text),
+                    assertions="\n".join(assertion_lines), design="\n".join(_design_lines(feature.id, design)),
+                    procedures=feature.procedures or "as in the standing constraints above",
+                    files=", ".join("`%s`" % f for f in feature.files) or "none named",
+                    out_of_scope=feature.out_of_scope or "everything not named above", plugin_root=str(plugin))]
+    # Driver-specific process ownership and recovery stay outside the shared dispatch content.
     parts.append("Do not spawn background work or sub-agents; the driver waits only for this process.")
-    parts.append("Before you exit, run `bash %s/bin/missions grade %s %s --self` and fix what it reports:" % (
-        plugin, mission_dir, feature.id))
+    parts.append("Before you exit, run `bash %s grade %s %s --self` and fix what it reports:" % (
+        shlex.quote(str(plugin / "bin" / "missions")), shlex.quote(str(mission_dir)), shlex.quote(feature.id)))
     parts.append("the driver runs the same check after you exit, and a handoff it rejects costs another run.")
     if inherited:
         parts.append("")
@@ -228,33 +222,17 @@ def _prior_attempt_lines(prior: Dict) -> List[str]:
 
 def reviewer_prompt(mission_dir: Path, feature: files.Feature, assertions: List[files.Assertion],
                     design: Tuple[str, List[str]], patch_path: Path, base: str, head: str,
-                    intelligence_line: str) -> str:
+                    intelligence_line: str, plugin: Path) -> str:
     """VALIDATE step 2's brief, in the SKILL's shape. It names the patch and what was written
     before the code (assertions, guidelines) and nothing after it: no handoff, no section of one,
     no git command -- the words hooks/mission-blind-review.sh rejects are the words that would
     leak the author's reasoning."""
-    slug = mission_dir.name
-    parts: List[str] = []
-    parts.append("Mission: %s. Feature: %s \u2014 %s." % (slug, feature.id, feature.title or feature.id))
-    parts.append("Review the patch for %s against these assertions. You have not seen how or why it was" % feature.id)
-    parts.append("written and you should not go looking.")
-    if assertions:
-        for a in assertions:
-            parts.append(_assertion_line(a, False, "proof budget:"))
-    else:
-        parts.append("  (contract.md names no assertion for %s \u2014 say so in your verdicts)" % feature.id)
-    parts.append("Design guidelines this feature was bound to (pre-code, from design.md):")
-    parts += _design_lines(feature.id, design)
-    parts.append("Patch: %s (base %s, head %s) \u2014 read this file; it is your only diff, and you do not run git yourself." % (
-        patch_path, base[:7], head[:7]))
-    parts.append("Codebase intelligence: %s \u2014 for every public symbol the patch changes, find its callers" % (
-        intelligence_line or "none"))
-    parts.append("(graphify affected \"<symbol>\" when graphify is named; grep otherwise) and grade them in your Impact table.")
-    parts.append("Return a per-assertion verdict (satisfied / not satisfied / cannot tell from the diff),")
-    parts.append("a per-guideline conformance verdict, the impact table, plus defects with file:line and a")
-    parts.append("root-cause cluster hint. \"cannot tell\" is a legitimate and useful answer.")
-    parts.append("Write nothing to the repository. Your final message is the review, in the format your instructions give.")
-    return "\n".join(parts) + "\n"
+    assertion_lines = [_assertion_line(a, False, "proof budget:") for a in assertions] or [
+        "  (contract.md names no assertion for %s \u2014 say so in your verdicts)" % feature.id]
+    return _brief(plugin, "reviewer", slug=mission_dir.name, feature_id=feature.id,
+                  title=feature.title or feature.id, assertions="\n".join(assertion_lines),
+                  design="\n".join(_design_lines(feature.id, design)), patch_path=str(patch_path),
+                  base=base[:7], head=head[:7], intelligence=intelligence_line or "none") + "\n"
 
 
 def scrutiny_prompt(mission_dir: Path, milestone: str, features: List[files.Feature],

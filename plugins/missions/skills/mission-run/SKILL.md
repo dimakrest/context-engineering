@@ -1,8 +1,9 @@
 ---
 name: mission-run
 description: Execute a planned mission. Drives the serial loop - dispatch one writing agent at a time, ingest its handoff, gate progress on open issues, fire blind validators at each milestone, and stop at a branch plus draft PR. Use after /missions:mission-plan, or when the user says "run the mission", "/missions:mission-run", or "continue the mission".
-user_invocable: true
 ---
+
+Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
 # /missions:mission-run — the orchestrator loop
 
@@ -39,7 +40,7 @@ Do not work from memory, and do not re-read the mission files wholesale either �
 never once performed the full reload it was told to (it was 146 K tokens), and survived on 558-byte
 id-scoped reads instead. Make that the rule:
 
-1. **The digest** — `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>`: phase,
+1. **The digest** — `bash "${MISSIONS_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>`: phase,
    milestone, spend, the locks, open issues, the standing constraints, and `resume_next`. Under 2 KB.
    After a compaction the SessionStart hook has already printed it; act on `resume_next`.
 2. **Id-scoped reads** for what the next action needs: `grep -n '^| A007' contract.md`,
@@ -52,9 +53,9 @@ If `state.md` and the git log disagree about what's committed, the git log wins 
 to it and note the correction in the journal. If you can't tell where you are, run `/missions:mission-resume`.
 
 **Every state update rewrites `resume_next`** (one line: the next action and why) and, when spend
-changed, `spend_usd` — from `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-spend.sh" <this session's
+changed, `spend_usd` — from `bash "${MISSIONS_PLUGIN_ROOT}/scripts/mission-spend.sh" <this session's
 transcript> .missions/<slug>/journal.jsonl`, never from an estimate. Keep `state.md` under its cap:
-when a milestone closes, `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-archive.sh" .missions/<slug> M<n>`.
+when a milestone closes, `bash "${MISSIONS_PLUGIN_ROOT}/scripts/mission-archive.sh" .missions/<slug> M<n>`.
 
 ## The loop
 
@@ -84,34 +85,18 @@ guideline.
 `model:` on the Agent call; otherwise omit `model:` and the definition's default runs. Never widen
 an agent's `tools:` on the call. The hooks journal whichever model actually ran.
 
-```
-Agent tool:
-  subagent_type: "mission-worker"
-  model: <the feature's Seat — omit the line when features.md names none>
-  prompt: |
-    Mission: <slug>. Feature: F00n — <title>.
+Read [the shared worker brief](references/worker-brief.md) and use its text as the Agent
+`prompt`, with `subagent_type: mission-worker` and the seat above. Substitute its `${...}`
+placeholders with the mission `slug`, `feature_id`, `title`, resolved `plugin_root`, and the
+feature's `procedures`, `files` and `out_of_scope`. Fill `digest` with the output of
+`scripts/mission-state.sh`; fill `assertions` with the feature's verbatim contract assertions,
+proof classes and budgets; fill `design` with its verbatim guidelines and exemplars. Indent
+these three multiline fields by two spaces. Never pass an unfilled placeholder.
 
-    Mission state (digest — this is your briefing; do not read state.md wholesale):
-      <paste the output of: bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>>
-
-    Assertions you must satisfy (verbatim from contract.md, with their proof budget):
-      A003 — <text>  [structural]  proof: min named test; max 1 pinning feature
-      A007 — <text>  [structural]  proof: min mutation (tenancy); max 1 pinning feature
-
-    Design guidelines that bind you (verbatim from design.md, with exemplars):
-      D001 — <text> — imitate `path/file.py:40`
-      D004 — <text> — imitate `path/other.py:12`
-    Deviating from a guideline is allowed only if declared in the handoff with the reason.
-
-    Procedures that apply: <test layer, who handles a migration, docs to update — copy these
-    from features.md; the worker knows nothing about this project otherwise>
-    Files worth starting from: <paths, if known>
-    Out of scope: <the neighbouring things you must not touch>
-
-    Deliverables: working code, tests at the layer named above, one commit whose message
-    starts with "F00n:", and .missions/<slug>/handoffs/F00n.md written to the schema in
-    ${CLAUDE_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md. Do not push.
-```
+This reference is also the driver's worker template: edit the brief there once for both
+runtimes. Its placeholder syntax is Python `string.Template`; use `$$` for a literal dollar
+sign in template prose (substituted evidence is already literal). Driver-only process and
+self-grading instructions are appended by the driver.
 
 The first line of the prompt **must** read `Mission: <slug>. Feature: F00n — …` — the serial guard
 and the journal take the feature id from there (not from the first `F0nn` anywhere in the prompt,
@@ -132,7 +117,7 @@ Then:
   `agent_return` with the measured duration — do not write those by hand.
 - Materialise the reviewer's patch now, while the range is fresh — the whole range, so the patch
   shows everything the run changed, the out-of-Files paths the handoff declared included:
-  `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-patch.sh" .missions/<slug> F00n <base> <head>`
+  `bash "${MISSIONS_PLUGIN_ROOT}/scripts/mission-patch.sh" .missions/<slug> F00n <base> <head>`
 - Update `features.md`: status, and `- **Range:** <base>..<head>`.
 - Update `contract.md` assertions to `claimed` — **never** `proven`.
 - Copy every issue from the handoff into `state.md` under open issues; rewrite `resume_next`.
@@ -166,27 +151,14 @@ reviewer prompt that names a git command or omits the patch path.
 Reviewers hold the execution lease (they may run tests), so they run **one at a time** on this
 host; dispatch the next when the previous returns. Static research may fan out meanwhile.
 
-```
-Agent tool (one call per feature):
-  subagent_type: "mission-reviewer"
-  model: <mission.md's "Reviewer seat" — omit the line when it names none>
-  prompt: |
-    Mission: <slug>. Feature: F00n — <title>.
-    Review the patch for F00n against these assertions. You have not seen how or why it was
-    written and you should not go looking.
-      A003 — <text>  proof budget: <min … ; max …>
-      A007 — <text>  proof budget: <min … ; max …>
-    Design guidelines this feature was bound to (pre-code, from design.md):
-      D001 — <text> — exemplar `path/file.py:40`
-    Patch: .missions/<slug>/patches/F00n.patch (base <sha>, head <sha>)  — read this file;
-    it is your only diff, and you do not run git yourself.
-    Codebase intelligence: <the state.md line verbatim> — for every public symbol the patch
-    changes, find its callers (graphify affected "<symbol>" when graphify is named; grep
-    otherwise) and grade them in your Impact table.
-    Return a per-assertion verdict (satisfied / not satisfied / cannot tell from the diff),
-    a per-guideline conformance verdict, the impact table, plus defects with file:line and a
-    root-cause cluster hint. "cannot tell" is a legitimate and useful answer.
-```
+Read [the shared reviewer brief](references/reviewer-brief.md) and use its text as the Agent
+`prompt`, with `subagent_type: mission-reviewer`. Pass `mission.md`'s `Reviewer seat` as
+`model:` when present; otherwise omit it. Substitute `slug`, `feature_id`, `title`,
+`patch_path`, `base` and `head` from the materialised feature patch. Fill `assertions` with
+the feature's verbatim assertions and proof budgets, and `design` with its pre-code
+guidelines and exemplars, both indented by two spaces. Set `intelligence` from the state's
+codebase-intelligence line, or `none`. Use the same placeholder rules as the worker brief.
+The driver reads this reference too; keep dispatch wording in the reference.
 
 The reviewer's tool list is fixed by its definition — read-only graph and call-graph tools, and
 none that return commit messages or PR bodies. Do not widen it on the call.
@@ -209,7 +181,7 @@ patch — and never a silent rewrite of the guideline to match the code.
 | Same assertion failed twice | **Classify before halting.** Root cause is one of: contract ambiguity / implementation defect / inadequate evidence / bad brief / environment. Only the first — or a fix that would weaken an assertion or change user-visible scope — is a BLOCK halt. The rest are repaired (repair-round cap permitting) under a journaled `decision`. The last mission escalated an incomplete *brief* to a human contract decision, and it helped end the mission. |
 | Contract turned out to be wrong | **BLOCK halt and ask the user.** Never silently rewrite an assertion to match the code. |
 
-**Convergence gate** — `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-converge.sh" .missions/<slug> M<n>`
+**Convergence gate** — `bash "${MISSIONS_PLUGIN_ROOT}/scripts/mission-converge.sh" .missions/<slug> M<n>`
 before advancing. It fails when cumulative follow-ups exceed features, when the per-milestone ratio
 has risen two milestones running, or when the milestone introduced `interface`/`conversational`
 assertions and proved none. A failure is a BLOCK halt with a re-plan — **never a cap raise**;
@@ -271,7 +243,7 @@ When every assertion is `proven` and `followups.md` is empty or explicitly accep
 5. Final report: assertions proven, defects caught by blind review that the workers' own tests missed
    (this number is the honest measure of whether the workflow earned its keep), spend vs cap
    (measured — `mission-spend.sh`), everything in `followups.md`, the PR-review verdict, and the
-   five acceptance metrics: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/journal-metrics.sh" .missions/<slug>`.
+   five acceptance metrics: `bash "${MISSIONS_PLUGIN_ROOT}/scripts/journal-metrics.sh" .missions/<slug>`.
 6. Set `phase: done`. The hooks go inert for this mission.
 
 Then stop. A human merges.

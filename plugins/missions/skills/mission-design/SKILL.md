@@ -1,8 +1,9 @@
 ---
 name: mission-design
 description: The architecture step of a mission, run after /missions:mission-plan and before /missions:mission-run. Fans out read-only mission-researcher agents to find the repo's existing patterns, then writes design.md - numbered architectural guidelines (D001..) anchored to file:line exemplars - which binds every mission-worker and travels to the blind reviewers. Mandatory - /missions:mission-run refuses to dispatch without it. Writes zero product code. Use after the contract is reviewed, or when the user says "/missions:mission-design", "design the mission", or asks for architectural guidelines before implementation.
-user_invocable: true
 ---
+
+Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
 # /missions:mission-design — architecture before implementation
 
@@ -52,7 +53,7 @@ anti-patterns so no worker picks it independently.
 
 ## Step 2 — write design.md
 
-Schema: `${CLAUDE_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md`. Guidelines carry ids `D001..`, are never
+Schema: `${MISSIONS_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md`. Guidelines carry ids `D001..`, are never
 renumbered, and each must be **checkable by reading a diff** and anchored to a `file:line` exemplar.
 Per-feature sections list which guidelines and exemplars apply — the loop copies from there,
 verbatim, into every worker and reviewer dispatch.

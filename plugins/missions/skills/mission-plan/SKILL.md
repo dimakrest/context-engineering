@@ -1,8 +1,9 @@
 ---
 name: mission-plan
-description: Plan a mission - a multi-feature agent run whose definition of done is written before any code. Interviews the user, then emits mission.md, contract.md and features.md under .missions/<slug>/. Use when a task is too big for one session, when the user says "mission", "/missions:mission-plan", or before /missions:mission-run. Writes zero product code.
-user_invocable: true
+description: Plan a mission - a multi-feature agent run whose definition of done is written before any code. Interviews the user, then emits mission.md, contract.md and features.md in the mission directory. Use when a task is too big for one session, when the user says "mission", "/missions:mission-plan", or before /missions:mission-run. Writes zero product code.
 ---
+
+Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
 # /missions:mission-plan — write the contract before the code
 
@@ -35,7 +36,7 @@ possibly real spend on live systems. Don't spend it on a one-file change.
    no PRD but the user has a requirements document that was not written for a mission, offer
    `/missions:mission-prd` in audit mode before you plan from it — a PRD written for a human review
    carries passages that read as requirements to you and are not.
-2. The repo's own documentation for the affected area — `CLAUDE.md`, a wiki index, `docs/`.
+2. The repo's own documentation for the affected area — `AGENTS.md`, `CLAUDE.md`, a wiki index, `docs/`.
    If the project has a docs-first rule, it applies here.
 3. The actual code for the seams you intend to change — enough to size features honestly.
 4. **The project's own rules** — test layers, database safety, git discipline, review process.
@@ -49,12 +50,13 @@ yourself.
 **Probe the codebase intelligence once, here — the agents never guess at it.**
 
 ```bash
-test -f graphify-out/graph.json && echo "graphify=cli$(claude mcp get graphify >/dev/null 2>&1 && echo +mcp)"
-test -d .repowise && echo "repowise=index$(claude mcp get repowise >/dev/null 2>&1 && echo +mcp)"
+test -f graphify-out/graph.json && echo "graphify=cli"
+test -d .repowise && echo "repowise=index"
 true   # a missing index is an answer, not a failed step
 ```
 
-Write the result as one line under *Standing constraints* in `state.md`, where the digest carries
+Check the current host's available MCP tools as described in the runtime guide; append `+mcp`
+only for a connected server. Write the result as one line under *Standing constraints* in `state.md`, where the digest carries
 it to every agent: `- Codebase intelligence: graphify=cli+mcp (graphify-out/, <date>) ·
 repowise=index (.repowise/)` — or `none`. When graphify exists, start your own lookups with
 `graphify query "<term>"` and `graphify god-nodes` (seconds, no LLM): a community listing is the
@@ -89,12 +91,13 @@ You are a sounding board, not a stenographer. Before writing anything, resolve:
   terminal-review reserve. Tokens are informational. Missions without numbers get "informational
   only" warnings and no enforcement.
 
-- **Seats** — the defaults live in the agent definitions (worker Sonnet; reviewer Opus at `xhigh`;
+- **Seats (Claude)** — the defaults live in the agent definitions (worker Sonnet; reviewer Opus at `xhigh`;
   researcher and scrutiny Sonnet; behavior Opus) and need no line. Record only deviations, and
   they are executable: a per-feature `- **Seat:** opus` in `features.md` for a genuinely gnarly
   feature (an unfamiliar library, binary output, a security boundary), and `- Reviewer seat: fable`
   in `mission.md` when the blast radius includes auth, money or tenancy. `check.sh` validates both;
   the loop passes them as `model:` on the Agent call; the journal records what actually ran.
+  For Codex model configuration, use the runtime guide's driver role settings instead.
 
 Push back on scope. A mission that is 12 features long is usually two missions.
 
@@ -182,7 +185,7 @@ Refuse to finish unless all six hold:
 6. Every milestone that introduces an `interface` or `conversational` assertion also budgets the
    validator run that proves it (the loop cannot close such a milestone on structural proof alone).
 
-Then run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh" .missions/<slug>` after writing the files —
+Then run `bash "${MISSIONS_PLUGIN_ROOT}/scripts/check.sh" .missions/<slug>` after writing the files —
 it checks 1–5 mechanically. If you can't close a gap, the contract is incomplete or the decomposition
 is wrong. Say which, and fix it before handing over.
 
@@ -194,9 +197,9 @@ an empty `handoffs/`, `validation/`, `patches/`, an empty `followups.md`, and an
 When `/missions:mission-prd` ran first the directory already exists holding `prd.md` — populate
 around it and never clobber it; it is the record of what the mission was asked for.
 Keep the standing-constraints section under ~1.5 KB by referencing the repo's own rules by path;
-`bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>` must print without
+`bash "${MISSIONS_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>` must print without
 complaint before you hand over — it is what every agent will be briefed with.
-Templates: `${CLAUDE_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md`.
+Templates: `${MISSIONS_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md`.
 
 `state.md` is where the project's own rules go — test layers, database safety, git discipline, the
 review process. The worker, reviewer and validator agents are project-agnostic by design; `state.md`

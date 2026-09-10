@@ -6,7 +6,7 @@ worker step; a milestone whose features are all done goes to VALIDATE (validate.
 round per call, the loop comes back for the repairs it scheduled), and a driver started in
 `validating` or `negotiating` resumes the round it finds. It exits only through stop(reason) --
 steps.stop, re-exported here with EXIT_CODES. `--until validate` stops where VALIDATE would begin,
-`--until milestone` after a milestone closes. The pr phase is not driven (#10): the loop stops with
+`--until milestone` after a milestone closes. The pr phase is not driven (#30): the loop stops with
 `gate-blocked` and names the terminal steps. A quota stops the loop with `provider-quota`; the
 sleep-and-resume is #7.
 """
@@ -268,7 +268,7 @@ def _run_locked(ctx: Context, args) -> int:
                 # ahead of the closed-milestone check: a `done` stop puts the phase back to
                 # validating, and an operator who moved it to pr for the terminal steps keeps it
                 return stop(ctx, "gate-blocked", detail="phase pr is not driven by this version",
-                            needs="terminal steps via /missions:mission-run (driver pr phase: #10)")
+                            needs="terminal steps via /missions:mission-run (driver pr phase: #30)")
             if validate.closed(mdir, milestone):
                 # a closed milestone is never re-entered: a finished mission re-run is a no-op,
                 # --milestone stops once its milestone closes, and a state.md that names a closed

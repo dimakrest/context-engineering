@@ -34,12 +34,28 @@ STUBS = HERE / "traces" / "_base" / "stub"
 
 
 class PackagingTests(unittest.TestCase):
-    """The version is written in three files by hand -- the driver's own `__init__`, the plugin
-    manifest, and the marketplace entry that a `/plugin install` actually reads. A bump that reaches
-    two of them ships a driver that journals a version nobody installed (`loop.py` stamps
-    `__version__` on every run record), and the drift is invisible until someone reads a journal
-    months later. 0.2.10 shipped to two of the three; this is what makes the third impossible to
-    forget."""
+    """A plugin installation copies only plugins/missions. Both hosts must discover the same
+    editable skills there, including their runtime instructions and executable assets; neither
+    may depend on a second generated tree or paths back into the source checkout."""
+
+    SKILLS = {"mission-amend", "mission-crosscheck", "mission-design", "mission-plan",
+              "mission-pr-review", "mission-prd", "mission-resume", "mission-run", "mission-status"}
+
+    def manifest(self, host, plugin=PLUGIN):
+        return json.loads((plugin / (".%s-plugin" % host) / "plugin.json").read_text())
+
+    def skill_root(self, host, plugin=PLUGIN):
+        # Claude discovers skills/ by default; Codex's manifest selects it explicitly.
+        path = self.manifest(host, plugin).get("skills", "./skills" if host == "claude" else None)
+        self.assertIsInstance(path, str)
+        self.assertEqual(Path(path), Path("skills"))
+        return (plugin / path).resolve()
+
+    def copy_plugin(self, parent):
+        target = Path(parent) / "installed missions"
+        shutil.copytree(PLUGIN, target, symlinks=True,
+                        ignore=shutil.ignore_patterns("tests", "__pycache__", "*.pyc"))
+        return target
 
     def manifest_version(self, path, plugin=None):
         if not path.exists():
@@ -52,13 +68,146 @@ class PackagingTests(unittest.TestCase):
                 return entry["version"]
         self.fail("no %r entry in %s" % (plugin, path))
 
-    def test_the_three_version_mirrors_agree(self):
-        manifest = self.manifest_version(PLUGIN / ".claude-plugin" / "plugin.json")
+    def test_plugin_versions_agree_with_the_driver(self):
+        for host in ("claude", "codex"):
+            with self.subTest(host=host):
+                self.assertEqual(self.manifest(host)["version"], missions.__version__)
+
+    def test_marketplace_version_agrees_with_the_driver(self):
         market = self.manifest_version(PLUGIN.parent.parent / ".claude-plugin" / "marketplace.json", "missions")
-        self.assertEqual(
-            (manifest, market), (missions.__version__, missions.__version__),
-            "version mirrors disagree -- driver %s, plugin.json %s, marketplace.json %s"
-            % (missions.__version__, manifest, market))
+        self.assertEqual(market, missions.__version__)
+
+    def test_codex_marketplace_installs_the_shared_plugin_directory(self):
+        repository = PLUGIN.parent.parent
+        path = repository / ".agents" / "plugins" / "marketplace.json"
+        if not path.exists():
+            self.skipTest("repository marketplace is not included in an installed plugin")
+        entries = json.loads(path.read_text())["plugins"]
+        entry = next(item for item in entries if item["name"] == "missions")
+        self.assertEqual(entry["source"]["source"], "local")
+        self.assertEqual((repository / entry["source"]["path"]).resolve(), PLUGIN)
+
+    def test_both_hosts_discover_the_same_skills_and_runtime_guide(self):
+        roots = [self.skill_root(host) for host in ("claude", "codex")]
+        self.assertEqual(roots[0], roots[1])
+        skills = {path.parent.name: path for path in roots[0].glob("*/SKILL.md")}
+        self.assertEqual(set(skills), self.SKILLS)
+        for name, path in skills.items():
+            with self.subTest(skill=name):
+                body = path.read_text().split("\n---", 1)[1].lstrip()
+                first_paragraph = body.split("\n\n", 1)[0]
+                self.assertIn("../../docs/RUNTIMES.md", first_paragraph)
+                self.assertEqual((path.parent / "../../docs/RUNTIMES.md").resolve(),
+                                 PLUGIN / "docs" / "RUNTIMES.md")
+                self.assertTrue((path.parent / "../../docs/RUNTIMES.md").is_file())
+
+    def test_claude_hook_wiring_is_explicit_and_codex_has_no_default_hooks(self):
+        hook_path = self.manifest("claude")["hooks"]
+        self.assertEqual(hook_path, "./hooks/claude.json")
+        hooks = json.loads((PLUGIN / hook_path).read_text())["hooks"]
+        expected = {
+            ("PreToolUse", "Agent"): ["mission-serial-guard.sh", "mission-blind-review.sh"],
+            ("PreToolUse", "Bash"): ["mission-commit-discipline.sh", "mission-crosscheck-seal.sh",
+                                     "mission-shell-guard.sh"],
+            ("PreToolUse", "Write|Edit"): ["mission-contract-first.sh"],
+            ("PostToolUse", "Agent"): ["mission-journal.sh", "mission-release.sh"],
+            ("PostToolUseFailure", "Agent"): ["mission-release.sh"],
+            ("SubagentStop", None): ["mission-journal.sh", "mission-release.sh"],
+            ("SessionStart", "startup|resume|compact"): ["mission-rehydrate.sh"],
+        }
+        actual = {}
+        for event, entries in hooks.items():
+            for entry in entries:
+                commands = []
+                for hook in entry["hooks"]:
+                    self.assertEqual(hook["type"], "command")
+                    match = re.fullmatch(r'bash "\$\{CLAUDE_PLUGIN_ROOT\}/hooks/([^/]+)"', hook["command"])
+                    self.assertIsNotNone(match, hook["command"])
+                    self.assertTrue((PLUGIN / "hooks" / match.group(1)).is_file())
+                    self.assertGreater(hook["timeout"], 0)
+                    commands.append(match.group(1))
+                key = (event, entry.get("matcher"))
+                self.assertNotIn(key, actual)
+                actual[key] = commands
+        self.assertEqual(actual, expected)
+        self.assertNotIn("hooks", self.manifest("codex"))
+        self.assertFalse((PLUGIN / "hooks" / "hooks.json").exists(),
+                         "Codex auto-discovers hooks/hooks.json; Claude payloads must stay host-specific")
+
+    def test_a_copied_plugin_contains_its_runtime_assets_and_launches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            installed = self.copy_plugin(tmp)
+            for path in installed.rglob("*"):
+                if path.is_symlink():
+                    self.assertIn(installed, path.resolve().parents, "external symlink: %s" % path)
+            self.assertEqual(self.skill_root("claude", installed), self.skill_root("codex", installed))
+            for asset in ("docs/RUNTIMES.md", "templates/MISSIONS_TEMPLATES.md",
+                          "skills/mission-prd/references/prd-template.md",
+                          "skills/mission-run/references/worker-brief.md",
+                          "skills/mission-run/references/reviewer-brief.md",
+                          "skills/mission-crosscheck/audit.sh", "skills/mission-crosscheck/snapshot.sh",
+                          "scripts/mission-state.sh", "scripts/check.sh", "hooks/claude.json"):
+                self.assertTrue((installed / asset).is_file(), asset)
+            env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
+            launch = subprocess.run(["bash", str(installed / "bin" / "missions"), "--help"],
+                                    cwd=tmp, env=env, capture_output=True, text=True)
+            self.assertEqual(launch.returncode, 0, launch.stderr)
+            self.assertIn("preflight", launch.stdout)
+            mission = Path(tmp) / ".missions" / "demo"
+            shutil.copytree(BASE, mission)
+            digest = subprocess.run(["bash", str(installed / "scripts" / "mission-state.sh"), str(mission)],
+                                    cwd=tmp, env=env, capture_output=True, text=True)
+            self.assertEqual(digest.returncode, 0, digest.stderr)
+            self.assertIn("implementing", digest.stdout)
+
+    def test_editing_canonical_sources_reaches_both_hosts_and_driver_prompts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            installed = self.copy_plugin(tmp)
+            skill = installed / "skills" / "mission-run" / "SKILL.md"
+            text = skill.read_text()
+            marker = "Canonical rule added by the packaging regression."
+            text, count = re.subn(r"(^## VALIDATE[^\n]*\n)", r"\1\n" + marker + "\n", text, count=1,
+                                 flags=re.MULTILINE)
+            self.assertEqual(count, 1)
+            skill.write_text(text)
+            for host in ("claude", "codex"):
+                discovered = self.skill_root(host, installed) / "mission-run" / "SKILL.md"
+                self.assertIn(marker, discovered.read_text())
+            self.assertIn(marker, prompts.skill_section(installed, "VALIDATE"))
+            agent = installed / "agents" / "mission-worker.md"
+            agent_marker = "Canonical worker rule added by the packaging regression."
+            agent.write_text(agent.read_text() + "\n" + agent_marker + "\n")
+            self.assertIn(agent_marker, prompts.system_prompt(installed, "worker")[1])
+
+    def test_editing_shared_dispatch_briefs_reaches_sessions_and_driver(self):
+        """A wording change in either brief must reach the actual worker/reviewer prompt, not
+        only the judgment role that quotes the surrounding mission-run skill."""
+        with tempfile.TemporaryDirectory() as tmp:
+            installed = self.copy_plugin(tmp)
+            mission = Path(tmp) / ".missions" / "demo"
+            shutil.copytree(BASE, mission)
+            feature = files.read_features(mission)[0]
+            assertions = [a for a in files.read_contract(mission) if a.id in feature.assertions]
+            design = files.design_section(mission, feature.id)
+            skill = installed / "skills" / "mission-run" / "SKILL.md"
+            for role in ("worker", "reviewer"):
+                with self.subTest(role=role):
+                    relative = "references/%s-brief.md" % role
+                    for host in ("claude", "codex"):
+                        loaded = self.skill_root(host, installed) / "mission-run" / "SKILL.md"
+                        self.assertIn("](%s)" % relative, loaded.read_text())
+                    template = skill.parent / relative
+                    marker = "Canonical %s instruction: evidence can contain $$5." % role
+                    template.write_text(template.read_text() + "\n" + marker + "\n")
+                    if role == "worker":
+                        rendered = prompts.worker_prompt(mission, feature, "digest: $literal", assertions,
+                                                         design, installed)
+                        self.assertIn("digest: $literal", rendered)
+                    else:
+                        rendered = prompts.reviewer_prompt(mission, feature, assertions, design,
+                                                           mission / "patches" / "F001.patch", "a" * 40,
+                                                           "b" * 40, "none", installed)
+                    self.assertIn(marker.replace("$$", "$"), rendered)
 
 
 class Fixture(unittest.TestCase):
@@ -721,6 +870,29 @@ class RepoFixture(Fixture):
 
 
 class GradeTests(RepoFixture):
+    def test_worker_self_grade_command_handles_shell_sensitive_paths(self):
+        """Execute the emitted command against valid evidence in a real checkout; merely
+        launching the installed driver's --help does not test the worker's shell command."""
+        relocated = self.tmp / "worker checkout 'quoted' $mission"
+        self.repo.rename(relocated)
+        self.repo = relocated
+        self.m = self.repo / ".missions" / "demo"
+        self.commit()
+        self.handoff()
+        installed = self.tmp / "installed missions 'quoted' $plugin"
+        shutil.copytree(PLUGIN, installed, symlinks=True,
+                        ignore=shutil.ignore_patterns("tests", "__pycache__", "*.pyc"))
+        feature = files.read_features(self.m)[0]
+        prompt = prompts.worker_prompt(self.m, feature, "digest", files.read_contract(self.m),
+                                       files.design_section(self.m, feature.id), installed)
+        command = re.search(r"Before you exit, run `([^`]+)`", prompt)
+        self.assertIsNotNone(command)
+        env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
+        result = subprocess.run(["bash", "-c", command.group(1)], cwd=self.repo, env=env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("F001: handoff valid -- status complete", result.stdout)
+
     def test_task_keyed_handoff(self):
         head0 = self.git("rev-parse", "HEAD")
         self.commit()
@@ -2122,7 +2294,7 @@ class RolePromptTests(Fixture):
         rows = [a for a in files.read_contract(self.m) if a.id in feats[0].assertions]
         patch = self.m / "patches" / "F001.patch"
         text = prompts.reviewer_prompt(self.m, feats[0], rows, files.design_section(self.m, "F001"), patch,
-                                       "0123456789abcdef", "fedcba9876543210", files.intelligence_line(self.m))
+                                       "0123456789abcdef", "fedcba9876543210", files.intelligence_line(self.m), PLUGIN)
         self.assertTrue(text.startswith(
             "Mission: demo. Feature: F001 \u2014 feature F001.\nReview the patch for F001 against these assertions. "
             "You have not seen how or why it was\nwritten and you should not go looking.\n"

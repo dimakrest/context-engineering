@@ -1,8 +1,10 @@
 # Missions — long-running agent work with a contract
 
 A **mission** is a multi-feature agent run whose definition of done is written **before any code
-exists**. It is built entirely from Claude Code primitives already in this repo — skills, subagents,
-files, and git. There is no framework, no daemon, and no new UI.
+exists**. Claude Code and Codex share its skills, agent instructions, files and Git workflow.
+Codex executes the implementation loop through the bundled driver. See the
+[installation guide](../README.md#install) and [runtime guide](RUNTIMES.md) for host-specific
+commands and enforcement; the workflow reference below uses Claude command names.
 
 Adapted from Luke Alvoeiro's (Factory) multi-agent architecture. Design decisions are recorded
 in the repository's issues.
@@ -52,7 +54,7 @@ drives the loop* once the plan exists.
 | Caps | the hooks enforce them around each dispatch | checked in code before every paid dispatch |
 | How it ends | prose, plus `resume_next` | a typed exit code (0–130), plus `resume_next` |
 | Harness | Claude | Claude **or** codex, per mission |
-| Terminal steps (the `pr` phase) | **yes** — draft PR and whole-branch review | **not yet** (#10): it stops and hands the branch back |
+| Terminal steps (the `pr` phase) | **yes** — draft PR and whole-branch review | **not yet** (#30): it stops and hands the branch back |
 
 **Use the session loop** when you want to watch it, intervene, or take a mission all the way to a
 reviewed draft PR. **Use the driver** for long unattended stretches, for a dollar cap enforced
@@ -448,7 +450,7 @@ config — what `HOME` holds stays readable); git hooks scoped to that environme
 cooperating worker, and `--no-verify` bypasses them; the post-exit grade is the gate that does not
 depend on the worker at all.
 
-*Still open:* the terminal steps and the push (the `pr` phase, #10), `status` (#19), and `resume`
+*Still open:* the terminal steps and the push (the `pr` phase, #30), `status` (#19), and `resume`
 with sleep-and-resume on a provider quota (#7).
 
 *How far it is proven:* `tests/traces/run.sh` drives the real driver over a temporary repo with a

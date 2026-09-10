@@ -1,8 +1,9 @@
 ---
 name: mission-amend
 description: Change a planned mission's contract, decomposition or scope after /missions:mission-plan and /missions:mission-design have run, without leaving half of it behind. Maps the blast radius first, applies edits that abort rather than half-apply, retires ids without renumbering, sweeps to zero live references, and gates on a bidirectional coherence check. Planning phase only. Use when the user says "/missions:mission-amend", wants to cut or widen a mission's scope, or acts on a contract defect found by /missions:mission-design or /missions:mission-crosscheck.
-user_invocable: true
 ---
+
+Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
 # /missions:mission-amend — change the plan without leaving half of it behind
 
@@ -142,7 +143,7 @@ outside it regardless; `/missions:mission-crosscheck` says so.
 Run it verbatim. It exits non-zero if the files disagree with each other:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/check.sh "$MISSION"
+bash ${MISSIONS_PLUGIN_ROOT}/scripts/check.sh "$MISSION"
 ```
 
 It checks coverage in **both directions** — contract → features and features → contract — plus each

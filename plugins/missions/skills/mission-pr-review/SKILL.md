@@ -1,8 +1,9 @@
 ---
 name: mission-pr-review
 description: The terminal whole-branch review pass of a mission, run in the `pr` phase. Ensures the draft PR exists, runs /simplify, fires the general code review and the repo's adversarial-review skill in parallel, assesses every finding with read-only agents, routes survivors to followups.md, and writes an HTML findings report. Invoked by /missions:mission-run's terminal steps, or by /missions:mission-resume when the phase is `pr`; re-entrant via its own progress file. Use when the user says "/missions:mission-pr-review" or asks to run or resume the mission's PR review.
-user_invocable: true
 ---
+
+Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
 # /missions:mission-pr-review — the whole-branch review
 
@@ -61,14 +62,15 @@ a security checklist, a QA comment on the issue, a change-size table — and ski
 whatever review routing those steps trigger. The description carries the contract and the
 assertion→evidence table, so a reviewer sees what "done" meant and how each part was proven.
 
-**2. Simplify.** Run `/simplify` on the branch. It is a quality pass, not a bug hunt — reuse,
+**2. Simplify.** Run `/simplify` on the branch, or the runtime guide's quality-pass equivalent
+when that command is unavailable. It is a quality pass, not a bug hunt — reuse,
 simplification, efficiency, altitude. Apply what it finds, then commit and push. Every finding it
 *skipped* goes into `followups.md` with the reason it was skipped; a skipped finding that is not
 written down is a finding that never happened.
 
 **3. Review, in parallel.** Both of these at once, in one message:
 
-- `/code-review` — pick the effort from the PR's actual complexity, not its line count: a wide
+- `/code-review`, or the runtime guide's fresh whole-branch review equivalent — pick the effort from the PR's actual complexity, not its line count: a wide
   mechanical rename is `low`, a change on an auth or money path is `high`. **Never `ultra`** — it is
   user-triggered and billed, and you cannot launch it.
 - **The repo's adversarial-review skill, if the project defines one** — the mission's `state.md`

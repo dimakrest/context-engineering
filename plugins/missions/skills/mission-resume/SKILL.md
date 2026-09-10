@@ -1,8 +1,9 @@
 ---
 name: mission-resume
 description: Rehydrate a mission after a context compaction, a /clear, a crash, or a new day. Reconstructs position from the mission directory, reconciles it against git, and hands control back to /missions:mission-run. Use when the user says "resume the mission", "/missions:mission-resume", or when mission state and reality may have diverged.
-user_invocable: true
 ---
+
+Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
 # /missions:mission-resume — reconstruct position from disk
 
@@ -41,7 +42,7 @@ This is the whole point of the skill. Check, don't assume:
 | Validation ran but no verdict file | Re-run that validator. Cheaper than guessing what it said. |
 | `crosscheck/progress.md` exists with unchecked steps | An external review died mid-pass. Continue with `/missions:mission-crosscheck` — it reads its own progress file and skips what is done. If its step 4 audit never ran, the transcript is **unaudited, not clean**: re-audit before quoting anything from it. |
 | Phase is `pr` | The loop is over; the mission died mid terminal review. Continue with `/missions:mission-pr-review` — it reads its own progress file (`validation/pr-review.md`) and skips what's already done. A pushed branch is **expected** in this phase, not an invariant violation. |
-| An amendment stopped partway — mission files disagree with each other | Run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/check.sh .missions/<slug>` before anything else. If it fails, a `/missions:mission-amend` pass died mid-edit and the plan is internally inconsistent: finish it with `/missions:mission-amend`, never dispatch a worker against it. A worker reads whichever file it was handed and cannot tell that the others disagree. |
+| An amendment stopped partway — mission files disagree with each other | Run `bash ${MISSIONS_PLUGIN_ROOT}/scripts/check.sh .missions/<slug>` before anything else. If it fails, a `/missions:mission-amend` pass died mid-edit and the plan is internally inconsistent: finish it with `/missions:mission-amend`, never dispatch a worker against it. A worker reads whichever file it was handed and cannot tell that the others disagree. |
 | Mission halted | Surface the halt reason and the decision the user still owes. Do not resume past a halt on your own initiative. |
 
 ## Step 4 — hand back
@@ -50,7 +51,7 @@ Rewrite `state.md` to the reconciled truth — the fenced `mission-state` block 
 `milestone`, `spend_usd` recomputed with `scripts/mission-spend.sh`, a fresh `resume_next`), then
 the prose — append a `resume` entry to the journal, and check the hook-owned locks: a `.writer` or
 `.lease` whose holder has an `agent_return` in the journal is stale; delete it and journal why.
-Confirm `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>` prints cleanly.
+Confirm `bash "${MISSIONS_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>` prints cleanly.
 Then report in five lines or fewer: where the mission is, what changed during reconciliation, and
 the next action.
 

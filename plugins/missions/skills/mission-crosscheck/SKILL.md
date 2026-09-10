@@ -1,15 +1,16 @@
 ---
 name: mission-crosscheck
 description: The cross-vendor blind review of a mission's plan, run after /missions:mission-plan or after /missions:mission-design. Seals a spec package with our conclusions stripped out, has an external reviewer derive the architecture independently, audits the transcript for contamination before a single finding is read, then routes contract defects to the user and design findings to design.md. Never patches contract.md or features.md. Writes zero product code. Use when the user says "/missions:mission-crosscheck", asks for an outside or unbiased opinion on a mission's contract or design, or wants the plan checked before /missions:mission-run.
-user_invocable: true
 ---
+
+Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
 # /missions:mission-crosscheck — an outside opinion that is actually outside
 
-Every check a mission runs is a Claude checking Claude. `MISSIONS.md` names this as the
-framework's known weakness: we can vary model, context blindness and evidence independence, but not
-vendor. This skill supplies the missing axis, and spends it on the artifact that most deserves it —
-the plan, before the code exists to be defended.
+For a Claude-authored mission, another Claude review cannot vary the vendor. This skill adds
+an independent Codex reviewer, and spends that independence on the plan before the code exists
+to be defended. The reverse Codex-to-Claude workflow is not implemented; in a Codex session,
+follow the runtime guide's cross-vendor limitation before any dispatch.
 
 **The failure mode this skill exists to prevent is not a bad review. It is a contaminated one.** A
 reviewer that has seen our conclusions produces a fluent, well-cited report that agrees with us, and
@@ -135,7 +136,7 @@ Snapshot first, so Step 4 can prove nothing was written — the reviewer's sandb
 `workspace-write` regardless of what the prompt says:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/skills/mission-crosscheck/snapshot.sh "$MISSION" "$SNAP"
+bash ${MISSIONS_PLUGIN_ROOT}/skills/mission-crosscheck/snapshot.sh "$MISSION" "$SNAP"
 ```
 
 That script is the **only** definition of what counts as a mission file; Step 4 recomputes through
@@ -160,7 +161,7 @@ Check progress by file size and by tailing the transcript.
 off" — the whole problem is that a contaminated report looks right.
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/skills/mission-crosscheck/audit.sh "$PKG/pass1.raw.md" "$MISSION" "$SNAP"
+bash ${MISSIONS_PLUGIN_ROOT}/skills/mission-crosscheck/audit.sh "$PKG/pass1.raw.md" "$MISSION" "$SNAP"
 ```
 
 It fails on any of: a read of or citation into a sealed path, a change to `git status`, a change to

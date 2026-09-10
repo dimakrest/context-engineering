@@ -22,7 +22,7 @@ Once a repair feature routed to the assertion has been reviewed, only the repair
 the repair round's verdict proves it. An assertion a repair was just scheduled for is not marked
 either, whatever the round said about it.
 
-Not here: the pr phase (#10). The last milestone's close stops with `done` and names the
+Not here: the pr phase (#30). The last milestone's close stops with `done` and names the
 terminal steps for a human; the phase is left at `validating` so the operator sees where the
 mission stands.
 """
@@ -142,10 +142,10 @@ def closed(mission_dir: Path, milestone: str) -> bool:
 def done_stop(ctx: Context) -> int:
     """The `done` stop: the last milestone's close, and a finished mission's re-run, which is a
     no-op. The phase is left at `validating` for the operator who runs the terminal steps (the
-    pr phase is #10); resume_next spells the issue out, since state.md reads ` #` as a comment."""
+    pr phase is #30); resume_next spells the issue out, since state.md reads ` #` as a comment."""
     total = len(files.milestones(ctx.mission_dir))
     return stop(ctx, "done", detail="all %d milestone(s) validated; every assertion proven" % total,
-                needs="terminal steps 1-6 of /missions:mission-run (the driver's pr phase is #10)", phase="validating",
+                needs="terminal steps 1-6 of /missions:mission-run (the driver's pr phase is #30)", phase="validating",
                 resume_next="terminal steps 1-6 of /missions:mission-run: all %d milestone(s) validated, every assertion "
                             "proven (the driver's pr phase is issue 10)" % total)
 
@@ -272,7 +272,8 @@ def _review(ctx: Context, milestone: str, round_no: int, feature: files.Feature,
                        task="", file="", nopatch=True)
         ctx.log("   review %s: no patch -- cannot tell" % feature.id)
         return None
-    prompt = prompts.reviewer_prompt(mdir, feature, mine, steps.design_for(mdir, feature), patch, base, head, intelligence)
+    prompt = prompts.reviewer_prompt(mdir, feature, mine, steps.design_for(mdir, feature), patch, base, head,
+                                     intelligence, ctx.plugin)
     r = _validator(ctx, "reviewer", milestone, round_no, prompt, feature=feature)
     if isinstance(r, int):
         return r

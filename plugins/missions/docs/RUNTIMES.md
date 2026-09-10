@@ -67,7 +67,8 @@ a replacement. The driver already reads the shared agent bodies and judgment rul
    SessionStart hook in Codex. For resume, follow `mission-resume`'s file/git reconciliation,
    but do not rewrite state or remove locks while a driver is running. The driver owns its
    `.driver.lock`, `.writer`, `.lease`, handoff grading and interrupted-run recovery.
-2. Require the contract, features and design. Run `scripts/check.sh .missions/<slug>`.
+2. Require the contract, features and design. Run
+   `bash "$MISSIONS_PLUGIN_ROOT/scripts/check.sh" .missions/<slug>`.
    Work on the branch named by `state.md`, reconcile unknown dirty work, and use the shared
    halt rules. For an authorized first run in `planning`, journal the transition and set
    the fenced state's phase to `implementing` only after those checks pass.

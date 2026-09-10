@@ -14,6 +14,12 @@ rules are the test of that prompt, and a selftest runs the hook over it. The fir
 `Mission: <slug>. Feature: F0nn — <title>.` -- the 0.2 hooks take the feature id from there, so it
 does not change. The judgment prompts quote the SKILL's own rules (`skill_section`) rather than
 paraphrase them, and end with the JSON shape the driver parses.
+
+The briefs are prose anyone edits. One that cannot be rendered -- a bare `$`, a placeholder the
+driver does not fill, a driver field it dropped, no file at all -- is a BriefError, and preflight
+renders both (`check_briefs`) so the refusal comes before the phase flips, not one dispatch in.
+Every text the driver hands out has `${CLAUDE_PLUGIN_ROOT}` resolved (`resolve_plugin_root`): a
+harness the driver launches has no such variable.
 """
 from __future__ import annotations
 
@@ -23,7 +29,7 @@ import shlex
 import subprocess
 from pathlib import Path
 from string import Template
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from . import files, journal
 
@@ -36,6 +42,17 @@ AGENTS = {
     "judgment": "mission-judgment",
 }
 JUDGMENT_TOOLS = ["Read", "Glob", "Grep"]
+
+# the placeholders the driver fills in each shared brief under skills/mission-run/references/ --
+# and every one of them must be used: a brief that drops `${digest}` would otherwise send workers
+# out without the standing constraints, silently. worker_prompt and reviewer_prompt render with
+# exactly these, preflight (check_briefs) renders with these, so the check and the dispatch
+# cannot drift apart.
+WORKER_FIELDS = ("slug", "feature_id", "title", "digest", "assertions", "design", "procedures",
+                 "files", "out_of_scope", "plugin_root")
+REVIEWER_FIELDS = ("slug", "feature_id", "title", "assertions", "design", "patch_path", "base",
+                   "head", "intelligence")
+BRIEF_FIELDS = {"worker": WORKER_FIELDS, "reviewer": REVIEWER_FIELDS}
 
 JUDGMENT_SYSTEM = """# Mission judgment — the model proposes, the driver applies
 
@@ -74,6 +91,12 @@ class DigestError(Exception):
     """scripts/mission-state.sh refused (the digest does not fit, or the mission is unreadable)."""
 
 
+class BriefError(Exception):
+    """A shared dispatch brief under skills/mission-run/references/ cannot be rendered: the file
+    is not there, it names a placeholder the driver does not fill, a bare `$` sits in its prose,
+    or it stopped using a field the driver supplies."""
+
+
 def agent_definition(plugin: Path, name: str) -> Tuple[Dict, str]:
     """(frontmatter, body). Frontmatter keys are strings; `tools` is a list, empty when the YAML
     list is broken -- the same reading hooks/mission-lib.sh and lint-agents.sh apply."""
@@ -110,6 +133,14 @@ def agent_definition(plugin: Path, name: str) -> Tuple[Dict, str]:
     return meta, body
 
 
+def resolve_plugin_root(text: str, plugin: Path) -> str:
+    """`${CLAUDE_PLUGIN_ROOT}` is the one spelling of the plugin root in shipped text -- skills,
+    agents, templates, docs, hook messages -- and a session resolves it. A harness the driver
+    launches has no such variable, so every text the driver hands out gets the real path put in:
+    the agent bodies, and the SKILL sections the judgment prompts quote."""
+    return text.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin))
+
+
 def system_prompt(plugin: Path, role: str = "worker") -> Tuple[Dict, str]:
     """(frontmatter, system text) for a role -- or for an agent named outright, which is what
     the callers from before the roles existed pass. Judgment has no agent file: the constant, with
@@ -117,17 +148,17 @@ def system_prompt(plugin: Path, role: str = "worker") -> Tuple[Dict, str]:
     if role == "judgment":
         return {"name": AGENTS["judgment"], "tools": list(JUDGMENT_TOOLS)}, JUDGMENT_SYSTEM
     meta, body = agent_definition(plugin, AGENTS.get(role, role))
-    return meta, body.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin))
+    return meta, resolve_plugin_root(body, plugin)
 
 
 def skill_section(plugin: Path, name: str) -> str:
     """The text of skills/mission-run/SKILL.md from the `## <name>` heading to the next `## `,
-    heading included; empty when there is no such heading. The judgment prompts carry the SKILL's
-    rules this way so the driver and the prose loop cannot drift apart on what VALIDATE decides
-    or what a BLOCK halt is."""
+    heading included and the plugin root resolved; empty when there is no such heading. The
+    judgment prompts carry the SKILL's rules this way so the driver and the prose loop cannot
+    drift apart on what VALIDATE decides or what a BLOCK halt is."""
     text = files.section(files.read_text(plugin / "skills" / "mission-run" / "SKILL.md"),
                          name, keep_heading=True, level=r"##")
-    return (text.rstrip("\n") + "\n") if text else ""
+    return resolve_plugin_root(text.rstrip("\n") + "\n", plugin) if text else ""
 
 
 def digest(mission_dir: Path, plugin: Path) -> str:
@@ -167,12 +198,65 @@ def _design_lines(feature_id: str, design: Tuple[str, List[str]]) -> List[str]:
     return out
 
 
+def _placeholders(template: Template) -> Set[str]:
+    """The names a template substitutes, `$x` and `${x}` alike -- what Template.get_identifiers
+    answers from 3.11 on; the floor is 3.9, so this walks the same pattern it does."""
+    names: Set[str] = set()
+    for m in template.pattern.finditer(template.template):
+        name = m.group("named") or m.group("braced")
+        if name:
+            names.add(name)
+    return names
+
+
 def _brief(plugin: Path, role: str, **values: str) -> str:
-    """Render the shared session/driver dispatch brief. Missing fields fail loudly: a template
-    edit must not leave an unfilled placeholder in a paid dispatch. Substitutions are one-pass,
-    so dollar signs in repository evidence or paths are preserved literally."""
+    """Render the shared session/driver dispatch brief. The brief is prose anyone edits, and it is
+    rendered one dispatch in, so everything that would ship a wrong prompt is a BriefError rather
+    than a traceback after the phase flipped: a file that is not there (an install older than the
+    briefs), a placeholder the driver does not fill, a bare `$` in the prose (`$$` is the literal
+    dollar), and a field the driver supplies that the template no longer uses -- a deleted
+    `${digest}` paragraph would otherwise send every worker out without the standing constraints,
+    and nothing would say so. Substitutions are one-pass, so dollar signs in repository evidence
+    or paths are preserved literally."""
     path = plugin / "skills" / "mission-run" / "references" / (role + "-brief.md")
-    return Template(files.read_text(path)).substitute(values).rstrip("\n")
+    fields = BRIEF_FIELDS.get(role)
+    if fields is not None and set(values) != set(fields):
+        # the driver's own drift, not the brief's: preflight renders with the constant and the
+        # dispatch with the caller's keywords, and a run must not pass the one and fail the other
+        raise BriefError("the driver renders the %s brief with %s but %s_FIELDS names %s: prompts.py drifted, "
+                         "not %s" % (role, ", ".join(sorted(values)), role.upper(), ", ".join(sorted(fields)), path.name))
+    try:
+        text = files.read_text(path)
+    except OSError as e:
+        raise BriefError("%s: %s -- the %s brief ships with the plugin under skills/mission-run/references/ "
+                         "(since 0.3.0; an older install has none)" % (path, e.strerror or e, role))
+    template = Template(text)
+    try:
+        rendered = template.substitute(values)
+    except KeyError as e:
+        raise BriefError("%s names ${%s}, which the driver does not supply; it fills %s" % (
+            path, e.args[0], ", ".join(sorted(values))))
+    except ValueError as e:
+        raise BriefError("%s: %s -- `$$` is the literal dollar in template prose" % (path, e))
+    unused = sorted(set(values) - _placeholders(template))
+    if unused:
+        raise BriefError("%s no longer uses ${%s}: the driver supplies it, and a brief that dropped it would "
+                         "ship every dispatch without it" % (path, "}, ${".join(unused)))
+    return rendered.rstrip("\n")
+
+
+def check_briefs(plugin: Path) -> List[str]:
+    """Preflight's question about the shared briefs: does each render with the fields the driver
+    fills? Stand-in values, no mission needed -- the answer is about the template, and one that
+    fails here would otherwise fail one dispatch in, after the phase flipped to implementing and
+    with no `stop` in the journal. One problem string per brief that cannot render."""
+    problems: List[str] = []
+    for role, fields in BRIEF_FIELDS.items():
+        try:
+            _brief(plugin, role, **{name: "<%s>" % name for name in fields})
+        except BriefError as e:
+            problems.append(str(e))
+    return problems
 
 
 def worker_prompt(mission_dir: Path, feature: files.Feature, digest_text: str,

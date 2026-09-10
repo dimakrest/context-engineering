@@ -22,7 +22,7 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-from . import __version__, files, journal, prep, prompts, steps, validate
+from . import PR_PHASE_ISSUE, __version__, files, journal, prep, prompts, steps, validate
 from .adapters import NAMES, make_adapter
 from .steps import EXIT_CODES, Context, stop   # re-exported: cli reads EXIT_CODES from here
 
@@ -131,6 +131,10 @@ def preflight(mission_dir: Path, plugin: Path, harness: Optional[str] = None,
             prompts.digest(mission_dir, plugin)
         except prompts.DigestError as e:
             problems.append("mission-state.sh: %s" % str(e).splitlines()[0])
+    # the shared briefs are the plugin's files, not the mission's, and cost nothing to render with
+    # stand-in values; one that cannot render would otherwise fail one dispatch in -- after the
+    # phase flipped to implementing, with a traceback and no `stop` in the journal
+    problems.extend(prompts.check_briefs(plugin))
 
     if cfg is not None:
         checkout = files.checkout_of(mission_dir, cfg)
@@ -268,7 +272,7 @@ def _run_locked(ctx: Context, args) -> int:
                 # ahead of the closed-milestone check: a `done` stop puts the phase back to
                 # validating, and an operator who moved it to pr for the terminal steps keeps it
                 return stop(ctx, "gate-blocked", detail="phase pr is not driven by this version",
-                            needs="terminal steps via /missions:mission-run (driver pr phase: #30)")
+                            needs="terminal steps via /missions:mission-run (driver pr phase: #%d)" % PR_PHASE_ISSUE)
             if validate.closed(mdir, milestone):
                 # a closed milestone is never re-entered: a finished mission re-run is a no-op,
                 # --milestone stops once its milestone closes, and a state.md that names a closed
@@ -418,6 +422,13 @@ def _run_locked(ctx: Context, args) -> int:
                     needs="fix the mission files (the state.md digest must fit 2 KB)")
     except files.MissionFileError as e:
         return stop(ctx, "error", detail=str(e), needs="look at the mission files")
+    except prompts.BriefError as e:
+        # a brief edited after preflight rendered it, or a path around preflight: still a typed
+        # stop, so the journal has its `stop` and state.md its resume_next, and the feature whose
+        # prompt failed is still pending -- nothing was dispatched
+        return stop(ctx, "error", detail=str(e),
+                    needs="fix the brief under skills/mission-run/references/ (missions preflight renders both), "
+                          "then missions run again")
 
 
 # ---------------------------------------------------------------- dry run

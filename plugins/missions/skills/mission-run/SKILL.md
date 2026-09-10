@@ -40,7 +40,7 @@ Do not work from memory, and do not re-read the mission files wholesale either �
 never once performed the full reload it was told to (it was 146 K tokens), and survived on 558-byte
 id-scoped reads instead. Make that the rule:
 
-1. **The digest** — `bash "${MISSIONS_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>`: phase,
+1. **The digest** — `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>`: phase,
    milestone, spend, the locks, open issues, the standing constraints, and `resume_next`. Under 2 KB.
    After a compaction the SessionStart hook has already printed it; act on `resume_next`.
 2. **Id-scoped reads** for what the next action needs: `grep -n '^| A007' contract.md`,
@@ -53,9 +53,9 @@ If `state.md` and the git log disagree about what's committed, the git log wins 
 to it and note the correction in the journal. If you can't tell where you are, run `/missions:mission-resume`.
 
 **Every state update rewrites `resume_next`** (one line: the next action and why) and, when spend
-changed, `spend_usd` — from `bash "${MISSIONS_PLUGIN_ROOT}/scripts/mission-spend.sh" <this session's
+changed, `spend_usd` — from `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-spend.sh" <this session's
 transcript> .missions/<slug>/journal.jsonl`, never from an estimate. Keep `state.md` under its cap:
-when a milestone closes, `bash "${MISSIONS_PLUGIN_ROOT}/scripts/mission-archive.sh" .missions/<slug> M<n>`.
+when a milestone closes, `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-archive.sh" .missions/<slug> M<n>`.
 
 ## The loop
 
@@ -88,10 +88,19 @@ an agent's `tools:` on the call. The hooks journal whichever model actually ran.
 Read [the shared worker brief](references/worker-brief.md) and use its text as the Agent
 `prompt`, with `subagent_type: mission-worker` and the seat above. Substitute its `${...}`
 placeholders with the mission `slug`, `feature_id`, `title`, resolved `plugin_root`, and the
-feature's `procedures`, `files` and `out_of_scope`. Fill `digest` with the output of
-`scripts/mission-state.sh`; fill `assertions` with the feature's verbatim contract assertions,
-proof classes and budgets; fill `design` with its verbatim guidelines and exemplars. Indent
-these three multiline fields by two spaces. Never pass an unfilled placeholder.
+feature's `procedures`, `files` and `out_of_scope`. The three multiline fields take the
+driver's row shapes, one row per line, indented two spaces: `digest` is the output of
+`bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>`; `assertions` is
+one row per contract assertion — id, text, class, budget — with contract.md's table pipes and
+its Feature(s), Status and Evidence columns stripped; `design` is the feature's `| D0nn |`
+rows verbatim from design.md's table, then its `### F00n` section text. One row of each:
+
+```
+  A003 — <text>  [structural]  proof: min: named test; max: 1 pinning feature
+  | D001 | <guideline> | `path/file.py:40` | F001 |
+```
+
+Never pass an unfilled placeholder.
 
 This reference is also the driver's worker template: edit the brief there once for both
 runtimes. Its placeholder syntax is Python `string.Template`; use `$$` for a literal dollar
@@ -117,7 +126,7 @@ Then:
   `agent_return` with the measured duration — do not write those by hand.
 - Materialise the reviewer's patch now, while the range is fresh — the whole range, so the patch
   shows everything the run changed, the out-of-Files paths the handoff declared included:
-  `bash "${MISSIONS_PLUGIN_ROOT}/scripts/mission-patch.sh" .missions/<slug> F00n <base> <head>`
+  `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-patch.sh" .missions/<slug> F00n <base> <head>`
 - Update `features.md`: status, and `- **Range:** <base>..<head>`.
 - Update `contract.md` assertions to `claimed` — **never** `proven`.
 - Copy every issue from the handoff into `state.md` under open issues; rewrite `resume_next`.
@@ -155,8 +164,10 @@ Read [the shared reviewer brief](references/reviewer-brief.md) and use its text 
 `prompt`, with `subagent_type: mission-reviewer`. Pass `mission.md`'s `Reviewer seat` as
 `model:` when present; otherwise omit it. Substitute `slug`, `feature_id`, `title`,
 `patch_path`, `base` and `head` from the materialised feature patch. Fill `assertions` with
-the feature's verbatim assertions and proof budgets, and `design` with its pre-code
-guidelines and exemplars, both indented by two spaces. Set `intelligence` from the state's
+the feature's verbatim assertions and proof budgets, in the worker's row shape without the
+class — `  A003 — <text>  proof budget: min: named test; max: 1 pinning feature` — and
+`design` with its pre-code guidelines and exemplars in the worker's shape, both indented by
+two spaces. Set `intelligence` from the state's
 codebase-intelligence line, or `none`. Use the same placeholder rules as the worker brief.
 The driver reads this reference too; keep dispatch wording in the reference.
 
@@ -181,7 +192,7 @@ patch — and never a silent rewrite of the guideline to match the code.
 | Same assertion failed twice | **Classify before halting.** Root cause is one of: contract ambiguity / implementation defect / inadequate evidence / bad brief / environment. Only the first — or a fix that would weaken an assertion or change user-visible scope — is a BLOCK halt. The rest are repaired (repair-round cap permitting) under a journaled `decision`. The last mission escalated an incomplete *brief* to a human contract decision, and it helped end the mission. |
 | Contract turned out to be wrong | **BLOCK halt and ask the user.** Never silently rewrite an assertion to match the code. |
 
-**Convergence gate** — `bash "${MISSIONS_PLUGIN_ROOT}/scripts/mission-converge.sh" .missions/<slug> M<n>`
+**Convergence gate** — `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-converge.sh" .missions/<slug> M<n>`
 before advancing. It fails when cumulative follow-ups exceed features, when the per-milestone ratio
 has risen two milestones running, or when the milestone introduced `interface`/`conversational`
 assertions and proved none. A failure is a BLOCK halt with a re-plan — **never a cap raise**;
@@ -243,7 +254,7 @@ When every assertion is `proven` and `followups.md` is empty or explicitly accep
 5. Final report: assertions proven, defects caught by blind review that the workers' own tests missed
    (this number is the honest measure of whether the workflow earned its keep), spend vs cap
    (measured — `mission-spend.sh`), everything in `followups.md`, the PR-review verdict, and the
-   five acceptance metrics: `bash "${MISSIONS_PLUGIN_ROOT}/scripts/journal-metrics.sh" .missions/<slug>`.
+   five acceptance metrics: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/journal-metrics.sh" .missions/<slug>`.
 6. Set `phase: done`. The hooks go inert for this mission.
 
 Then stop. A human merges.

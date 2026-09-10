@@ -4,7 +4,9 @@
 Uses only app-server initialize and skills/list: no model calls or paid dispatches.
 Does not install plugins or change Codex configuration. Run from any directory.
 """
+from fnmatch import fnmatch
 import json
+import os
 from pathlib import Path
 import queue
 import subprocess
@@ -15,82 +17,118 @@ import time
 
 PLUGIN = Path(__file__).resolve().parent.parent
 PLUGIN_ID = "missions@dimakrest-context-engineering"
+# What an installation never carries: the ignore set tests/driver-selftest.py's
+# PackagingTests.copy_plugin passes to shutil.copytree. Keep the two in step.
+INSTALL_IGNORE = ("tests", "__pycache__", "*.pyc")
+
+
+def installed_files():
+    """Every source file an installation carries, relative to the plugin root, in a stable order.
+    Everything else -- bin/, scripts/, driver/, hooks/, docs/, the manifests -- is what the
+    runtime guide tells a Codex session to execute, so a stale copy of any of it is a failure."""
+    def ignored(name):
+        return any(fnmatch(name, pattern) for pattern in INSTALL_IGNORE)
+    for directory, subdirs, names in os.walk(PLUGIN):
+        subdirs[:] = sorted(d for d in subdirs if not ignored(d))
+        for name in sorted(names):
+            if not ignored(name):
+                yield (Path(directory) / name).relative_to(PLUGIN)
+
+
+class AppServer:
+    """The JSON-RPC stream over a `codex app-server --stdio` process's pipes."""
+
+    def __init__(self, process):
+        self.process = process
+        self.messages = queue.Queue()
+        self.unparsed = []  # non-JSON stdout lines, kept for the failure message
+        self.seen = []      # server requests and notifications, kept for the failure message
+        threading.Thread(target=self.read_messages, daemon=True).start()
+
+    def read_messages(self):
+        try:
+            for line in self.process.stdout:
+                try:
+                    message = json.loads(line)
+                except json.JSONDecodeError:
+                    message = None
+                if isinstance(message, dict):
+                    self.messages.put(message)
+                else:
+                    self.unparsed.append(line.rstrip("\n"))
+        finally:
+            self.messages.put(None)
+
+    def request(self, request_id, method, params):
+        self.process.stdin.write(json.dumps({"id": request_id, "method": method, "params": params}) + "\n")
+        self.process.stdin.flush()
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                message = self.messages.get(timeout=max(0, deadline - time.monotonic()))
+            except queue.Empty:
+                raise RuntimeError("Codex app-server timed out during %s%s" % (method, self.diagnostics())) from None
+            if message is None:
+                raise RuntimeError("Codex app-server exited during %s%s" % (method, self.diagnostics()))
+            if "method" in message:
+                # A server-to-client request or a notification, whatever id it carries: not our reply.
+                self.seen.append(message["method"])
+            elif message.get("id") == request_id and ("result" in message or "error" in message):
+                if "error" in message:
+                    raise RuntimeError(str(message["error"]))
+                return message["result"]
+
+    def diagnostics(self):
+        notes = []
+        if self.seen:
+            notes.append("server messages seen: %s" % ", ".join(self.seen))
+        if self.unparsed:
+            notes.append("%d non-JSON stdout line(s), last: %r" % (len(self.unparsed), self.unparsed[-1]))
+        return " (%s)" % "; ".join(notes) if notes else ""
 
 
 def main():
-    messages = queue.Queue()
     with tempfile.TemporaryDirectory(prefix="missions-discovery-") as cwd:
         process = subprocess.Popen(
             ["codex", "app-server", "--stdio"], cwd=cwd,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             text=True,
         )
-
-        def read_messages():
-            try:
-                for line in process.stdout:
-                    messages.put(json.loads(line))
-            finally:
-                messages.put(None)
-
-        threading.Thread(target=read_messages, daemon=True).start()
-
-        def request(request_id, method, params):
-            process.stdin.write(json.dumps({"id": request_id, "method": method, "params": params}) + "\n")
-            process.stdin.flush()
-            deadline = time.monotonic() + 30
-            while True:
-                try:
-                    message = messages.get(timeout=max(0, deadline - time.monotonic()))
-                except queue.Empty:
-                    raise RuntimeError("Codex app-server timed out during %s" % method) from None
-                if message is None:
-                    raise RuntimeError("Codex app-server exited during %s" % method)
-                if message.get("id") == request_id:
-                    if "error" in message:
-                        raise RuntimeError(str(message["error"]))
-                    return message["result"]
-
+        server = AppServer(process)
         try:
-            request(1, "initialize", {
+            server.request(1, "initialize", {
                 "clientInfo": {"name": "missions-discovery-test", "version": "1"},
                 "capabilities": {"experimentalApi": True},
             })
             process.stdin.write('{"method":"initialized"}\n')
             process.stdin.flush()
-            result = request(2, "skills/list", {"cwds": [cwd], "forceReload": True})
+            result = server.request(2, "skills/list", {"cwds": [cwd], "forceReload": True})
             discovered = [skill for entry in result["data"] for skill in entry["skills"]
                           if skill.get("pluginId") == PLUGIN_ID]
-            expected = {"missions:" + path.parent.name: path
-                        for path in (PLUGIN / "skills").glob("*/SKILL.md")}
-            if {skill["name"] for skill in discovered} != set(expected):
+            expected = {"missions:" + path.parent.name for path in (PLUGIN / "skills").glob("*/SKILL.md")}
+            if {skill["name"] for skill in discovered} != expected:
                 raise RuntimeError("Installed missions skills differ from source; install %s first" % PLUGIN_ID)
             installed_roots = set()
             for skill in discovered:
                 if not skill["enabled"]:
                     raise RuntimeError("Skill is disabled: %s" % skill["name"])
-                installed = Path(skill["path"])
-                canonical = expected[skill["name"]]
-                for resource in canonical.parent.rglob("*"):
-                    if resource.is_file():
-                        bundled = installed.parent / resource.relative_to(canonical.parent)
-                        if not bundled.is_file() or bundled.read_bytes() != resource.read_bytes():
-                            raise RuntimeError("Installed skill resources are stale; reinstall %s" % PLUGIN_ID)
+                installed = Path(skill["path"]).resolve()
                 root = installed.parent.parent.parent
+                if installed.name != "SKILL.md" or "missions:" + installed.parent.name != skill["name"] \
+                        or root == PLUGIN or PLUGIN in root.parents:
+                    raise RuntimeError("%s was discovered at an unexpected path: %s" % (skill["name"], installed))
                 installed_roots.add(root)
-                if (root / "docs/RUNTIMES.md").read_bytes() != (PLUGIN / "docs/RUNTIMES.md").read_bytes():
-                    raise RuntimeError("Installed runtime guide is stale; reinstall %s" % PLUGIN_ID)
+            for root in sorted(installed_roots):
+                for relative in installed_files():
+                    bundled = root / relative
+                    if not bundled.is_file():
+                        raise RuntimeError("Installed tree lacks %s; reinstall %s" % (relative, PLUGIN_ID))
+                    if bundled.read_bytes() != (PLUGIN / relative).read_bytes():
+                        raise RuntimeError("Installed %s is stale; reinstall %s" % (relative, PLUGIN_ID))
                 if (root / "hooks/hooks.json").exists():
                     raise RuntimeError("Codex would auto-discover Claude hooks")
-            for root in installed_roots:
-                for directory in ("agents", "templates"):
-                    for resource in (PLUGIN / directory).rglob("*"):
-                        if resource.is_file():
-                            bundled = root / resource.relative_to(PLUGIN)
-                            if not bundled.is_file() or bundled.read_bytes() != resource.read_bytes():
-                                raise RuntimeError("Installed shared instructions are stale; reinstall %s" % PLUGIN_ID)
             print("PASS: Codex discovered %d enabled missions skills outside the source checkout; "
-                  "installed instructions match source." % len(discovered))
+                  "the whole installed tree matches source." % len(discovered))
         finally:
             process.terminate()
             try:

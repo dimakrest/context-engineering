@@ -143,7 +143,7 @@ outside it regardless; `/missions:mission-crosscheck` says so.
 Run it verbatim. It exits non-zero if the files disagree with each other:
 
 ```bash
-bash ${MISSIONS_PLUGIN_ROOT}/scripts/check.sh "$MISSION"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/check.sh "$MISSION"
 ```
 
 It checks coverage in **both directions** — contract → features and features → contract — plus each

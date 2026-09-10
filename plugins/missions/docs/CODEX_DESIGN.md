@@ -42,9 +42,10 @@ skills reference sibling docs, agents and driver code. The Vercel installer
 [copies individual skill directories](https://github.com/vercel-labs/skills/blob/80feb48868972d518436f26711509bc78595b5cb/src/installer.ts#L337-L361),
 which does not establish that those sibling resources will be installed.
 
-Bundled paths must resolve from the loaded skill's location, not the user's working
-directory or an assumed `CLAUDE_PLUGIN_ROOT` environment variable. Compound
-Engineering documents this recurring portability failure in its
+The shared text spells the plugin root `${CLAUDE_PLUGIN_ROOT}`; Claude Code substitutes
+it in skill content, Codex does not. In Codex, bundled paths must therefore resolve from
+the loaded skill's location, not from the user's working directory or from an assumed
+environment variable. Compound Engineering documents this recurring portability failure in its
 [path-resolution guidance](https://github.com/EveryInc/compound-engineering-plugin/blob/16c2b9721e5cea3bdc64ba50ffcff72d912fd948/AGENTS.md#L310-L336).
 Marketplace installs can also cache a snapshot; they should not be described as
 live links to an edited checkout ([development precedent](https://github.com/EveryInc/compound-engineering-plugin/blob/16c2b9721e5cea3bdc64ba50ffcff72d912fd948/AGENTS.md#L20-L31)).

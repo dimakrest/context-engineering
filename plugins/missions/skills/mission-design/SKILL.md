@@ -53,7 +53,7 @@ anti-patterns so no worker picks it independently.
 
 ## Step 2 — write design.md
 
-Schema: `${MISSIONS_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md`. Guidelines carry ids `D001..`, are never
+Schema: `${CLAUDE_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md`. Guidelines carry ids `D001..`, are never
 renumbered, and each must be **checkable by reading a diff** and anchored to a `file:line` exemplar.
 Per-feature sections list which guidelines and exemplars apply — the loop copies from there,
 verbatim, into every worker and reviewer dispatch.

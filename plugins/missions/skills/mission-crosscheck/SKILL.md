@@ -136,7 +136,7 @@ Snapshot first, so Step 4 can prove nothing was written — the reviewer's sandb
 `workspace-write` regardless of what the prompt says:
 
 ```bash
-bash ${MISSIONS_PLUGIN_ROOT}/skills/mission-crosscheck/snapshot.sh "$MISSION" "$SNAP"
+bash ${CLAUDE_PLUGIN_ROOT}/skills/mission-crosscheck/snapshot.sh "$MISSION" "$SNAP"
 ```
 
 That script is the **only** definition of what counts as a mission file; Step 4 recomputes through
@@ -161,7 +161,7 @@ Check progress by file size and by tailing the transcript.
 off" — the whole problem is that a contaminated report looks right.
 
 ```bash
-bash ${MISSIONS_PLUGIN_ROOT}/skills/mission-crosscheck/audit.sh "$PKG/pass1.raw.md" "$MISSION" "$SNAP"
+bash ${CLAUDE_PLUGIN_ROOT}/skills/mission-crosscheck/audit.sh "$PKG/pass1.raw.md" "$MISSION" "$SNAP"
 ```
 
 It fails on any of: a read of or citation into a sealed path, a change to `git status`, a change to

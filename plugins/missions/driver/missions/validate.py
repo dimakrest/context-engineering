@@ -32,7 +32,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-from . import files, journal, judgment, prompts, steps, verdicts
+from . import PR_PHASE_ISSUE, files, journal, judgment, prompts, steps, verdicts
 from .steps import Context, stop
 
 TAGGED = ("interface", "conversational")     # the classes only a behavior run can prove
@@ -142,12 +142,14 @@ def closed(mission_dir: Path, milestone: str) -> bool:
 def done_stop(ctx: Context) -> int:
     """The `done` stop: the last milestone's close, and a finished mission's re-run, which is a
     no-op. The phase is left at `validating` for the operator who runs the terminal steps (the
-    pr phase is #30); resume_next spells the issue out, since state.md reads ` #` as a comment."""
+    pr phase is PR_PHASE_ISSUE); resume_next spells the issue out, since state.md reads ` #` as a
+    comment."""
     total = len(files.milestones(ctx.mission_dir))
     return stop(ctx, "done", detail="all %d milestone(s) validated; every assertion proven" % total,
-                needs="terminal steps 1-6 of /missions:mission-run (the driver's pr phase is #30)", phase="validating",
+                needs="terminal steps 1-6 of /missions:mission-run (the driver's pr phase is #%d)" % PR_PHASE_ISSUE,
+                phase="validating",
                 resume_next="terminal steps 1-6 of /missions:mission-run: all %d milestone(s) validated, every assertion "
-                            "proven (the driver's pr phase is issue 10)" % total)
+                            "proven (the driver's pr phase is issue %d)" % (total, PR_PHASE_ISSUE))
 
 
 def verdict_summary(mission_dir: Path, milestone: str, assertions: List[files.Assertion]) -> str:

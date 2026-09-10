@@ -3,7 +3,9 @@
 
 run.sh calls this before every run; edit the cases here, not on disk. usage: gen-cases.py [<out-dir>]"""
 import json, os, pathlib, shutil, sys, textwrap
-from string import Template
+PLUGIN = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PLUGIN / "driver"))  # as tests/driver-selftest.py does
+from missions import prompts  # noqa: E402
 _dumps=json.dumps
 json.dumps=lambda o, **k: _dumps(o, separators=(",",":"), **k)
 
@@ -342,11 +344,11 @@ case(B, "reviewer-handoff-leak-blocked", "rc=2\nstderr~=handoff content", stdin=
 case(B, "behavior-diff-blocked", "rc=2\nstderr~=contains a diff", stdin=agent_payload("mission-validator-behavior", "Prove A003.\n```diff\n+x\n```"), missions={"demo": demo()})
 case(B, "namespaced-reviewer-still-checked", "rc=2\nstderr~=names no patch file", stdin=agent_payload("missions:mission-reviewer", "Mission: demo. Feature: F001. Review A001."), missions={"demo": demo()})
 # Exercise the authored reviewer brief, not a second copy: an earlier wording ("do not run git
-# log, git show or git diff yourself") was blocked by this very hook. Rendering the shared
-# reference makes every future wording change pass through the same contamination guard.
-REVIEWER_BRIEF = pathlib.Path(__file__).resolve().parent.parent / "skills/mission-run/references/reviewer-brief.md"
-REVIEWER_TEMPLATE = Template(REVIEWER_BRIEF.read_text(encoding="utf-8")).substitute(
-    slug="demo", feature_id="F001", title="x",
+# log, git show or git diff yourself") was blocked by this very hook. The case renders through
+# the driver's own renderer, so hook cases and driver dispatches cannot drift: every future
+# wording change passes through the same contamination guard the driver's dispatches face.
+REVIEWER_TEMPLATE = prompts._brief(
+    PLUGIN, "reviewer", slug="demo", feature_id="F001", title="x",
     assertions="  A001 — text  proof budget: min named test; max 1",
     design="  D001 — text — exemplar `a.py:4`",
     patch_path=".missions/demo/patches/F001.patch", base="abc", head="def",

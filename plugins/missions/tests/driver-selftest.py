@@ -32,6 +32,24 @@ from missions.outcome import Grade, Outcome, RunRequest, classify  # noqa: E402
 BASE = HERE / "traces" / "_base" / "mission"
 STUBS = HERE / "traces" / "_base" / "stub"
 
+# What an installation never carries. tests/codex-plugin-smoke.py mirrors this tuple under the
+# same name; keep the two in step.
+INSTALL_IGNORE = ("tests", "__pycache__", "*.pyc")
+
+
+def copy_plugin(target):
+    """Install the plugin the way a host does: the whole tree minus INSTALL_IGNORE, symlinks kept."""
+    target = Path(target)
+    shutil.copytree(PLUGIN, target, symlinks=True, ignore=shutil.ignore_patterns(*INSTALL_IGNORE))
+    return target
+
+
+def clean_env(**extra):
+    """A child environment carrying only this session's PATH and HOME (when set), plus `extra`."""
+    env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
+    env.update(extra)
+    return env
+
 
 class PackagingTests(unittest.TestCase):
     """A plugin installation copies only plugins/missions. Both hosts must discover the same
@@ -51,11 +69,9 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(Path(path), Path("skills"))
         return (plugin / path).resolve()
 
-    def copy_plugin(self, parent):
-        target = Path(parent) / "installed missions"
-        shutil.copytree(PLUGIN, target, symlinks=True,
-                        ignore=shutil.ignore_patterns("tests", "__pycache__", "*.pyc"))
-        return target
+    @staticmethod
+    def copy_plugin(parent):
+        return copy_plugin(Path(parent) / "installed missions")   # the module helper, at a fixed name
 
     def manifest_version(self, path, plugin=None):
         if not path.exists():
@@ -101,35 +117,35 @@ class PackagingTests(unittest.TestCase):
                                  PLUGIN / "docs" / "RUNTIMES.md")
                 self.assertTrue((path.parent / "../../docs/RUNTIMES.md").is_file())
 
+    # The events Claude Code's hooks reference documents. A registration under any other name is
+    # never fired; extend this when a hook is wired to a new one.
+    CLAUDE_HOOK_EVENTS = {"PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "Notification",
+                          "UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop", "PreCompact",
+                          "SessionStart", "SessionEnd"}
+    # hooks/*.sh that are not session hooks: the library every hook sources, and the handoff schema
+    # check the grader runs on a worker's handoff (driver/missions/grade.py).
+    NOT_SESSION_HOOKS = {"mission-lib.sh", "mission-handoff-schema.sh"}
+
     def test_claude_hook_wiring_is_explicit_and_codex_has_no_default_hooks(self):
         hook_path = self.manifest("claude")["hooks"]
         self.assertEqual(hook_path, "./hooks/claude.json")
         hooks = json.loads((PLUGIN / hook_path).read_text())["hooks"]
-        expected = {
-            ("PreToolUse", "Agent"): ["mission-serial-guard.sh", "mission-blind-review.sh"],
-            ("PreToolUse", "Bash"): ["mission-commit-discipline.sh", "mission-crosscheck-seal.sh",
-                                     "mission-shell-guard.sh"],
-            ("PreToolUse", "Write|Edit"): ["mission-contract-first.sh"],
-            ("PostToolUse", "Agent"): ["mission-journal.sh", "mission-release.sh"],
-            ("PostToolUseFailure", "Agent"): ["mission-release.sh"],
-            ("SubagentStop", None): ["mission-journal.sh", "mission-release.sh"],
-            ("SessionStart", "startup|resume|compact"): ["mission-rehydrate.sh"],
-        }
-        actual = {}
+        self.assertLessEqual(set(hooks), self.CLAUDE_HOOK_EVENTS)
+        keys, registered = [], set()
         for event, entries in hooks.items():
             for entry in entries:
-                commands = []
+                keys.append((event, entry.get("matcher")))
                 for hook in entry["hooks"]:
                     self.assertEqual(hook["type"], "command")
                     match = re.fullmatch(r'bash "\$\{CLAUDE_PLUGIN_ROOT\}/hooks/([^/]+)"', hook["command"])
                     self.assertIsNotNone(match, hook["command"])
-                    self.assertTrue((PLUGIN / "hooks" / match.group(1)).is_file())
+                    self.assertTrue((PLUGIN / "hooks" / match.group(1)).is_file(), hook["command"])
                     self.assertGreater(hook["timeout"], 0)
-                    commands.append(match.group(1))
-                key = (event, entry.get("matcher"))
-                self.assertNotIn(key, actual)
-                actual[key] = commands
-        self.assertEqual(actual, expected)
+                    registered.add(match.group(1))
+        self.assertEqual(len(keys), len(set(keys)), "an (event, matcher) pair is registered twice: %r" % keys)
+        # every session hook on disk is wired, and nothing else is
+        on_disk = {path.name for path in (PLUGIN / "hooks").glob("*.sh")} - self.NOT_SESSION_HOOKS
+        self.assertEqual(registered, on_disk)
         self.assertNotIn("hooks", self.manifest("codex"))
         self.assertFalse((PLUGIN / "hooks" / "hooks.json").exists(),
                          "Codex auto-discovers hooks/hooks.json; Claude payloads must stay host-specific")
@@ -139,7 +155,7 @@ class PackagingTests(unittest.TestCase):
             installed = self.copy_plugin(tmp)
             for path in installed.rglob("*"):
                 if path.is_symlink():
-                    self.assertIn(installed, path.resolve().parents, "external symlink: %s" % path)
+                    self.assertIn(installed.resolve(), path.resolve().parents, "external symlink: %s" % path)
             self.assertEqual(self.skill_root("claude", installed), self.skill_root("codex", installed))
             for asset in ("docs/RUNTIMES.md", "templates/MISSIONS_TEMPLATES.md",
                           "skills/mission-prd/references/prd-template.md",
@@ -148,7 +164,7 @@ class PackagingTests(unittest.TestCase):
                           "skills/mission-crosscheck/audit.sh", "skills/mission-crosscheck/snapshot.sh",
                           "scripts/mission-state.sh", "scripts/check.sh", "hooks/claude.json"):
                 self.assertTrue((installed / asset).is_file(), asset)
-            env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
+            env = clean_env()
             launch = subprocess.run(["bash", str(installed / "bin" / "missions"), "--help"],
                                     cwd=tmp, env=env, capture_output=True, text=True)
             self.assertEqual(launch.returncode, 0, launch.stderr)
@@ -208,6 +224,88 @@ class PackagingTests(unittest.TestCase):
                                                            mission / "patches" / "F001.patch", "a" * 40,
                                                            "b" * 40, "none", installed)
                     self.assertIn(marker.replace("$$", "$"), rendered)
+
+    def test_a_dispatch_brief_that_cannot_render_is_refused_by_name(self):
+        """The briefs are prose anyone edits, and they are rendered one dispatch in. A bare `$`,
+        a placeholder the driver does not fill, a deleted `${digest}` paragraph, or an install
+        with no references/ at all must be one typed BriefError naming the cause -- and a
+        preflight problem -- not a traceback after the phase flipped to implementing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            installed = self.copy_plugin(tmp)
+            mission = Path(tmp) / ".missions" / "demo"
+            shutil.copytree(BASE, mission)
+            feature = files.read_features(mission)[0]
+            assertions = [a for a in files.read_contract(mission) if a.id in feature.assertions]
+            design = files.design_section(mission, feature.id)
+            refs = installed / "skills" / "mission-run" / "references"
+            worker, reviewer = refs / "worker-brief.md", refs / "reviewer-brief.md"
+            shipped = {p: p.read_text() for p in (worker, reviewer)}
+
+            def render(role):
+                if role == "worker":
+                    return prompts.worker_prompt(mission, feature, "digest", assertions, design, installed)
+                return prompts.reviewer_prompt(mission, feature, assertions, design, mission / "patches" / "F001.patch",
+                                               "a" * 40, "b" * 40, "none", installed)
+
+            self.assertEqual(prompts.check_briefs(installed), [])
+            for role in ("worker", "reviewer"):
+                self.assertIn("Mission: demo. Feature: F001", render(role))
+            # a bare `$`: Template's own message, and the way out
+            worker.write_text(shipped[worker] + "\nThe fix costs $5.\n")
+            with self.assertRaises(prompts.BriefError) as cm:
+                render("worker")
+            self.assertIn(str(worker) + ": Invalid placeholder", str(cm.exception))
+            self.assertIn("`$$` is the literal dollar", str(cm.exception))
+            self.assertEqual(prompts.check_briefs(installed), [str(cm.exception)])
+            # a deleted `${digest}` paragraph: every worker would go out without the standing constraints
+            text, count = re.subn(r"(?m)^\$\{digest\}\n", "", shipped[worker])
+            self.assertEqual(count, 1)
+            worker.write_text(text)
+            with self.assertRaises(prompts.BriefError) as cm:
+                render("worker")
+            self.assertIn(str(worker) + " no longer uses ${digest}", str(cm.exception))
+            self.assertEqual(len(prompts.check_briefs(installed)), 1)
+            # a placeholder the driver does not fill
+            reviewer.write_text(shipped[reviewer] + "\nBranch: ${nonsense}\n")
+            with self.assertRaises(prompts.BriefError) as cm:
+                render("reviewer")
+            self.assertIn(str(reviewer) + " names ${nonsense}, which the driver does not supply", str(cm.exception))
+            self.assertIn("${digest}", prompts.check_briefs(installed)[0])       # the worker's, still
+            self.assertIn("${nonsense}", prompts.check_briefs(installed)[1])
+            # the driver's own keyword set is checked against the constant preflight renders with
+            with self.assertRaises(prompts.BriefError) as cm:
+                prompts._brief(installed, "reviewer", **{name: "x" for name in prompts.REVIEWER_FIELDS[:-1]})
+            self.assertIn("REVIEWER_FIELDS names", str(cm.exception))
+            # no references/ at all (an install older than the briefs): the path, not a FileNotFoundError
+            shutil.rmtree(refs)
+            for role in ("worker", "reviewer"):
+                with self.assertRaises(prompts.BriefError) as cm:
+                    render(role)
+                self.assertIn("%s: No such file or directory" % (refs / (role + "-brief.md")), str(cm.exception))
+            self.assertEqual(len(prompts.check_briefs(installed)), 2)
+
+    def test_plugin_root_has_one_spelling_in_shipped_text(self):
+        """`${CLAUDE_PLUGIN_ROOT}` is the plugin root everywhere a session or a harness reads:
+        skills, agents, templates, docs, hook messages. The driver resolves that one spelling
+        (prompts.resolve_plugin_root); MISSIONS_PLUGIN_ROOT is its own env var and lives only in
+        bin/, driver/ and tests/. A second spelling in shipped text is a path no host resolves."""
+        prose = sorted(p for pat in ("skills/**/*.md", "agents/*.md", "templates/*.md", "docs/*.md",
+                                     "docs/*.html", "README.md") for p in PLUGIN.glob(pat))
+        shell = sorted(p for pat in ("hooks/*.sh", "scripts/*.sh") for p in PLUGIN.glob(pat))
+        self.assertGreater(len(prose), 10)
+        self.assertGreater(len(shell), 5)
+        resolved = 0
+        for path in prose + shell:
+            with self.subTest(file=str(path.relative_to(PLUGIN))):
+                text = path.read_text(encoding="utf-8")
+                self.assertNotIn("MISSIONS_PLUGIN_ROOT", text)
+                if path in shell:
+                    continue            # `${CLAUDE_PLUGIN_ROOT:-...}` and the bare name are the shell's own
+                resolved += text.count("${CLAUDE_PLUGIN_ROOT}")
+                bad = [ln.strip() for ln in text.splitlines()
+                       if "CLAUDE_PLUGIN_ROOT" in ln.replace("${CLAUDE_PLUGIN_ROOT}", "")]
+                self.assertEqual(bad, [])
+        self.assertGreater(resolved, 0)                                          # the check has teeth
 
 
 class Fixture(unittest.TestCase):
@@ -879,15 +977,13 @@ class GradeTests(RepoFixture):
         self.m = self.repo / ".missions" / "demo"
         self.commit()
         self.handoff()
-        installed = self.tmp / "installed missions 'quoted' $plugin"
-        shutil.copytree(PLUGIN, installed, symlinks=True,
-                        ignore=shutil.ignore_patterns("tests", "__pycache__", "*.pyc"))
+        installed = copy_plugin(self.tmp / "installed missions 'quoted' $plugin")
         feature = files.read_features(self.m)[0]
         prompt = prompts.worker_prompt(self.m, feature, "digest", files.read_contract(self.m),
                                        files.design_section(self.m, feature.id), installed)
         command = re.search(r"Before you exit, run `([^`]+)`", prompt)
         self.assertIsNotNone(command)
-        env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
+        env = clean_env()
         result = subprocess.run(["bash", "-c", command.group(1)], cwd=self.repo, env=env,
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -1636,8 +1732,8 @@ class GitFilesTests(RepoFixture):
         self.req = RunRequest(role="worker", task="F001#1", prompt_path=self.m / "p.md", cwd=self.repo,
                               env=prep.build_env(self.m, self.m / "runs" / "F001#1", "worker", "F001", "F001#1", "implementing",
                                                  "stub", branch="mission/demo", feature_files=feats[0].files,
-                                                 base_env={"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", "/"),
-                                                           "GH_TOKEN": "x"}),
+                                                 # HOME follows the session, as the fixture's own git calls already do
+                                                 base_env=clean_env(GH_TOKEN="x")),
                               timeout_s=10, budget_usd=None, model=None, effort=None, read_only=False,
                               output_path=self.m / "o.md", run_dir=self.m / "runs" / "F001#1", feature="F001", mission_dir=self.m)
         prep.prepare(self.ctx, self.req)
@@ -1787,7 +1883,8 @@ class GitFilesTests(RepoFixture):
         self.assertEqual(self.req.env["GH_CONFIG_DIR"], str(gh))
         for role in ("worker", "reviewer", "scrutiny"):
             hooks = prep.hook_scripts(role, "t#1", "h")
-            self.assertIn("a worker never merges; the driver merges main in phase pr (#10)", hooks["pre-merge-commit"])
+            self.assertIn("a worker never merges; the driver merges main in phase pr (#%d)" % missions.PR_PHASE_ISSUE,
+                          hooks["pre-merge-commit"])
             self.assertIn("a worker never rebases", hooks["pre-rebase"])
             for name in ("pre-merge-commit", "pre-rebase"):
                 self.assertNotIn("orig=", hooks[name], name)          # a refusal chains nothing
@@ -2192,6 +2289,44 @@ class PreflightPrepTests(RepoFixture):
         files.write_text(self.m / "state.md", text)
         self.assertEqual(loop.preflight(self.m, PLUGIN)[0], [])
 
+    def test_a_brief_that_cannot_render_stops_before_the_phase_flips(self):
+        """The failure as it happened: `$5` in worker-brief.md, and `missions run` flipped planning
+        -> implementing, journaled driver_start, then died with a ValueError traceback -- no `stop`
+        event, no resume_next. Preflight renders both briefs now, so run refuses before the flip;
+        and a brief broken after preflight, or a run that bypassed it, ends in a typed stop that
+        leaves the feature pending."""
+        installed = PackagingTests.copy_plugin(self.tmp)
+        brief = installed / "skills" / "mission-run" / "references" / "worker-brief.md"
+        brief.write_text(brief.read_text() + "\nThe fix costs $5.\n")
+        self.cfg()
+        files.write_state_fields(self.m, phase="planning")
+        out = io.StringIO()
+        saved = os.environ["MISSIONS_PLUGIN_ROOT"]
+        os.environ["MISSIONS_PLUGIN_ROOT"] = str(installed)
+        try:
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(loop.run(self.m, self.ns()), loop.EXIT_CODES["preflight-failed"])
+                self.assertEqual(cli.cmd_preflight(self.ns()), loop.EXIT_CODES["preflight-failed"])
+        finally:
+            os.environ["MISSIONS_PLUGIN_ROOT"] = saved
+        self.assertIn("preflight: %s: Invalid placeholder" % brief, out.getvalue())
+        self.assertIn("problem: %s: Invalid placeholder" % brief, out.getvalue())
+        self.assertEqual(files.read_state(self.m).phase, "planning")
+        self.assertIsNone(journal.last(self.m, "driver_start"))
+        self.assertEqual(journal.last(self.m, "stop")["reason"], "preflight-failed")
+        # past preflight (an edit after it rendered, or a path around it): the loop's own catch
+        files.write_state_fields(self.m, phase="implementing")
+        ctx = make_ctx(self.m, self.repo, cfg=files.read_config(self.m))
+        ctx.plugin = installed
+        self.assertEqual(loop._run_locked(ctx, self.ns()), loop.EXIT_CODES["error"])
+        rec = journal.last(self.m, "stop")
+        self.assertEqual((rec["reason"], rec["run_id"]), ("error", "r1"))
+        self.assertIn("%s: Invalid placeholder" % brief, rec["detail"])
+        self.assertIn("`$$` is the literal dollar", rec["detail"])
+        self.assertTrue(files.read_state(self.m).resume_next.startswith(
+            "error: fix the brief under skills/mission-run/references/"))
+        self.assertEqual(files.read_features(self.m)[0].status, "pending")
+
 
 class CliInitTests(Fixture):
     def test_init_writes_roles_lease_and_env(self):
@@ -2269,6 +2404,9 @@ class RolePromptTests(Fixture):
         self.assertIn("**4. Negotiate.**", v)
         self.assertIn("| Contract turned out to be wrong |", v)
         self.assertNotIn("## Halts", v)
+        # the plugin root is resolved in the quoted rules as in every text the driver hands out
+        self.assertIn(str(PLUGIN) + "/scripts/mission-converge.sh", v)
+        self.assertNotIn("PLUGIN_ROOT}", v)
         h = prompts.skill_section(PLUGIN, "Halts")
         self.assertTrue(h.startswith("## Halts"))
         self.assertIn("**BLOCK**", h)
@@ -2295,16 +2433,13 @@ class RolePromptTests(Fixture):
         patch = self.m / "patches" / "F001.patch"
         text = prompts.reviewer_prompt(self.m, feats[0], rows, files.design_section(self.m, "F001"), patch,
                                        "0123456789abcdef", "fedcba9876543210", files.intelligence_line(self.m), PLUGIN)
-        self.assertTrue(text.startswith(
-            "Mission: demo. Feature: F001 \u2014 feature F001.\nReview the patch for F001 against these assertions. "
-            "You have not seen how or why it was\nwritten and you should not go looking.\n"
-            "  A001 \u2014 Omitting the window equals the whole day  proof budget: min: named test; max: 1 pinning feature\n"
-            "  A002 \u2014 Tenant A never sees tenant B  proof budget: min: mutation (tenancy); max: 1 pinning feature\n"
-            "Design guidelines this feature was bound to (pre-code, from design.md):\n  | D001 |"), text)
-        self.assertIn("\nPatch: %s (base 0123456, head fedcba9) \u2014 read this file; it is your only diff, and you do not "
-                      "run git yourself.\nCodebase intelligence: none \u2014 for every public symbol" % patch, text)
-        self.assertTrue(text.endswith("Write nothing to the repository. Your final message is the review, in the format "
-                                      "your instructions give.\n"))
+        # the shape, not the prose: the wording lives in references/reviewer-brief.md, and
+        # PackagingTests proves an edit there reaches this prompt
+        self.assertEqual(text.split("\n", 1)[0], "Mission: demo. Feature: F001 \u2014 feature F001.")   # hooks read the id here
+        for aid in ("A001", "A002"):
+            self.assertRegex(text, "(?m)^  %s \u2014 .*  proof budget: " % aid)
+        self.assertIn("| D001 |", text)
+        self.assertRegex(text, r"%s \(base 0123456, head fedcba9\)" % re.escape(str(patch)))
         # the 0.2 hook's rules, as regexes and as the hook itself
         for pat in (r"handoffs?/F[0-9]{3}", r"(?m)^#+[ \t]*Handoff", r"Assertions claimed|Procedures followed|Left undone",
                     r"origin/main\.\.\.|git[ \t\n]+(log|show)([ \t\n]|$)|git[ \t\n]+diff[ \t\n]"):

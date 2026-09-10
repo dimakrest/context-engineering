@@ -33,14 +33,14 @@ If more than one mission directory exists and the user didn't name one, list the
    failures rather than hiding them — first-pass failure is expected, and a milestone that passed
    everything first try is worth a second look at whether the assertions bite.
 6. **Cost.** Measured dollars from `session_cost` events (last value per session, summed) and,
-   for a Claude session, `bash "${MISSIONS_PLUGIN_ROOT}/scripts/mission-spend.sh" <transcript> <journal>`;
+   for a Claude session, `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-spend.sh" <transcript> <journal>`;
    agent wall-clock from `agent_return.duration_s`; dispatches used vs the dispatch cap; calls placed
    if the behavior validator ran. Driver `cost` events with `unit: tokens` contain measured
    Codex usage; distinguish those from token estimates. Codex USD spend is unknown. Show a
    Claude subtotal separately in mixed-harness missions; never present it as total mission spend.
    Also print the five acceptance metrics and the seats line (dispatches and agent-hours per
    model — what actually ran, not what `mission.md` planned) from
-   `bash "${MISSIONS_PLUGIN_ROOT}/scripts/journal-metrics.sh" .missions/<slug>`.
+   `bash "${CLAUDE_PLUGIN_ROOT}/scripts/journal-metrics.sh" .missions/<slug>`.
 7. **Follow-ups.** Contents of `followups.md`.
 
 ## Rules

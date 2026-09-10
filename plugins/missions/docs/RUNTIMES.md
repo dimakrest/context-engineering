@@ -6,22 +6,31 @@ live here. This guide changes how a workflow runs, not its contract or evidence 
 
 ## Paths and commands — both hosts
 
-Resolve the installed plugin root from the **loaded skill's absolute path**, two directories
-above its containing directory (`skills/mission-*/SKILL.md` → plugin root). Do not assume
-the target project contains this repository or search for the newest cache version.
-In Claude, `CLAUDE_PLUGIN_ROOT` is also the plugin root.
+The shared text — skills, agents, templates and hook messages — writes the installed plugin
+root as `${CLAUDE_PLUGIN_ROOT}`. That is the one spelling; nothing in the shared text is
+written against another variable name.
 
-Every shell example using `MISSIONS_PLUGIN_ROOT` requires it to be set in that shell call:
+In Claude Code the host substitutes `${CLAUDE_PLUGIN_ROOT}` in a plugin skill's content before
+the session reads it, and exports it to hook processes; it is not set in the session's own
+shell, so a shell call must use the substituted absolute path, never the bare variable.
+
+In Codex nothing substitutes it. Resolve it from the **loaded skill's absolute path**: the
+plugin root is two directories above the `SKILL.md`'s directory (`skills/mission-*/SKILL.md`
+→ plugin root). Do not assume the target project contains this repository, and do not search
+for the newest cache version. Use that absolute path in place of `${CLAUDE_PLUGIN_ROOT}` in
+every shell call and in every reference that shared text or hook output prints — for example
+`Schema: ${CLAUDE_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md` names a file under the
+resolved root.
 
 ```bash
-MISSIONS_PLUGIN_ROOT="/absolute/path/to/the/installed/missions"
-bash "$MISSIONS_PLUGIN_ROOT/scripts/mission-state.sh" .missions/<slug>
+# Codex substitutes the resolved absolute plugin root for "${CLAUDE_PLUGIN_ROOT}".
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>
 ```
 
-Use the resolved absolute path in place of the example. Shell variables may not persist
-between tool calls. Keep the working directory at the **target project's checkout**;
-`.missions/<slug>` belongs there, not in the installed plugin. Read the target project's
-`AGENTS.md`, `CLAUDE.md` and other applicable instructions.
+Shell variables may not persist between tool calls; write the absolute path into each call
+rather than relying on an earlier export. Keep the working directory at the **target
+project's checkout**; `.missions/<slug>` belongs there, not in the installed plugin. Read the
+target project's `AGENTS.md`, `CLAUDE.md` and other applicable instructions.
 
 `/missions:mission-plan` and similar references in the shared text name skills. In Claude,
 invoke them as written. In Codex, select the installed skill with `/skills` or `$missions:mission-plan`
@@ -33,24 +42,25 @@ are the mission slug, mode and constraints supplied with the invocation.
 
 Follow the shared workflow's Agent calls, model seats and review commands. The Claude
 manifest explicitly registers `hooks/claude.json`; that file connects the existing guards
-to Claude events. Bind `MISSIONS_PLUGIN_ROOT` from `CLAUDE_PLUGIN_ROOT` in script calls.
+to Claude events.
 
 ## Codex
 
 ### Planning, design, amendment and research
 
 Follow the shared skills. For `mission-researcher` dispatches, read `agents/mission-researcher.md`
-and give its Markdown body plus the bounded assignment to a Codex subagent. Resolve any
-legacy `${CLAUDE_PLUGIN_ROOT}` references in that body to the installed plugin root first.
-Use the host's
+and give its Markdown body plus the bounded assignment to a Codex subagent. Resolve
+`${CLAUDE_PLUGIN_ROOT}` references in that body to the installed plugin root first; the same
+applies to any shared agent body or template the session reads. Use the host's
 available delegation tools; the Claude `Agent` tool, `subagent_type`, model names and YAML
 `tools` frontmatter are not Codex configuration. If delegation is unavailable, perform the
 bounded read-only lookup in the current session. Read-only is a task constraint here, not
 a claim that the role's Claude tool allowlist is enforced by Codex.
 
-Probe connected tools through the current host. For CLI MCP configuration, use `codex mcp get
-<name>` in place of `claude mcp get <name>`; a registered server is not proof that it is
-connected. Record only available capabilities in the mission's standing constraints.
+Probe connected tools through the current host. Run `mission-plan`'s codebase-intelligence
+probe snippet as written, with `codex mcp get <name>` in place of `claude mcp get <name>`; a
+registered server is not proof that it is connected, and only a connected one earns `+mcp`.
+Record only available capabilities in the mission's standing constraints.
 
 Claude `Seat` fields stay Claude-only. For Codex driver model overrides, use
 `driver.json` → `roles.<role>.model`; `null` uses the CLI's configured default. Do not put
@@ -68,21 +78,21 @@ a replacement. The driver already reads the shared agent bodies and judgment rul
    but do not rewrite state or remove locks while a driver is running. The driver owns its
    `.driver.lock`, `.writer`, `.lease`, handoff grading and interrupted-run recovery.
 2. Require the contract, features and design. Run
-   `bash "$MISSIONS_PLUGIN_ROOT/scripts/check.sh" .missions/<slug>`.
+   `bash "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh" .missions/<slug>`.
    Work on the branch named by `state.md`, reconcile unknown dirty work, and use the shared
-   halt rules. For an authorized first run in `planning`, journal the transition and set
-   the fenced state's phase to `implementing` only after those checks pass.
+   halt rules. Do not edit the phase by hand: on an authorized first run the driver itself
+   moves `planning` → `implementing` and journals that decision once preflight passes.
 3. If `driver.json` is absent, initialize it with `--harness codex`. Preserve an existing
    config and its caps; check its `harness` before dispatch. A different harness requires
    an explicit choice, not an `init --force` that discards configuration.
 4. Run preflight and a dry run, then execute the authorized run:
 
    ```bash
-   # Set MISSIONS_PLUGIN_ROOT to the resolved installed path in each shell call.
-   bash "$MISSIONS_PLUGIN_ROOT/bin/missions" init .missions/<slug> --harness codex
-   bash "$MISSIONS_PLUGIN_ROOT/bin/missions" preflight .missions/<slug>
-   bash "$MISSIONS_PLUGIN_ROOT/bin/missions" run .missions/<slug> --dry-run
-   bash "$MISSIONS_PLUGIN_ROOT/bin/missions" run .missions/<slug>
+   # Codex substitutes the resolved absolute plugin root for "${CLAUDE_PLUGIN_ROOT}".
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/missions" init .missions/<slug> --harness codex
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/missions" preflight .missions/<slug>
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/missions" run .missions/<slug> --dry-run
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/missions" run .missions/<slug>
    ```
 
    The `init` line is only for a missing config. Do not dispatch after failed preflight.

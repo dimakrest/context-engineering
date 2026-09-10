@@ -50,15 +50,16 @@ yourself.
 **Probe the codebase intelligence once, here — the agents never guess at it.**
 
 ```bash
-test -f graphify-out/graph.json && echo "graphify=cli"
-test -d .repowise && echo "repowise=index"
+test -f graphify-out/graph.json && echo "graphify=cli$(claude mcp get graphify >/dev/null 2>&1 && echo +mcp)"
+test -d .repowise && echo "repowise=index$(claude mcp get repowise >/dev/null 2>&1 && echo +mcp)"
 true   # a missing index is an answer, not a failed step
 ```
 
-Check the current host's available MCP tools as described in the runtime guide; append `+mcp`
-only for a connected server. Write the result as one line under *Standing constraints* in `state.md`, where the digest carries
-it to every agent: `- Codebase intelligence: graphify=cli+mcp (graphify-out/, <date>) ·
-repowise=index (.repowise/)` — or `none`. When graphify exists, start your own lookups with
+In Codex, run the same probe with `codex mcp get` (see the runtime guide); a registered server that
+is not connected does not earn `+mcp`. Write the result as one line under *Standing constraints* in
+`state.md`, where the digest carries it to every agent: `- Codebase intelligence: graphify=cli+mcp
+(graphify-out/, <date>) · repowise=index (.repowise/)` — or `none`. When graphify exists, start your
+own lookups with
 `graphify query "<term>"` and `graphify god-nodes` (seconds, no LLM): a community listing is the
 fastest honest way to size a feature to the files it touches. When repowise is indexed, capture the
 baseline the scrutiny validator diffs against: `mkdir -p .missions/<slug>/baseline && repowise
@@ -185,7 +186,7 @@ Refuse to finish unless all six hold:
 6. Every milestone that introduces an `interface` or `conversational` assertion also budgets the
    validator run that proves it (the loop cannot close such a milestone on structural proof alone).
 
-Then run `bash "${MISSIONS_PLUGIN_ROOT}/scripts/check.sh" .missions/<slug>` after writing the files —
+Then run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh" .missions/<slug>` after writing the files —
 it checks 1–5 mechanically. If you can't close a gap, the contract is incomplete or the decomposition
 is wrong. Say which, and fix it before handing over.
 
@@ -197,9 +198,9 @@ an empty `handoffs/`, `validation/`, `patches/`, an empty `followups.md`, and an
 When `/missions:mission-prd` ran first the directory already exists holding `prd.md` — populate
 around it and never clobber it; it is the record of what the mission was asked for.
 Keep the standing-constraints section under ~1.5 KB by referencing the repo's own rules by path;
-`bash "${MISSIONS_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>` must print without
+`bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>` must print without
 complaint before you hand over — it is what every agent will be briefed with.
-Templates: `${MISSIONS_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md`.
+Templates: `${CLAUDE_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md`.
 
 `state.md` is where the project's own rules go — test layers, database safety, git discipline, the
 review process. The worker, reviewer and validator agents are project-agnostic by design; `state.md`

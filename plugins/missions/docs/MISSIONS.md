@@ -180,6 +180,7 @@ The mission's **terminal state is a branch plus a draft PR**. Never a merge. A h
 
 | Skill | Does |
 |---|---|
+| `/missions:mission-prd` | Optional, before `/missions:mission-plan`. Writes a PRD, or audits an existing one, so the planner and the design step can read it literally: behavioural acceptance rows with fail-safe pairs, release metrics fenced off from implementation scope, no stale line anchors, superseded proposals marked as such, and the decisions deliberately left to the mission interview named. Writes zero product code and zero mission files. |
 | `/missions:mission-plan` | Interviews you, argues about scope, emits `mission.md` + `contract.md` + `features.md`. Refuses to finish unless every assertion maps to a feature and every feature to an assertion. Writes **zero** product code. |
 | `/missions:mission-design` | The mandatory architecture step between plan and run. Fans out read-only `mission-researcher` agents to find the repo's existing patterns, then writes `design.md` — guidelines `D001..` anchored to `file:line` exemplars. Workers are bound to them; blind reviewers grade conformance against them. Writes zero product code. |
 | `/missions:mission-run` | The orchestrator loop. Refuses to dispatch without `design.md`. Dispatches one writing agent at a time, ingests handoffs, blocks progress on open issues, fires blind validators at milestones, halts on the triggers below. Ends by handing the finished branch to `/missions:mission-pr-review`. |

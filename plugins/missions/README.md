@@ -12,7 +12,8 @@ Contract-first, multi-feature agent runs whose definition of done is written bef
   a deterministic grade after each one exits, typed exit codes, unattended. **See *Running a mission*
   below for which to use.**
 - `/missions:mission-status` · `/missions:mission-resume` · `/missions:mission-amend` ·
-  `/missions:mission-crosscheck` · `/missions:mission-pr-review`.
+  `/missions:mission-crosscheck` · `/missions:mission-pr-review` · `/missions:mission-prd` (write or audit
+  the PRD before planning, so the planner lifts assertions instead of inventing them).
 
 Five agents (`mission-worker`, `mission-reviewer`, `mission-researcher`,
 `mission-validator-scrutiny`, `mission-validator-behavior`), nine hooks, eight scripts, and the

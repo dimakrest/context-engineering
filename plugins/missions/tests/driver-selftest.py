@@ -22,6 +22,7 @@ import re  # noqa: E402
 import subprocess  # noqa: E402
 import time  # noqa: E402
 
+import missions  # noqa: E402
 from missions import cli, files, grade as grading, journal, judgment, loop, prep, prompts, steps, validate, verdicts, watchdog  # noqa: E402
 from missions.adapters.claude import ClaudeAdapter, parse_envelope  # noqa: E402
 from missions.adapters.codex import CodexAdapter, parse_events  # noqa: E402
@@ -30,6 +31,34 @@ from missions.outcome import Grade, Outcome, RunRequest, classify  # noqa: E402
 
 BASE = HERE / "traces" / "_base" / "mission"
 STUBS = HERE / "traces" / "_base" / "stub"
+
+
+class PackagingTests(unittest.TestCase):
+    """The version is written in three files by hand -- the driver's own `__init__`, the plugin
+    manifest, and the marketplace entry that a `/plugin install` actually reads. A bump that reaches
+    two of them ships a driver that journals a version nobody installed (`loop.py` stamps
+    `__version__` on every run record), and the drift is invisible until someone reads a journal
+    months later. 0.2.10 shipped to two of the three; this is what makes the third impossible to
+    forget."""
+
+    def manifest_version(self, path, plugin=None):
+        if not path.exists():
+            self.skipTest("%s is not in this checkout" % path.name)
+        obj = json.loads(path.read_text())
+        if plugin is None:
+            return obj["version"]
+        for entry in obj.get("plugins", []):
+            if entry.get("name") == plugin:
+                return entry["version"]
+        self.fail("no %r entry in %s" % (plugin, path))
+
+    def test_the_three_version_mirrors_agree(self):
+        manifest = self.manifest_version(PLUGIN / ".claude-plugin" / "plugin.json")
+        market = self.manifest_version(PLUGIN.parent.parent / ".claude-plugin" / "marketplace.json", "missions")
+        self.assertEqual(
+            (manifest, market), (missions.__version__, missions.__version__),
+            "version mirrors disagree -- driver %s, plugin.json %s, marketplace.json %s"
+            % (missions.__version__, manifest, market))
 
 
 class Fixture(unittest.TestCase):

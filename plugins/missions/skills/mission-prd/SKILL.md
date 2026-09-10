@@ -1,6 +1,6 @@
 ---
 name: mission-prd
-description: Write, or audit and repair, a PRD so it can be handed straight to /missions:mission-plan and /missions:mission-design without confusing them. A mission PRD is read by agents, not people - every "must", line number and metric in it becomes a task, a citation or an assertion attempt. Use this whenever the user wants a PRD, product requirements, a spec or acceptance criteria for work that will run as a mission, asks "is this PRD ready for the mission / the plan phase / the design phase", or points /missions:mission-plan at a requirements document that was not written with missions in mind. Writes zero product code and zero mission files.
+description: Write, or audit and repair, a PRD so it can be handed straight to /missions:mission-plan and /missions:mission-design without confusing them. A mission PRD is read by agents, not people - every "must", line number and metric in it becomes a task, a citation or an assertion attempt. Use this whenever the user wants a PRD, product requirements, a spec or acceptance criteria for work that will run as a mission, asks "is this PRD ready for the mission / the plan phase / the design phase", or points /missions:mission-plan at a requirements document that was not written with missions in mind. Writes zero product code; its only output is the mission's own prd.md.
 user_invocable: true
 ---
 
@@ -16,18 +16,46 @@ checkout three weeks old, a link to a superseded proposal whose contract says th
 **The test of a mission PRD:** could the planner lift the assertions out of it without inventing
 anything, and would the design step find its open questions without inheriting an architecture?
 
-**You write no product code and no mission files here.** The output is one document in the
-repo's plan folder (`docs/plans/<slug>-prd-plan.md` or wherever this repo keeps plans). The
-mission files come later, from `/missions:mission-plan`.
+**You write no product code here.** Your only output is `.missions/<slug>/prd.md` — the mission's
+own record of the product intent. You create the mission directory to put it there and write nothing
+else into it; the rest of the mission files come later, from `/missions:mission-plan`.
+
+Creating it early is safe by construction: every hook and both runners find a mission by its
+`state.md` (`mission_active_dir` in `hooks/mission-lib.sh`, the driver's preflight), so a directory
+holding only `prd.md` is inert until the planner writes one. Choose the slug here — kebab-case, the
+feature as a user would name it — and `/missions:mission-plan` adopts it.
+
+`.missions/` is git-ignored. A PRD the team keeps belongs wherever this repo keeps product docs;
+`prd.md` is the mission's copy of it, not its home.
 
 ## Two modes
 
-- **Author** — no PRD exists. Interview, then write from `references/prd-template.md`.
-- **Audit** — a PRD exists. Read it against the two tables below, report each risky passage
-  with its line number and a concrete rewrite, and apply the rewrites when the user says so.
-  Do not rewrite silently: the person who wrote the PRD needs to see what moved and why.
+- **Author** — no PRD exists. Interview, then write from `references/prd-template.md` straight to
+  `.missions/<slug>/prd.md`.
+- **Audit** — a PRD exists. Read it against the two tables below and report each risky passage with
+  its line number and a concrete rewrite. Do not rewrite silently: the person who wrote the PRD
+  needs to see what moved and why. When the user says to apply them, apply them **where the PRD
+  already lives** — a `docs/` page, a ticket export, a wiki page — never by moving it. Then copy the
+  repaired document to `.missions/<slug>/prd.md` under a first line that says where it came from:
+  `Source: <path or URL it came from>, read <date>.`
 
 In both modes, finish with the handover in the last section.
+
+## What governs once the contract exists
+
+`prd.md` is product intent, frozen at the moment the mission was planned. `/missions:mission-plan`
+and `/missions:mission-design` read it, and nothing after them does, because **once `contract.md`
+exists the contract governs.** An assertion and a PRD sentence that disagree are a contract defect:
+the fix goes through `/missions:mission-amend`, whose blast-radius sweep greps the whole mission
+directory and will therefore list `prd.md` among the sites — update it when the amendment changed
+the product intent, and record why you left it when the amendment only changed decomposition.
+
+That is the last row of the poison table below applied to this skill's own output. Two governing
+documents that do not say which wins is the trap; one sentence of precedence is the entire fix.
+
+One PRD can govern more than one mission — that is what the template's phase rule is for. Each
+mission gets its own `prd.md` carrying that phase's scope, as a copy: a mission that has already
+been planned must never have its stated intent change underneath it.
 
 ## Step 0 — know what the consumers lift
 
@@ -38,7 +66,7 @@ things; a PRD is good when each finds its material where it looks and nothing el
 |---|---|---|
 | `/missions:mission-plan` (contract) | Goal in one sentence · non-goals · what "done" looks like to a user · a decision matrix · acceptance scenarios with their fail-safe pairs · which repo test layer proves each · blast radius · phase/scope boundaries · the decisions deliberately deferred to the interview | Assertions that name code that does not exist yet · metrics no validator can prove · a selected architecture · open questions phrased as requirements |
 | `/missions:mission-design` (guidelines) | Open engineering questions, numbered · current-state findings as file references · constraints from shared code the feature touches · verified interpretation of any "match existing behaviour X" | Line numbers from a stale checkout · a preferred module layout · "may propose refactoring" invitations |
-| `mission-researcher` / `mission-worker` (grep the plan folder) | One governing document, named as such | Earlier proposals that still read as live, or as work to do |
+| `mission-researcher` / `mission-worker` (grep the mission directory) | One governing document, named as such | Earlier proposals that still read as live, or as work to do |
 
 If the repo has a docs-first rule (a wiki index, `CLAUDE.md`), it applies here: read the pages for
 the affected area before writing a current-state section, and cite them rather than re-deriving.
@@ -137,13 +165,15 @@ Keep it under ~200 lines. A PRD the planner has to summarise before using is alr
 
 Report tightly:
 
-- **Author mode:** the path; the decisions deferred to the mission interview (the planner will ask
-  them; the user should arrive with answers); the two or three scenario rows you are least sure
-  are behavioural rather than structural.
-- **Audit mode:** the table of passages by risk with line numbers and rewrites; whether you
-  applied them; anything the PRD still leaves to the interview. The high-risk rows are the ones
-  worth the user's attention: superseded proposals still phrased as work, and metrics that will
-  become unprovable assertions.
+- **Author mode:** the slug you chose and the path (`.missions/<slug>/prd.md`); the decisions
+  deferred to the mission interview (the planner will ask them; the user should arrive with
+  answers); the two or three scenario rows you are least sure are behavioural rather than
+  structural.
+- **Audit mode:** the table of passages by risk with line numbers and rewrites; where you applied
+  them and where the mission's copy now sits; anything the PRD still leaves to the interview. The
+  high-risk rows are the ones worth the user's attention: superseded proposals still phrased as
+  work, and metrics that will become unprovable assertions.
 
-Then point at the next step: `/missions:mission-plan` with the PRD and its governing companions
-named as inputs, and any superseded documents in the same folder named as such.
+Then point at the next step: `/missions:mission-plan`, which reads `.missions/<slug>/prd.md` itself
+and populates the rest of the directory around it. Name any governing companion document, and any
+superseded document, so the planner treats the second as history rather than as work.

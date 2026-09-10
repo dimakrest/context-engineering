@@ -73,6 +73,10 @@ between them mid-flight — and today it has to, because the driver stops at the
 ### 1. Plan — the same either way
 
 ```
+/missions:mission-prd      # optional, and the right place to start from a requirements document:
+                  # write a PRD, or audit an existing one, into .missions/<slug>/prd.md so the
+                  # planner lifts the assertions instead of inventing them
+
 /missions:mission-plan     # interview, then write the contract. No product code is written here.
                   # → review .missions/<slug>/contract.md yourself before continuing
 
@@ -149,6 +153,8 @@ Full command reference, the codex sandbox note, and how grading works:
 
 ```
 .missions/<slug>/          # git-ignored run state
+  prd.md                   # optional: product intent, from /missions:mission-prd. Frozen at plan
+                           #   time -- once contract.md exists, the contract governs
   mission.md               # goal, non-goals, constraints, model seats, budget cap
   contract.md              # assertions A001.., written before code, proof-class tagged
   design.md                # guidelines D001.. + pattern inventory, written before code
@@ -180,7 +186,7 @@ The mission's **terminal state is a branch plus a draft PR**. Never a merge. A h
 
 | Skill | Does |
 |---|---|
-| `/missions:mission-prd` | Optional, before `/missions:mission-plan`. Writes a PRD, or audits an existing one, so the planner and the design step can read it literally: behavioural acceptance rows with fail-safe pairs, release metrics fenced off from implementation scope, no stale line anchors, superseded proposals marked as such, and the decisions deliberately left to the mission interview named. Writes zero product code and zero mission files. |
+| `/missions:mission-prd` | Optional, before `/missions:mission-plan`. Writes a PRD, or audits an existing one, so the planner and the design step can read it literally: behavioural acceptance rows with fail-safe pairs, release metrics fenced off from implementation scope, no stale line anchors, superseded proposals marked as such, and the decisions deliberately left to the mission interview named. Chooses the slug and writes `.missions/<slug>/prd.md` — the one mission file that exists before the plan, and the only thing it writes. Zero product code. |
 | `/missions:mission-plan` | Interviews you, argues about scope, emits `mission.md` + `contract.md` + `features.md`. Refuses to finish unless every assertion maps to a feature and every feature to an assertion. Writes **zero** product code. |
 | `/missions:mission-design` | The mandatory architecture step between plan and run. Fans out read-only `mission-researcher` agents to find the repo's existing patterns, then writes `design.md` — guidelines `D001..` anchored to `file:line` exemplars. Workers are bound to them; blind reviewers grade conformance against them. Writes zero product code. |
 | `/missions:mission-run` | The orchestrator loop. Refuses to dispatch without `design.md`. Dispatches one writing agent at a time, ingests handoffs, blocks progress on open issues, fires blind validators at milestones, halts on the triggers below. Ends by handing the finished branch to `/missions:mission-pr-review`. |
@@ -377,7 +383,7 @@ claude|codex|both` is the paid live smoke; the suites never run it.
 
 ## Current status and honest limits
 
-**Built:** eight skills, five subagents, nine hooks, eight scripts, the file schema, the
+**Built:** nine skills, five subagents, nine hooks, eight scripts, the file schema, the
 out-of-process driver (`bin/missions`), and five test layers — hooks and scripts (`tests/run.sh`),
 driver traces (`tests/traces/run.sh`), driver mutants (`tests/mutants.sh`), driver unit tests
 (`tests/driver-selftest.py`) and a paid live smoke (`tests/harness/run.sh`, never run by the

@@ -2,6 +2,8 @@
 
 Contract-first, multi-feature agent runs whose definition of done is written before any code.
 
+- `/missions:mission-prd` — optional, before the interview: write a PRD, or audit an existing one,
+  into `.missions/<slug>/prd.md`, so the planner lifts its assertions instead of inventing them.
 - `/missions:mission-plan` — interview, validation contract (assertions with proof classes and proof
   budgets), features sized to files, milestones, caps.
 - `/missions:mission-design` — architecture guidelines (D00n) with exemplars, before any code.
@@ -12,8 +14,7 @@ Contract-first, multi-feature agent runs whose definition of done is written bef
   a deterministic grade after each one exits, typed exit codes, unattended. **See *Running a mission*
   below for which to use.**
 - `/missions:mission-status` · `/missions:mission-resume` · `/missions:mission-amend` ·
-  `/missions:mission-crosscheck` · `/missions:mission-pr-review` · `/missions:mission-prd` (write or audit
-  the PRD before planning, so the planner lifts assertions instead of inventing them).
+  `/missions:mission-crosscheck` · `/missions:mission-pr-review`.
 
 Five agents (`mission-worker`, `mission-reviewer`, `mission-researcher`,
 `mission-validator-scrutiny`, `mission-validator-behavior`), nine hooks, eight scripts, and the

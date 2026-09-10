@@ -65,6 +65,7 @@ def main():
                         for path in (PLUGIN / "skills").glob("*/SKILL.md")}
             if {skill["name"] for skill in discovered} != set(expected):
                 raise RuntimeError("Installed missions skills differ from source; install %s first" % PLUGIN_ID)
+            installed_roots = set()
             for skill in discovered:
                 if not skill["enabled"]:
                     raise RuntimeError("Skill is disabled: %s" % skill["name"])
@@ -76,10 +77,18 @@ def main():
                         if not bundled.is_file() or bundled.read_bytes() != resource.read_bytes():
                             raise RuntimeError("Installed skill resources are stale; reinstall %s" % PLUGIN_ID)
                 root = installed.parent.parent.parent
+                installed_roots.add(root)
                 if (root / "docs/RUNTIMES.md").read_bytes() != (PLUGIN / "docs/RUNTIMES.md").read_bytes():
                     raise RuntimeError("Installed runtime guide is stale; reinstall %s" % PLUGIN_ID)
                 if (root / "hooks/hooks.json").exists():
                     raise RuntimeError("Codex would auto-discover Claude hooks")
+            for root in installed_roots:
+                for directory in ("agents", "templates"):
+                    for resource in (PLUGIN / directory).rglob("*"):
+                        if resource.is_file():
+                            bundled = root / resource.relative_to(PLUGIN)
+                            if not bundled.is_file() or bundled.read_bytes() != resource.read_bytes():
+                                raise RuntimeError("Installed shared instructions are stale; reinstall %s" % PLUGIN_ID)
             print("PASS: Codex discovered %d enabled missions skills outside the source checkout; "
                   "installed instructions match source." % len(discovered))
         finally:

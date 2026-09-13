@@ -1,6 +1,6 @@
 ---
 name: mission-crosscheck
-description: The cross-vendor blind review of a mission's plan, run after /missions:mission-plan or after /missions:mission-design. Seals a spec package with our conclusions stripped out, has an external reviewer derive the architecture independently, audits the transcript for contamination before a single finding is read, then routes contract defects to the user and design findings to design.md. Never patches contract.md or features.md. Writes zero product code. Use when the user says "/missions:mission-crosscheck", asks for an outside or unbiased opinion on a mission's contract or design, or wants the plan checked before /missions:mission-run.
+description: The cross-vendor blind review of a mission's plan, run after /missions:mission-spec or after /missions:mission-design. Seals a spec package with our conclusions stripped out, has an external reviewer derive the architecture independently, audits the transcript for contamination before a single finding is read, then routes contract defects to the user and design findings to design.md. Never patches contract.md or features.md. Writes zero product code. Use when the user says "/missions:mission-crosscheck", asks for an outside or unbiased opinion on a mission's contract or design, or wants the plan checked before /missions:mission-run.
 ---
 
 Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
@@ -32,7 +32,7 @@ not skip because the output looks fine. It always looks fine.
 
 | Mode | When | Asks |
 |---|---|---|
-| `contract` (default) | after `/missions:mission-plan`, before `/missions:mission-design` | attack the contract; what would you refuse to build |
+| `contract` (default) | after `/missions:mission-spec`, before `/missions:mission-design` | attack the contract; what would you refuse to build |
 | `design` | after `/missions:mission-design` | the full independent architecture, plus an optional sighted divergence pass |
 
 Run `contract` mode even if you intend to run `design` mode later. A wrong assertion is the one

@@ -1,11 +1,11 @@
 # Mission file templates
 
-The on-disk schema for `.missions/<slug>/`. Read by `/missions:mission-prd` (writes `prd.md`), `/missions:mission-plan` (writes them), `/missions:mission-design`
+The on-disk schema for `.missions/<slug>/`. Read by `/missions:mission-prd` (writes `prd.md`), `/missions:mission-spec` (writes them), `/missions:mission-design`
 (writes `design.md`), `/missions:mission-run` (reads and updates them), `mission-worker` (writes handoffs),
 the validators (write verdicts), and `/missions:mission-pr-review` (writes `validation/pr-review*`).
 
 `.missions/` is git-ignored. Product code lands on a branch through normal commits; run state stays
-local. The contract is the exception — `/missions:mission-plan` copies it into `docs/plans/<slug>-plan.md` so a
+local. The contract is the exception — `/missions:mission-spec` copies it into `docs/plans/<slug>-plan.md` so a
 human reviewer can see what "done" was defined as without reading the run state.
 
 ```
@@ -34,7 +34,7 @@ human reviewer can see what "done" was defined as without reading the run state.
 
 ## prd.md
 
-Optional, and the only mission file written before `/missions:mission-plan` runs — by
+Optional, and the only mission file written before `/missions:mission-spec` runs — by
 `/missions:mission-prd`, which also chooses the slug and creates the directory. A directory holding
 only `prd.md` is inert: every hook and both runners find a mission by its `state.md`, so nothing
 treats it as live until the planner writes one.
@@ -403,7 +403,7 @@ the full human approval here and the compact summary above in standing constrain
 must be explicitly named and fallback authorized; generic continuation is not approval.
 
 ```jsonl
-{"ts":"2026-09-13T12:00:00Z","event":"decision","id":"mcp-waiver-001","step":"mission-plan","mission":"<slug>","providers":["Repowise"],"fallback":["remaining MCP","local tools","documentation","source search"],"scope":["planning","design"],"lifetime":"mission","approval_text":"Proceed without Repowise MCP for this mission's planning and design using Graphify, local tools, docs and source search.","approval_ref":"<human message reference>"}
+{"ts":"2026-09-13T12:00:00Z","event":"decision","id":"mcp-waiver-001","step":"mission-spec","mission":"<slug>","providers":["Repowise"],"fallback":["remaining MCP","local tools","documentation","source search"],"scope":["planning","design"],"lifetime":"mission","approval_text":"Proceed without Repowise MCP for this mission's planning and design using Graphify, local tools, docs and source search.","approval_ref":"<human message reference>"}
 ```
 
 For both providers, record `providers: ["Graphify", "Repowise"]` only when the human approved
@@ -416,7 +416,7 @@ capabilities and resolves the relevant blocker without erasing the mission's wai
 Recorded rather than edited silently, so a reviewer can see what moved without diffing.
 
 ```markdown
-## Amendments after `/missions:mission-plan`
+## Amendments after `/missions:mission-spec`
 
 | When | What | Why |
 |---|---|---|

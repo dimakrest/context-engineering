@@ -178,7 +178,7 @@ see the others.</p>
   </defs>
 
   <rect x="10" y="60" width="200" height="120" rx="12" fill="none" stroke="var(--a1)" stroke-width="1.5"/>
-  <text class="svgtext" x="110" y="90" text-anchor="middle" font-weight="700">/missions:mission-plan</text>
+  <text class="svgtext" x="110" y="90" text-anchor="middle" font-weight="700">/missions:mission-spec</text>
   <text class="svgsm" x="110" y="112" text-anchor="middle">interview · argue</text>
   <text class="svgsm" x="110" y="130" text-anchor="middle">write assertions</text>
   <text class="svgxs" x="110" y="152" text-anchor="middle">NO code is written</text>
@@ -341,7 +341,7 @@ codes — better for long unattended stretches once you trust the plan. Both rea
 
 <li>
 <h4>Start the planner<span class="you">you</span></h4>
-<pre><code><span class="c1">/missions:mission-plan</span>  add per-account retry limits to the outbound dispatch sweep
+<pre><code><span class="c1">/missions:mission-spec</span>  add per-account retry limits to the outbound dispatch sweep
 <span class="cf">              (or paste an issue number / description)</span></code></pre>
 <p>It reads the project's own docs first, dispatches cheap read-only researchers for anything it needs from the
 code, then <strong>interviews you</strong>. Expect it to push back on scope. That is the job — a
@@ -748,7 +748,7 @@ did not personally read.
 <h3>Commands</h3>
 <div class="cheat">
   <div><code>/missions:mission-prd</code><span>Optional, first: write or audit the PRD the planner reads. No code.</span></div>
-  <div><code>/missions:mission-plan &lt;task&gt;</code><span>Interview, then write the contract. No code.</span></div>
+  <div><code>/missions:mission-spec &lt;task&gt;</code><span>Interview, then write the contract. No code.</span></div>
   <div><code>/missions:mission-design</code><span>Explore existing patterns, write the guidelines workers obey. No code.</span></div>
   <div><code>/missions:mission-run</code><span>Drive the loop. Start it, resume it, continue after a decision.</span></div>
   <div><code>/missions:mission-status</code><span>HTML page: coverage, spend, blockers.</span></div>
@@ -781,7 +781,7 @@ did not personally read.
 
 <div class="callout ok" style="margin-top:26px">
 <strong>Ready?</strong> Pick something from the backlog that is three to five features, structural
-assertions only, no migrations. Then <code>/missions:mission-plan</code>, and spend real time on the contract
+assertions only, no migrations. Then <code>/missions:mission-spec</code>, and spend real time on the contract
 it hands back.
 </div>
 </section>

@@ -530,7 +530,7 @@ case(K, "check-seat-full-model-id-ok", "rc=0\nargs=.missions/demo\nstdout~=CHECK
 case(K, "check-reviewer-seat-ok", "rc=0\nargs=.missions/demo\nstdout~=CHECK PASS", missions={"demo": demo(**{"mission.md": mission_md() + "\n## Model seats\n- Reviewer seat: fable\n"})})
 case(K, "check-reviewer-seat-invalid", "rc=1\nargs=.missions/demo\nstdout~=reviewer seat names seat 'gpt-5'", missions={"demo": demo(**{"mission.md": mission_md() + "\n## Model seats\n- Reviewer seat: gpt-5\n"})})
 case(K, "check-reviewer-seat-with-comment-ok", "rc=0\nargs=.missions/demo\nstdout~=CHECK PASS", missions={"demo": demo(**{"mission.md": mission_md() + "\n## Model seats\n- Reviewer seat: fable   # optional — auth boundary\n"})})
-case(K, "archive-scanned-for-ids", "rc=0\nargs=.missions/demo\nstdout~=archive/M1.md: A005 — retired", missions={"demo": demo(**{"archive/M1.md": "## M1 closed\n- A005 was retired\n", "contract.md": CONTRACT_V2 + "\n## Amendments after `/missions:mission-plan`\n\n| When | What | Why |\n|---|---|---|\n| now | A005 retired | dup |\n"})})
+case(K, "archive-scanned-for-ids", "rc=0\nargs=.missions/demo\nstdout~=archive/M1.md: A005 — retired", missions={"demo": demo(**{"archive/M1.md": "## M1 closed\n- A005 was retired\n", "contract.md": CONTRACT_V2 + "\n## Amendments after `/missions:mission-spec`\n\n| When | What | Why |\n|---|---|---|\n| now | A005 retired | dup |\n"})})
 
 n = sum(1 for _ in ROOT.glob("*/*/expect"))
 print(f"generated {n} cases under {ROOT}")

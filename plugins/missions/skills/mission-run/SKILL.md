@@ -1,6 +1,6 @@
 ---
 name: mission-run
-description: Execute a planned mission. Drives the serial loop - dispatch one writing agent at a time, ingest its handoff, gate progress on open issues, fire blind validators at each milestone, and stop at a branch plus draft PR. Use after /missions:mission-plan, or when the user says "run the mission", "/missions:mission-run", or "continue the mission".
+description: Execute a planned mission. Drives the serial loop - dispatch one writing agent at a time, ingest its handoff, gate progress on open issues, fire blind validators at each milestone, and stop at a branch plus draft PR. Use after /missions:mission-spec, or when the user says "run the mission", "/missions:mission-run", or "continue the mission".
 ---
 
 Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.

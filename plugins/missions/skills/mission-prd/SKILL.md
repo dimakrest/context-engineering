@@ -1,13 +1,13 @@
 ---
 name: mission-prd
-description: Write, or audit and repair, a PRD so it can be handed straight to /missions:mission-plan and /missions:mission-design without confusing them. A mission PRD is read by agents, not people - every "must", line number and metric in it becomes a task, a citation or an assertion attempt. Use this whenever the user wants a PRD, product requirements, a spec or acceptance criteria for work that will run as a mission, asks "is this PRD ready for the mission / the plan phase / the design phase", or points /missions:mission-plan at a requirements document that was not written with missions in mind. Writes zero product code; its only output is the mission's own prd.md.
+description: Write, or audit and repair, a PRD so it can be handed straight to /missions:mission-spec and /missions:mission-design without confusing them. A mission PRD is read by agents, not people - every "must", line number and metric in it becomes a task, a citation or an assertion attempt. Use this whenever the user wants a PRD, product requirements, a spec or acceptance criteria for work that will run as a mission, asks "is this PRD ready for the mission / the plan phase / the design phase", or points /missions:mission-spec at a requirements document that was not written with missions in mind. Writes zero product code; its only output is the mission's own prd.md.
 ---
 
 Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
 # /missions:mission-prd — a PRD an agent can plan from
 
-`/missions:mission-plan` turns a PRD into a validation contract; `/missions:mission-design` turns the
+`/missions:mission-spec` turns a PRD into a validation contract; `/missions:mission-design` turns the
 repo into guidelines the workers are bound to. Both are run by agents that read the PRD literally
 and have no memory of the meetings behind it. A PRD written for a human product review is full of
 things that are harmless to a person and poisonous to a planner: an open question phrased as
@@ -19,12 +19,12 @@ anything, and would the design step find its open questions without inheriting a
 
 **You write no product code here.** Your only output is `.missions/<slug>/prd.md` — the mission's
 own record of the product intent. You create the mission directory to put it there and write nothing
-else into it; the rest of the mission files come later, from `/missions:mission-plan`.
+else into it; the rest of the mission files come later, from `/missions:mission-spec`.
 
 Creating it early is safe by construction: every hook and both runners find a mission by its
 `state.md` (`mission_active_dir` in `hooks/mission-lib.sh`, the driver's preflight), so a directory
 holding only `prd.md` is inert until the planner writes one. Choose the slug here — kebab-case, the
-feature as a user would name it — and `/missions:mission-plan` adopts it.
+feature as a user would name it — and `/missions:mission-spec` adopts it.
 
 `.missions/` is git-ignored. A PRD the team keeps belongs wherever this repo keeps product docs;
 `prd.md` is the mission's copy of it, not its home.
@@ -44,7 +44,7 @@ In both modes, finish with the handover in the last section.
 
 ## What governs once the contract exists
 
-`prd.md` is product intent, frozen at the moment the mission was planned. `/missions:mission-plan`
+`prd.md` is product intent, frozen at the moment the mission was planned. `/missions:mission-spec`
 and `/missions:mission-design` read it, and nothing after them does, because **once `contract.md`
 exists the contract governs.** An assertion and a PRD sentence that disagree are a contract defect:
 the fix goes through `/missions:mission-amend`, whose blast-radius sweep greps the whole mission
@@ -65,7 +65,7 @@ things; a PRD is good when each finds its material where it looks and nothing el
 
 | Consumer | Lifts from the PRD | Must not find |
 |---|---|---|
-| `/missions:mission-plan` (contract) | Goal in one sentence · non-goals · what "done" looks like to a user · a decision matrix · acceptance scenarios with their fail-safe pairs · which repo test layer proves each · blast radius · phase/scope boundaries · the decisions deliberately deferred to the interview | Assertions that name code that does not exist yet · metrics no validator can prove · a selected architecture · open questions phrased as requirements |
+| `/missions:mission-spec` (contract) | Goal in one sentence · non-goals · what "done" looks like to a user · a decision matrix · acceptance scenarios with their fail-safe pairs · which repo test layer proves each · blast radius · phase/scope boundaries · the decisions deliberately deferred to the interview | Assertions that name code that does not exist yet · metrics no validator can prove · a selected architecture · open questions phrased as requirements |
 | `/missions:mission-design` (guidelines) | Open engineering questions, numbered · current-state findings as file references · constraints from shared code the feature touches · verified interpretation of any "match existing behaviour X" | Line numbers from a stale checkout · a preferred module layout · "may propose refactoring" invitations |
 | `mission-researcher` / `mission-worker` (grep the mission directory) | One governing document, named as such | Earlier proposals that still read as live, or as work to do |
 
@@ -75,7 +75,7 @@ the affected area before writing a current-state section, and cite them rather t
 ## Step 1 — interview (author mode) or extract (audit mode)
 
 Resolve these before writing. In audit mode, check whether the PRD already answers them and list
-the ones it does not as "decisions deferred to `/missions:mission-plan`" rather than guessing.
+the ones it does not as "decisions deferred to `/missions:mission-spec`" rather than guessing.
 
 - **Goal in one sentence.** If it needs two, it is two PRDs.
 - **Non-goals, explicitly.** These are what stop a worker "improving" a neighbouring subsystem.
@@ -156,7 +156,7 @@ Use `references/prd-template.md`. Section order matters because agents skim from
 7. Acceptance and testing strategy — the scenario table, layers, observation rules
 8. Release gates outside the implementation mission — measures, human evaluation, unset thresholds
 9. Engineering questions for the design step — numbered; ends with **decisions deferred to
-   `/missions:mission-plan`**
+   `/missions:mission-spec`**
 10. Current implementation evidence — findings by file, no line anchors, dated to a commit
 11. Sources and decision provenance — every earlier proposal marked superseded
 
@@ -175,6 +175,6 @@ Report tightly:
   high-risk rows are the ones worth the user's attention: superseded proposals still phrased as
   work, and metrics that will become unprovable assertions.
 
-Then point at the next step: `/missions:mission-plan`, which reads `.missions/<slug>/prd.md` itself
+Then point at the next step: `/missions:mission-spec`, which reads `.missions/<slug>/prd.md` itself
 and populates the rest of the directory around it. Name any governing companion document, and any
 superseded document, so the planner treats the second as history rather than as work.

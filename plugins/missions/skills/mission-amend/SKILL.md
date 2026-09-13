@@ -1,6 +1,6 @@
 ---
 name: mission-amend
-description: Change a planned mission's contract, decomposition or scope after /missions:mission-plan and /missions:mission-design have run, without leaving half of it behind. Maps the blast radius first, applies edits that abort rather than half-apply, retires ids without renumbering, sweeps to zero live references, and gates on a bidirectional coherence check. Planning phase only. Use when the user says "/missions:mission-amend", wants to cut or widen a mission's scope, or acts on a contract defect found by /missions:mission-design or /missions:mission-crosscheck.
+description: Change a planned mission's contract, decomposition or scope after /missions:mission-spec and /missions:mission-design have run, without leaving half of it behind. Maps the blast radius first, applies edits that abort rather than half-apply, retires ids without renumbering, sweeps to zero live references, and gates on a bidirectional coherence check. Planning phase only. Use when the user says "/missions:mission-amend", wants to cut or widen a mission's scope, or acts on a contract defect found by /missions:mission-design or /missions:mission-crosscheck.
 ---
 
 Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.

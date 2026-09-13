@@ -8,7 +8,7 @@ exits only through a typed stop reason. Nothing is awaited that the driver did n
 Stdlib only; python >= 3.9 (no `match`, no `X | Y` at runtime).
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 # what a plugin installation never carries: a host copies plugins/missions minus these. Both the
 # packaging selftest (which copies) and the Codex discovery smoke test (which enumerates) read it

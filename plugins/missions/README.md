@@ -7,7 +7,8 @@ Contract-first, multi-feature agent runs whose definition of done is written bef
 - `/missions:mission-plan` — interview, validation contract (assertions with proof classes and proof
   budgets), features sized to files, milestones, caps.
 - `/missions:mission-design` — architecture guidelines (D00n) with exemplars, before any code.
-- `/missions:mission-run` — the orchestrator loop, driven by a Claude Code session: one worker at a
+- `/missions:mission-run` — the orchestrator loop, driven by a Claude Code session or the Codex
+  driver's shared workflow: one worker at a
   time, blind per-feature review of a materialised patch, behaviour validation, convergence gate,
   advisory vs blocking halts, a reviewed draft PR as the terminal state.
 - `bin/missions` — the same loop, driven by a program instead of a session: workers as subprocesses,
@@ -27,12 +28,51 @@ First run: `docs/MISSIONS_GETTING_STARTED.html`.
 
 ## Install
 
+### Claude Code
+
 ```
 /plugin marketplace add dimakrest/context-engineering
 /plugin install missions@dimakrest-context-engineering
 ```
 
 The hooks are inert in any project without an active `.missions/*/state.md`.
+
+### Codex
+
+Install the **missions plugin** from this repository's Codex marketplace (CLI 0.153.4 or a
+newer release with `codex plugin` support):
+
+```bash
+codex plugin marketplace add dimakrest/context-engineering
+codex plugin add missions@dimakrest-context-engineering
+```
+
+Start a new session in the project you want to work on, then use `/skills` or type
+`$missions:mission-plan`, `$missions:mission-design`, `$missions:mission-run`, `$missions:mission-status` or `$missions:mission-resume`.
+Installed skills use the `missions` namespace. The same nine `skills/*/SKILL.md` files are
+loaded by both hosts; edit a workflow once. Both packages also share agents, templates,
+scripts and the Python driver. Install the whole plugin: copying individual skill folders
+with a standalone skills installer omits their shared resources.
+
+Planning and design require **both Graphify MCP and Repowise MCP**, each verified through a
+current read-only lookup against the target repository. Unavailable access blocks dependent
+work unless the human explicitly names and waives that provider. Waivers persist for this
+mission across resumed planning/design sessions; CLI access and registration do not count.
+
+Codex planning, design, supported amendments, status and PR review run in the session. `$missions:mission-run`
+uses `bin/missions` with the Codex harness for implementation and milestone validation, then
+returns to the session for the terminal draft PR review. Claude's hooks are registered only
+in its manifest; native Codex session tools do not get the missions hook guards. The driver
+retains its existing locks, grading, validation and caps. Codex reports tokens, not measured
+USD, and cannot enforce a per-run dollar budget. `mission-crosscheck` currently supports
+Claude → Codex only and explicitly stops when invoked from Codex. Amendments that change
+`contract.md` or otherwise require crosscheck are therefore refused in Codex **before any
+writes**, after read-only scope mapping. Other amendments retain the shared coherence gate;
+the mandatory post-amendment audit is not bypassed.
+
+See [runtime behavior](docs/RUNTIMES.md) for invocation and enforcement details, and
+[design research and follow-ups](docs/CODEX_DESIGN.md) for the repository comparisons and
+remaining gaps. The root `context-engineering` plugin is still Claude-only.
 
 ## Running a mission — two ways
 
@@ -41,15 +81,15 @@ the five files under `.missions/<slug>/`. What differs is what drives the loop a
 
 | | **A session** — `/missions:mission-run` | **The driver** — `bin/missions run` |
 |---|---|---|
-| Decides the next action | a Claude Code session following the skill | a Python program (stdlib only, ≥ 3.9) |
+| Decides the next action | a Claude Code session following the skill | a Python program (stdlib only, ≥ 3.9), also used by the Codex skill |
 | A worker is | a `mission-worker` subagent in that session | a separate process — `claude -p` or `codex exec` |
 | Grades a handoff by | the orchestrator model reading it | the schema function plus `git`, after the process exits |
 | Costs, per iteration | orchestrator tokens every turn | nothing outside the dispatches |
 | After a compaction | `/missions:mission-resume` | nothing to resume — state is re-read from disk |
 | Caps | hooks enforce them at each dispatch | checked in code before every paid dispatch |
 | Ends with | prose, plus `resume_next` | a typed exit code (0–130), plus `resume_next` |
-| Harness | Claude | Claude **or** codex |
-| The `pr` phase | **yes** — draft PR, whole-branch review, `done` | **not yet** (#10) — it stops and hands the branch back |
+| Harness | Claude | Claude **or** Codex |
+| The `pr` phase | **yes** — draft PR, whole-branch review, `done` | **not yet** (#30) — it stops and hands the branch back |
 
 Use a session when you want to watch it, intervene, or take the mission all the way to a reviewed
 draft PR. Use the driver for long unattended stretches, a dollar cap enforced before every dispatch,
@@ -140,7 +180,7 @@ hooks and gets no dollar budget — its cost is reported in tokens.
 ## How the driver works
 
 Reference for `bin/missions` — see *Running a mission* above for the commands. What is not
-driven yet: the terminal steps and the push (the `pr` phase, #10), `status` (#19), `resume`
+driven yet: the terminal steps and the push (the `pr` phase, #30), `status` (#19), `resume`
 and sleep-and-resume on a provider quota (#7).
 
 **codex needs unprivileged user namespaces.** On Linux `codex exec` sandboxes every command it
@@ -291,11 +331,41 @@ names (or `PREFIX_*` globs) the runs may see.
 
 ## Developing
 
-Iterate against the local checkout without pushing:
+Both manifests point at `skills/`. Change the existing skill or agent file; no conversion,
+copy or generation step is needed. Worker and reviewer dispatch wording lives in the shared
+`skills/mission-run/references/*-brief.md` templates consumed by both the skill and driver.
+The driver's state machine remains Python code; algorithm changes require its implementation
+and behavioral tests. Runtime differences belong in `docs/RUNTIMES.md`, which
+every skill reads first. Keep the Claude hook registration at `hooks/claude.json`: putting
+it back at `hooks/hooks.json` would make Codex auto-discover incompatible hooks.
+
+Iterate against the local checkout without pushing. For Claude:
 
 ```
 claude --plugin-dir /path/to/context-engineering/plugins/missions
 ```
+
+For Codex, register the **repository root**, then install the plugin and start a new session:
+
+```bash
+codex plugin marketplace add /path/to/context-engineering
+codex plugin add missions@dimakrest-context-engineering
+```
+
+Installed plugins are cached snapshots. After editing this checkout, run the same `codex
+plugin add` command to refresh the installed copy, then start a new session. A marketplace
+already registered under this name must be removed before switching from Git to the local
+checkout. This affects the source, not the shared authoring layout.
+
+After installation, verify native Codex discovery without making a model call:
+
+```bash
+python3 plugins/missions/tests/codex-plugin-smoke.py
+```
+
+This checks all nine enabled, namespaced skills from outside the source checkout, compares
+installed instructions to source, and rejects accidental Claude hook discovery. It requires
+the local Codex CLI and installed plugin, so CI uses the independent package/driver tests.
 
 Run the regression suite (every hook and script against fixture missions, inertness first):
 
@@ -307,8 +377,9 @@ Cases live in `tests/gen-cases.py` (one `case(...)` call each: a script, a stdin
 mission tree, and an `expect` of `rc=`, `stderr~=`, `stdout~=`, `postcheck=`); `run.sh` regenerates
 `tests/cases/` from it on every run. Add a case for every new block. To see what a hook actually
 receives from the harness, run a session with `MISSION_HOOK_DEBUG=1` and read
-`.missions/<slug>/.hook-debug.log`. Bump `.claude-plugin/plugin.json` on every behaviour change; the
-marketplace fetches by version.
+`.missions/<slug>/.hook-debug.log`. Bump both plugin manifests, the Claude marketplace's missions
+version and `driver/missions/__init__.py` together on behaviour changes; packaging tests check
+they agree. The Codex marketplace points to the same plugin directory and carries no version copy.
 
 Trace tests run the real driver over a temporary repo with a stub worker (a shell script):
 

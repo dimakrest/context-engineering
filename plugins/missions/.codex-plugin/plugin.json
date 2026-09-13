@@ -1,0 +1,22 @@
+{
+  "name": "missions",
+  "version": "0.3.0",
+  "description": "Contract-first missions with shared Claude and Codex skills, serial driver execution, blind review and evidence-based validation.",
+  "author": {
+    "name": "Dima Krest"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Missions",
+    "shortDescription": "Plan, run and review contract-first missions.",
+    "longDescription": "Shares mission skills and agent instructions with Claude Code. Codex executes workers and validators through the missions driver; native session hook parity and reverse-vendor crosscheck are not included.",
+    "developerName": "Dima Krest",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": "Use $missions:mission-plan to plan a multi-feature task before writing code."
+  },
+  "repository": "https://github.com/dimakrest/context-engineering"
+}

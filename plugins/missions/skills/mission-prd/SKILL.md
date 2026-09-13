@@ -1,8 +1,9 @@
 ---
 name: mission-prd
 description: Write, or audit and repair, a PRD so it can be handed straight to /missions:mission-plan and /missions:mission-design without confusing them. A mission PRD is read by agents, not people - every "must", line number and metric in it becomes a task, a citation or an assertion attempt. Use this whenever the user wants a PRD, product requirements, a spec or acceptance criteria for work that will run as a mission, asks "is this PRD ready for the mission / the plan phase / the design phase", or points /missions:mission-plan at a requirements document that was not written with missions in mind. Writes zero product code; its only output is the mission's own prd.md.
-user_invocable: true
 ---
+
+Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
 # /missions:mission-prd — a PRD an agent can plan from
 

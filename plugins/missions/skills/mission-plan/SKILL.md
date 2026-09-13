@@ -1,8 +1,9 @@
 ---
 name: mission-plan
-description: Plan a mission - a multi-feature agent run whose definition of done is written before any code. Interviews the user, then emits mission.md, contract.md and features.md under .missions/<slug>/. Use when a task is too big for one session, when the user says "mission", "/missions:mission-plan", or before /missions:mission-run. Writes zero product code.
-user_invocable: true
+description: Plan a mission - a multi-feature agent run whose definition of done is written before any code. Interviews the user, then emits mission.md, contract.md and features.md in the mission directory. Use when a task is too big for one session, when the user says "mission", "/missions:mission-plan", or before /missions:mission-run. Writes zero product code.
 ---
+
+Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
 # /missions:mission-plan — write the contract before the code
 
@@ -35,30 +36,41 @@ possibly real spend on live systems. Don't spend it on a one-file change.
    no PRD but the user has a requirements document that was not written for a mission, offer
    `/missions:mission-prd` in audit mode before you plan from it — a PRD written for a human review
    carries passages that read as requirements to you and are not.
-2. The repo's own documentation for the affected area — `CLAUDE.md`, a wiki index, `docs/`.
-   If the project has a docs-first rule, it applies here.
-3. The actual code for the seams you intend to change — enough to size features honestly.
-4. **The project's own rules** — test layers, database safety, git discipline, review process.
+2. Establish the target repository and read its applicable project rules (`AGENTS.md`, `CLAUDE.md`).
+   Defer substantive documentation/code research until the access gate below passes.
+3. **The project's own rules** — test layers, database safety, git discipline, review process.
    You are going to write these into the mission's `state.md`, because the agents that execute the
    mission are project-agnostic and `state.md` is the only place they learn what this repo requires.
 
-Dispatch `mission-researcher` agents (Agent tool, `subagent_type: mission-researcher`) for bounded
-lookups; they are read-only and cheap, and you may run several at once. Do not read the whole codebase
-yourself.
+**Before codebase research or researcher dispatch**, apply the runtime guide's
+[Required MCP access](../../docs/RUNTIMES.md#required-mcp-access--planning-and-design-both-hosts)
+policy. Verify **both Graphify MCP and Repowise MCP** independently with bounded read-only
+lookups against the target repository. Recover any mission-scoped human waivers first;
+repeat verification when resuming planning. An unwaived failure stops dependent research
+and artifact authoring visibly, with the state/journal blocker handling specified there.
 
-**Probe the codebase intelligence once, here — the agents never guess at it.**
+Only after that gate passes, dispatch `mission-researcher` agents (Agent tool,
+`subagent_type: mission-researcher`) for bounded lookups; they are read-only and you may run
+several at once. Pass the policy, repository, planning scope, probe evidence and applicable
+waivers in every brief. Read the repo's affected-area documentation first when its rules
+require it, then the actual code for the seams enough to size features honestly. A child's unwaived access failure blocks dependent planning even after parent success.
+
+**Local index inventory — separate from MCP connectivity and CLI availability:**
 
 ```bash
-test -f graphify-out/graph.json && echo "graphify=cli$(claude mcp get graphify >/dev/null 2>&1 && echo +mcp)"
-test -d .repowise && echo "repowise=index$(claude mcp get repowise >/dev/null 2>&1 && echo +mcp)"
-true   # a missing index is an answer, not a failed step
+if test -f graphify-out/graph.json; then echo "graphify_local_index=graphify-out/graph.json"; else echo "graphify_local_index=none"; fi
+if test -d .repowise; then echo "repowise_local_index=.repowise/"; else echo "repowise_local_index=none"; fi
 ```
 
-Write the result as one line under *Standing constraints* in `state.md`, where the digest carries
-it to every agent: `- Codebase intelligence: graphify=cli+mcp (graphify-out/, <date>) ·
-repowise=index (.repowise/)` — or `none`. When graphify exists, start your own lookups with
+Record verified capabilities under *Standing constraints* in `state.md`, e.g.
+`- Codebase intelligence: graphify=mcp (query_graph, <repo>, <UTC>) · repowise=unavailable;
+local indexes: graphify-out/graph.json; CLI: graphify available` (use one compact line).
+Use `cli+mcp` only when both CLI availability and an actual MCP lookup were verified.
+Waivers belong on a separate `MCP waiver:` line, never in capability labels.
+When the Graphify CLI and its usable local index are available, start local lookups with
 `graphify query "<term>"` and `graphify god-nodes` (seconds, no LLM): a community listing is the
-fastest honest way to size a feature to the files it touches. When repowise is indexed, capture the
+fastest honest way to size a feature to the files it touches. When the Repowise CLI and a usable
+local index are available, capture the
 baseline the scrutiny validator diffs against: `mkdir -p .missions/<slug>/baseline && repowise
 health --format json 2>/dev/null | sed -n '/^[{[]/,$p' > .missions/<slug>/baseline/health.json`
 (repowise prints its log lines on stdout ahead of the JSON; the `sed` keeps only the document —
@@ -89,12 +101,13 @@ You are a sounding board, not a stenographer. Before writing anything, resolve:
   terminal-review reserve. Tokens are informational. Missions without numbers get "informational
   only" warnings and no enforcement.
 
-- **Seats** — the defaults live in the agent definitions (worker Sonnet; reviewer Opus at `xhigh`;
+- **Seats (Claude)** — the defaults live in the agent definitions (worker Sonnet; reviewer Opus at `xhigh`;
   researcher and scrutiny Sonnet; behavior Opus) and need no line. Record only deviations, and
   they are executable: a per-feature `- **Seat:** opus` in `features.md` for a genuinely gnarly
   feature (an unfamiliar library, binary output, a security boundary), and `- Reviewer seat: fable`
   in `mission.md` when the blast radius includes auth, money or tenancy. `check.sh` validates both;
   the loop passes them as `model:` on the Agent call; the journal records what actually ran.
+  For Codex model configuration, use the runtime guide's driver role settings instead.
 
 Push back on scope. A mission that is 12 features long is usually two missions.
 
@@ -188,9 +201,14 @@ is wrong. Say which, and fix it before handing over.
 
 ## Step 5 — emit the files
 
-Create `.missions/<slug>/` (git-ignored) with `mission.md`, `contract.md`, `features.md`, `state.md`
-(fenced `mission-state` block first — `phase: planning`, `resume_next`, `state_cap_lines: 200`),
-an empty `handoffs/`, `validation/`, `patches/`, an empty `followups.md`, and an empty `journal.jsonl`.
+Create or complete `.missions/<slug>/` (git-ignored) with `mission.md`, `contract.md`,
+`features.md`, and `state.md` (fenced `mission-state` block first — `phase: planning`,
+`resume_next`, `state_cap_lines: 200`). Complete partial planning artifacts on resume while
+preserving existing decisions and waivers. Create missing `handoffs/`, `validation/`,
+`patches/` directories and initialize `followups.md` and `journal.jsonl` only if absent;
+never overwrite their existing contents. Persist any human MCP approvals from this
+conversation as journal decisions and compact standing constraints per the runtime guide;
+preserve existing waivers.
 When `/missions:mission-prd` ran first the directory already exists holding `prd.md` — populate
 around it and never clobber it; it is the record of what the mission was asked for.
 Keep the standing-constraints section under ~1.5 KB by referencing the repo's own rules by path;
@@ -210,6 +228,7 @@ as without reading the run state. Never commit a plan doc unless the user explic
 ## Step 6 — hand over
 
 Report to the user, tightly:
+- MCP access results and any human waivers used, including providers, fallback and scope
 - assertion count by proof class
 - feature and milestone count
 - the budget cap and autonomy ceiling you recorded

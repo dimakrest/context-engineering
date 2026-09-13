@@ -1,0 +1,45 @@
+name: Missions
+
+on:
+  pull_request:
+    paths:
+      - 'plugins/missions/**'
+      - '.claude-plugin/marketplace.json'
+      - '.agents/plugins/marketplace.json'
+      - '.github/workflows/missions.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/missions/**'
+      - '.claude-plugin/marketplace.json'
+      - '.agents/plugins/marketplace.json'
+      - '.github/workflows/missions.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Check shell prerequisites
+        run: |
+          jq --version
+          git --version
+          command -v shasum
+      - name: Lint agent definitions
+        run: bash plugins/missions/scripts/lint-agents.sh
+      - name: Exercise hook and script regressions
+        run: bash plugins/missions/tests/run.sh
+      - name: Exercise driver traces and unit tests
+        run: bash plugins/missions/tests/traces/run.sh

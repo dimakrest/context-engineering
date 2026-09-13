@@ -1,8 +1,9 @@
 ---
 name: mission-design
 description: The architecture step of a mission, run after /missions:mission-plan and before /missions:mission-run. Fans out read-only mission-researcher agents to find the repo's existing patterns, then writes design.md - numbered architectural guidelines (D001..) anchored to file:line exemplars - which binds every mission-worker and travels to the blind reviewers. Mandatory - /missions:mission-run refuses to dispatch without it. Writes zero product code. Use after the contract is reviewed, or when the user says "/missions:mission-design", "design the mission", or asks for architectural guidelines before implementation.
-user_invocable: true
 ---
+
+Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
 # /missions:mission-design — architecture before implementation
 
@@ -13,7 +14,8 @@ each one rediscovers the repo's conventions alone, and when two patterns coexist
 codebase instead of N. It is mandatory: `/missions:mission-run` refuses to dispatch a worker without it.
 
 Phase stays `planning` — the contract-first hook still blocks product code, deliberately. You write
-exactly one run artifact: `.missions/<slug>/design.md`.
+the design artifact `.missions/<slug>/design.md`, plus required access/waiver and progress
+bookkeeping in existing `state.md` and `journal.jsonl`.
 
 ## Preconditions
 
@@ -21,12 +23,22 @@ exactly one run artifact: `.missions/<slug>/design.md`.
 point to `/missions:mission-plan`. Read `mission.md`, `contract.md`, `features.md` and `state.md` first —
 the design constrains the features that exist, not the ones you would have chosen.
 
+Before research, dispatch or design authoring, apply the runtime guide's
+[Required MCP access](../../docs/RUNTIMES.md#required-mcp-access--planning-and-design-both-hosts)
+policy. Verify **both Graphify MCP and Repowise MCP** independently against the target
+repository at design entry and after resume/compaction. Recover and honor mission-scoped
+human waivers from standing constraints and their journal decisions without asking again.
+Unwaived failures block dependent work visibly; retain `phase: planning`, open issues and
+`resume_next` as specified there. Planning's earlier success is not current verification.
+
 ## Step 1 — explore: find what the repo already does
 
 Fan out `mission-researcher` agents (Agent tool, `subagent_type: mission-researcher`) — read-only,
 parallel-safe, several at once, one bounded question each. Ask for the **canonical example, not a
 survey**: the `file:line` a worker should open and imitate. Do not read the whole codebase yourself.
-Where the digest's `Codebase intelligence:` line names graphify, tell each researcher to start from
+Pass every researcher the shared access policy, repository, design scope, current probe
+evidence and applicable waivers. A child's unwaived failure blocks dependent design authoring
+even if the parent's probes succeeded. With verified Graphify MCP access, start from
 the graph — `query_graph` / `get_community` for the feature's seam, and the community's hub from
 `god_nodes` — so the exemplar it returns is the pattern the codebase converges on, not the first
 grep hit; ask it to say which it found.
@@ -74,6 +86,7 @@ essay on layered architecture. And design decides *shape*, never *scope*:
 Append the design summary to the human-facing plan doc (`docs/plans/<slug>-plan.md`), journal a
 `decision`, and report tightly:
 
+- MCP access results and any human waivers used (providers, fallback and scope)
 - each guideline, one line, with the pattern it is anchored to
 - the alternatives you rejected and why (one line each)
 - the two or three guidelines you are **least sure about** — the ones a worker is most likely to

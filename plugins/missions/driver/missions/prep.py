@@ -21,7 +21,7 @@ Git sees all of it only through `GIT_CONFIG_*` variables in the child's environm
 crash -- so it is never written. Everything here lands in `<mdir>/githooks/` and `runs/<task>/`,
 gitignored runtime files rewritten before every run.
 
-Not here: the driver's own push subprocess (phase pr, #10). The plain push token lives only in
+Not here: the driver's own push subprocess (phase pr, #30). The plain push token lives only in
 driver memory and nothing sets it in a child today, so the pre-push hook refuses everything.
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Sequence
 
-from . import files, journal
+from . import PR_PHASE_ISSUE, files, journal
 from .outcome import RunRequest
 
 # ---------------------------------------------------------------- environment
@@ -196,8 +196,8 @@ PASSTHROUGH_HOOKS = ("applypatch-msg", "pre-applypatch", "post-applypatch", "pre
 # exit; these hooks stop a cooperating worker earlier). git leaves a refused merge staged with
 # MERGE_HEAD set, so the worker sees the refusal and `git merge --abort` puts the tree back.
 REFUSED_HOOKS = {
-    "pre-merge-commit": "missions: a worker never merges; the driver merges main in phase pr (#10)",
-    "pre-rebase": "missions: a worker never rebases; the driver rebases on main in phase pr (#10)",
+    "pre-merge-commit": "missions: a worker never merges; the driver merges main in phase pr (#%d)" % PR_PHASE_ISSUE,
+    "pre-rebase": "missions: a worker never rebases; the driver rebases on main in phase pr (#%d)" % PR_PHASE_ISSUE,
 }
 
 

@@ -11,5 +11,5 @@ postcheck=grep -E '"event":"lease_wait".*"task":"F001#1".*"holder":"mission=[^" 
 postcheck=[ "$(grep -c '"event":"lease_wait"' "$TMP/repo2/.missions/demo/journal.jsonl")" = 1 ]
 postcheck=grep -q '"event":"handoff_ingested".*"feature":"F001"' "$TMP/repo2/.missions/demo/journal.jsonl"
 postcheck=grep -q '"event":"stop".*"reason":"limit-reached"' "$TMP/repo2/.missions/demo/journal.jsonl"
-postcheck=git -C "$TMP/repo2" log --oneline | grep -q 'F001: stub work'
+postcheck=git -C "$TMP/repo2" log --oneline | grep 'F001: stub work' >/dev/null
 postcheck=grep -q 'mission=' "$TMP/host.lock"

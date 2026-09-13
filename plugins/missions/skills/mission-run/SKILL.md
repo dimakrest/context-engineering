@@ -1,8 +1,9 @@
 ---
 name: mission-run
 description: Execute a planned mission. Drives the serial loop - dispatch one writing agent at a time, ingest its handoff, gate progress on open issues, fire blind validators at each milestone, and stop at a branch plus draft PR. Use after /missions:mission-plan, or when the user says "run the mission", "/missions:mission-run", or "continue the mission".
-user_invocable: true
 ---
+
+Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
 # /missions:mission-run — the orchestrator loop
 
@@ -84,34 +85,31 @@ guideline.
 `model:` on the Agent call; otherwise omit `model:` and the definition's default runs. Never widen
 an agent's `tools:` on the call. The hooks journal whichever model actually ran.
 
+Read [the shared worker brief](references/worker-brief.md) and
+[the shared reviewer brief](references/reviewer-brief.md) once when you enter the loop, and
+reuse their text for every dispatch — they do not change while the mission runs.
+
+Use the worker brief's text as the Agent `prompt`, with `subagent_type: mission-worker` and the
+seat above. Substitute its `${...}` placeholders with the mission `slug`, `feature_id`, `title`,
+`${CLAUDE_PLUGIN_ROOT}` (the plugin root, as the runtime guide resolves it everywhere else), and
+the feature's `procedures`, `files` and `out_of_scope`. The three multiline fields take the
+driver's row shapes, one row per line, indented two spaces: `digest` is the output of
+`bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>`; `assertions` is
+one row per contract assertion — id, text, class, budget — with contract.md's table pipes and
+its Feature(s), Status and Evidence columns stripped; `design` is the feature's `| D0nn |`
+rows verbatim from design.md's table, then its `### F00n` section text. One row of each:
+
 ```
-Agent tool:
-  subagent_type: "mission-worker"
-  model: <the feature's Seat — omit the line when features.md names none>
-  prompt: |
-    Mission: <slug>. Feature: F00n — <title>.
-
-    Mission state (digest — this is your briefing; do not read state.md wholesale):
-      <paste the output of: bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>>
-
-    Assertions you must satisfy (verbatim from contract.md, with their proof budget):
-      A003 — <text>  [structural]  proof: min named test; max 1 pinning feature
-      A007 — <text>  [structural]  proof: min mutation (tenancy); max 1 pinning feature
-
-    Design guidelines that bind you (verbatim from design.md, with exemplars):
-      D001 — <text> — imitate `path/file.py:40`
-      D004 — <text> — imitate `path/other.py:12`
-    Deviating from a guideline is allowed only if declared in the handoff with the reason.
-
-    Procedures that apply: <test layer, who handles a migration, docs to update — copy these
-    from features.md; the worker knows nothing about this project otherwise>
-    Files worth starting from: <paths, if known>
-    Out of scope: <the neighbouring things you must not touch>
-
-    Deliverables: working code, tests at the layer named above, one commit whose message
-    starts with "F00n:", and .missions/<slug>/handoffs/F00n.md written to the schema in
-    ${CLAUDE_PLUGIN_ROOT}/templates/MISSIONS_TEMPLATES.md. Do not push.
+  A003 — <text>  [structural]  proof: min: named test; max: 1 pinning feature
+  | D001 | <guideline> | `path/file.py:40` | F001 |
 ```
+
+Never pass an unfilled placeholder.
+
+This reference is also the driver's worker template: edit the brief there once for both
+runtimes. Its placeholder syntax is Python `string.Template`; use `$$` for a literal dollar
+sign in template prose (substituted evidence is already literal). Driver-only process and
+self-grading instructions are appended by the driver.
 
 The first line of the prompt **must** read `Mission: <slug>. Feature: F00n — …` — the serial guard
 and the journal take the feature id from there (not from the first `F0nn` anywhere in the prompt,
@@ -166,27 +164,16 @@ reviewer prompt that names a git command or omits the patch path.
 Reviewers hold the execution lease (they may run tests), so they run **one at a time** on this
 host; dispatch the next when the previous returns. Static research may fan out meanwhile.
 
-```
-Agent tool (one call per feature):
-  subagent_type: "mission-reviewer"
-  model: <mission.md's "Reviewer seat" — omit the line when it names none>
-  prompt: |
-    Mission: <slug>. Feature: F00n — <title>.
-    Review the patch for F00n against these assertions. You have not seen how or why it was
-    written and you should not go looking.
-      A003 — <text>  proof budget: <min … ; max …>
-      A007 — <text>  proof budget: <min … ; max …>
-    Design guidelines this feature was bound to (pre-code, from design.md):
-      D001 — <text> — exemplar `path/file.py:40`
-    Patch: .missions/<slug>/patches/F00n.patch (base <sha>, head <sha>)  — read this file;
-    it is your only diff, and you do not run git yourself.
-    Codebase intelligence: <the state.md line verbatim> — for every public symbol the patch
-    changes, find its callers (graphify affected "<symbol>" when graphify is named; grep
-    otherwise) and grade them in your Impact table.
-    Return a per-assertion verdict (satisfied / not satisfied / cannot tell from the diff),
-    a per-guideline conformance verdict, the impact table, plus defects with file:line and a
-    root-cause cluster hint. "cannot tell" is a legitimate and useful answer.
-```
+Use [the shared reviewer brief](references/reviewer-brief.md) you read at loop entry as the
+Agent `prompt`, with `subagent_type: mission-reviewer`. Pass `mission.md`'s `Reviewer seat` as
+`model:` when present; otherwise omit it. Substitute
+`slug`, `feature_id`, `title`, `patch_path`, `base` and `head` from the materialised feature
+patch. Fill `assertions` with the feature's verbatim assertions and proof budgets, in the
+worker's row shape without the class — `  A003 — <text>  proof budget: min: named test; max: 1
+pinning feature` — and `design` with its pre-code guidelines and exemplars in the worker's
+shape, both indented by two spaces. Set `intelligence` from the state's codebase-intelligence
+line, or `none`. Use the same placeholder rules as the worker brief. The driver reads this
+reference too; keep dispatch wording in the reference.
 
 The reviewer's tool list is fixed by its definition — read-only graph and call-graph tools, and
 none that return commit messages or PR bodies. Do not widen it on the call.

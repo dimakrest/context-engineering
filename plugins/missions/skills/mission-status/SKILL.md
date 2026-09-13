@@ -1,8 +1,9 @@
 ---
 name: mission-status
 description: Render a self-contained HTML status page for a mission from its state.md and journal.jsonl - assertion coverage, feature progress, spend vs cap, what is running now, open issues. Use when the user asks how a mission is going, says "/missions:mission-status", or wants to check in on a long run.
-user_invocable: true
 ---
+
+Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
 # /missions:mission-status — async oversight in one page
 
@@ -31,10 +32,12 @@ If more than one mission directory exists and the user didn't name one, list the
 5. **Milestone timeline.** From the journal: dispatches, validator verdicts, retries. Show validation
    failures rather than hiding them — first-pass failure is expected, and a milestone that passed
    everything first try is worth a second look at whether the assertions bite.
-6. **Cost.** Dollars from `session_cost` events (last value per session, summed) and the current
-   session via `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-spend.sh" <transcript> <journal>`;
+6. **Cost.** Measured dollars from `session_cost` events (last value per session, summed) and,
+   for a Claude session, `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-spend.sh" <transcript> <journal>`;
    agent wall-clock from `agent_return.duration_s`; dispatches used vs the dispatch cap; calls placed
-   if the behavior validator ran. Tokens, if any were journaled, are estimates — label them so.
+   if the behavior validator ran. Driver `cost` events with `unit: tokens` contain measured
+   Codex usage; distinguish those from token estimates. Codex USD spend is unknown. Show a
+   Claude subtotal separately in mixed-harness missions; never present it as total mission spend.
    Also print the five acceptance metrics and the seats line (dispatches and agent-hours per
    model — what actually ran, not what `mission.md` planned) from
    `bash "${CLAUDE_PLUGIN_ROOT}/scripts/journal-metrics.sh" .missions/<slug>`.

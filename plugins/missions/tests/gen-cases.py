@@ -3,6 +3,9 @@
 
 run.sh calls this before every run; edit the cases here, not on disk. usage: gen-cases.py [<out-dir>]"""
 import json, os, pathlib, shutil, sys, textwrap
+PLUGIN = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PLUGIN / "driver"))  # as tests/driver-selftest.py does
+from missions import prompts  # noqa: E402
 _dumps=json.dumps
 json.dumps=lambda o, **k: _dumps(o, separators=(",",":"), **k)
 
@@ -340,18 +343,18 @@ case(B, "reviewer-with-patch-ok", "rc=0", stdin=agent_payload("mission-reviewer"
 case(B, "reviewer-handoff-leak-blocked", "rc=2\nstderr~=handoff content", stdin=agent_payload("mission-reviewer", REVIEWER_OK + "\nSee handoffs/F001.md"), missions={"demo": demo()})
 case(B, "behavior-diff-blocked", "rc=2\nstderr~=contains a diff", stdin=agent_payload("mission-validator-behavior", "Prove A003.\n```diff\n+x\n```"), missions={"demo": demo()})
 case(B, "namespaced-reviewer-still-checked", "rc=2\nstderr~=names no patch file", stdin=agent_payload("missions:mission-reviewer", "Mission: demo. Feature: F001. Review A001."), missions={"demo": demo()})
-# The loop's own reviewer template, verbatim from skills/mission-run/SKILL.md -- an earlier wording
-# ("do not run git log, git show or git diff yourself") was blocked by this very hook.
-REVIEWER_TEMPLATE = ("Mission: demo. Feature: F001 — x.\nReview the patch for F001 against these assertions. You have not seen how or why it was\n"
-                     "written and you should not go looking.\n  A001 — text  proof budget: min named test; max 1\n"
-                     "Design guidelines this feature was bound to (pre-code, from design.md):\n  D001 — text — exemplar `a.py:4`\n"
-                     "Patch: .missions/demo/patches/F001.patch (base abc, head def)  — read this file;\nit is your only diff, and you do not run git yourself.\n"
-                     "Codebase intelligence: graphify=cli+mcp (graphify-out/, 2026-08-31) · repowise=none — for every public symbol the patch\n"
-                     "changes, find its callers (graphify affected \"<symbol>\" when graphify is named; grep\notherwise) and grade them in your Impact table.\n"
-                     "Return a per-assertion verdict (satisfied / not satisfied / cannot tell from the diff),\na per-guideline conformance verdict, the impact table, plus defects with file:line and a\n"
-                     "root-cause cluster hint. \"cannot tell\" is a legitimate and useful answer.")
+# Exercise the authored reviewer brief, not a second copy: an earlier wording ("do not run git
+# log, git show or git diff yourself") was blocked by this very hook. The case renders through
+# the driver's own renderer, so hook cases and driver dispatches cannot drift: every future
+# wording change passes through the same contamination guard the driver's dispatches face.
+REVIEWER_TEMPLATE = prompts._brief(
+    PLUGIN, "reviewer", slug="demo", feature_id="F001", title="x",
+    assertions="  A001 — text  proof budget: min named test; max 1",
+    design="  D001 — text — exemplar `a.py:4`",
+    patch_path=".missions/demo/patches/F001.patch", base="abc", head="def",
+    intelligence="graphify=cli+mcp (graphify-out/, 2026-08-31) · repowise=none")
 case(B, "run-skill-reviewer-template-passes", "rc=0", stdin=agent_payload("mission-reviewer", REVIEWER_TEMPLATE), missions={"demo": demo()})
-case(B, "run-skill-reviewer-template-is-current", "rc=0\npostcheck=grep -qF 'it is your only diff, and you do not run git yourself.' \"$plugin/skills/mission-run/SKILL.md\"",
+case(B, "run-skill-reviewer-template-is-current", "rc=0\npostcheck=grep -qF '](references/reviewer-brief.md)' \"$plugin/skills/mission-run/SKILL.md\"",
      stdin=agent_payload("mission-reviewer", REVIEWER_TEMPLATE), missions={"demo": demo()})
 
 # ================================================================ commit discipline

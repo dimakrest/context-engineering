@@ -6,22 +6,31 @@ agent file. Its system prompt is the constant below, because what it must do -- 
 nothing, answer with one JSON object -- is the driver's contract (design §6.3), not a persona
 anyone dispatches by hand.
 
-The user parts are the dispatch templates from skills/mission-run/SKILL.md, rendered verbatim in
-shape: the worker's ("Dispatching a worker") with the digest, the feature's assertions from
+The worker and reviewer user parts are rendered from skills/mission-run/references/*-brief.md,
+the same templates the session skill reads: the worker's with the digest, the feature's assertions from
 contract.md, its design section from design.md and its procedures; the reviewer's (VALIDATE step
 2) with the patch path and nothing that came after the code -- hooks/mission-blind-review.sh's
 rules are the test of that prompt, and a selftest runs the hook over it. The first line is
 `Mission: <slug>. Feature: F0nn — <title>.` -- the 0.2 hooks take the feature id from there, so it
 does not change. The judgment prompts quote the SKILL's own rules (`skill_section`) rather than
 paraphrase them, and end with the JSON shape the driver parses.
+
+The briefs are prose anyone edits. One that cannot be rendered -- a bare `$`, a placeholder the
+driver does not fill, a driver field it dropped, no file at all -- is a BriefError, and preflight
+renders both (`check_briefs`) so the refusal comes before the phase flips, not one dispatch in.
+Every text the driver hands out has `${CLAUDE_PLUGIN_ROOT}` resolved -- `resolve_plugin_root` for
+the agent bodies and the quoted SKILL sections, the brief field of that name for the briefs: a
+harness the driver launches has no such variable.
 """
 from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from string import Template
+from typing import Dict, List, Optional, Set, Tuple
 
 from . import files, journal
 
@@ -34,6 +43,17 @@ AGENTS = {
     "judgment": "mission-judgment",
 }
 JUDGMENT_TOOLS = ["Read", "Glob", "Grep"]
+
+# the placeholders the driver fills in each shared brief under skills/mission-run/references/ --
+# and every one of them must be used: a brief that drops `${digest}` would otherwise send workers
+# out without the standing constraints, silently. worker_prompt and reviewer_prompt render with
+# exactly these, preflight (check_briefs) renders with these, so the check and the dispatch
+# cannot drift apart.
+WORKER_FIELDS = ("slug", "feature_id", "title", "digest", "assertions", "design", "procedures",
+                 "files", "out_of_scope", "CLAUDE_PLUGIN_ROOT")
+REVIEWER_FIELDS = ("slug", "feature_id", "title", "assertions", "design", "patch_path", "base",
+                   "head", "intelligence")
+BRIEF_FIELDS = {"worker": WORKER_FIELDS, "reviewer": REVIEWER_FIELDS}
 
 JUDGMENT_SYSTEM = """# Mission judgment — the model proposes, the driver applies
 
@@ -72,6 +92,12 @@ class DigestError(Exception):
     """scripts/mission-state.sh refused (the digest does not fit, or the mission is unreadable)."""
 
 
+class BriefError(Exception):
+    """A shared dispatch brief under skills/mission-run/references/ cannot be rendered: the file
+    is not there, it names a placeholder the driver does not fill, a bare `$` sits in its prose,
+    or it stopped using a field the driver supplies."""
+
+
 def agent_definition(plugin: Path, name: str) -> Tuple[Dict, str]:
     """(frontmatter, body). Frontmatter keys are strings; `tools` is a list, empty when the YAML
     list is broken -- the same reading hooks/mission-lib.sh and lint-agents.sh apply."""
@@ -108,6 +134,14 @@ def agent_definition(plugin: Path, name: str) -> Tuple[Dict, str]:
     return meta, body
 
 
+def resolve_plugin_root(text: str, plugin: Path) -> str:
+    """`${CLAUDE_PLUGIN_ROOT}` is the one spelling of the plugin root in shipped text -- skills,
+    agents, templates, docs, hook messages -- and a session resolves it. A harness the driver
+    launches has no such variable, so every text the driver hands out gets the real path put in:
+    the agent bodies, and the SKILL sections the judgment prompts quote."""
+    return text.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin))
+
+
 def system_prompt(plugin: Path, role: str = "worker") -> Tuple[Dict, str]:
     """(frontmatter, system text) for a role -- or for an agent named outright, which is what
     the callers from before the roles existed pass. Judgment has no agent file: the constant, with
@@ -115,17 +149,17 @@ def system_prompt(plugin: Path, role: str = "worker") -> Tuple[Dict, str]:
     if role == "judgment":
         return {"name": AGENTS["judgment"], "tools": list(JUDGMENT_TOOLS)}, JUDGMENT_SYSTEM
     meta, body = agent_definition(plugin, AGENTS.get(role, role))
-    return meta, body.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin))
+    return meta, resolve_plugin_root(body, plugin)
 
 
 def skill_section(plugin: Path, name: str) -> str:
     """The text of skills/mission-run/SKILL.md from the `## <name>` heading to the next `## `,
-    heading included; empty when there is no such heading. The judgment prompts carry the SKILL's
-    rules this way so the driver and the prose loop cannot drift apart on what VALIDATE decides
-    or what a BLOCK halt is."""
+    heading included and the plugin root resolved; empty when there is no such heading. The
+    judgment prompts carry the SKILL's rules this way so the driver and the prose loop cannot
+    drift apart on what VALIDATE decides or what a BLOCK halt is."""
     text = files.section(files.read_text(plugin / "skills" / "mission-run" / "SKILL.md"),
                          name, keep_heading=True, level=r"##")
-    return (text.rstrip("\n") + "\n") if text else ""
+    return resolve_plugin_root(text.rstrip("\n") + "\n", plugin) if text else ""
 
 
 def digest(mission_dir: Path, plugin: Path) -> str:
@@ -165,39 +199,85 @@ def _design_lines(feature_id: str, design: Tuple[str, List[str]]) -> List[str]:
     return out
 
 
+def _placeholders(template: Template) -> Set[str]:
+    """The names a template substitutes, `$x` and `${x}` alike -- what Template.get_identifiers
+    answers from 3.11 on; the floor is 3.9, so this walks the same pattern it does."""
+    names: Set[str] = set()
+    for m in template.pattern.finditer(template.template):
+        name = m.group("named") or m.group("braced")
+        if name:
+            names.add(name)
+    return names
+
+
+def _brief(plugin: Path, role: str, **values: str) -> str:
+    """Render the shared session/driver dispatch brief. The brief is prose anyone edits, and it is
+    rendered one dispatch in, so everything that would ship a wrong prompt is a BriefError rather
+    than a traceback after the phase flipped: a file that is not there (an install older than the
+    briefs), a placeholder the driver does not fill, a bare `$` in the prose (`$$` is the literal
+    dollar), and a field the driver supplies that the template no longer uses -- a deleted
+    `${digest}` paragraph would otherwise send every worker out without the standing constraints,
+    and nothing would say so. Substitutions are one-pass, so dollar signs in repository evidence
+    or paths are preserved literally."""
+    path = plugin / "skills" / "mission-run" / "references" / (role + "-brief.md")
+    fields = BRIEF_FIELDS[role]
+    if set(values) != set(fields):
+        # the driver's own drift, not the brief's: preflight renders with the constant and the
+        # dispatch with the caller's keywords, and a run must not pass the one and fail the other
+        raise BriefError("the driver renders the %s brief with %s but %s_FIELDS names %s: prompts.py drifted, "
+                         "not %s" % (role, ", ".join(sorted(values)), role.upper(), ", ".join(sorted(fields)), path.name))
+    try:
+        text = files.read_text(path)
+    except OSError as e:
+        raise BriefError("%s: %s -- the %s brief ships with the plugin under skills/mission-run/references/ "
+                         "(since 0.3.0; an older install has none)" % (path, e.strerror or e, role))
+    template = Template(text)
+    try:
+        rendered = template.substitute(values)
+    except KeyError as e:
+        raise BriefError("%s names ${%s}, which the driver does not supply; it fills %s" % (
+            path, e.args[0], ", ".join(sorted(values))))
+    except ValueError as e:
+        raise BriefError("%s: %s -- `$$` is the literal dollar in template prose" % (path, e))
+    unused = sorted(set(values) - _placeholders(template))
+    if unused:
+        raise BriefError("%s no longer uses ${%s}: the driver supplies it, and a brief that dropped it would "
+                         "ship every dispatch without it" % (path, "}, ${".join(unused)))
+    return rendered.rstrip("\n")
+
+
+def check_briefs(plugin: Path) -> List[str]:
+    """Preflight's question about the shared briefs: does each render with the fields the driver
+    fills? Stand-in values, no mission needed -- the answer is about the template, and one that
+    fails here would otherwise fail one dispatch in, after the phase flipped to implementing and
+    with no `stop` in the journal. One problem string per brief that cannot render."""
+    problems: List[str] = []
+    for role, fields in BRIEF_FIELDS.items():
+        try:
+            _brief(plugin, role, **{name: "<%s>" % name for name in fields})
+        except BriefError as e:
+            problems.append(str(e))
+    return problems
+
+
 def worker_prompt(mission_dir: Path, feature: files.Feature, digest_text: str,
                   assertions: List[files.Assertion], design: Tuple[str, List[str]],
                   plugin: Path, prior: Optional[Dict] = None,
                   inherited: Optional[List[str]] = None) -> str:
     slug = mission_dir.name
-    parts: List[str] = []
-    parts.append("Mission: %s. Feature: %s \u2014 %s." % (slug, feature.id, feature.title or feature.id))
-    parts.append("")
-    parts.append("Mission state (digest \u2014 this is your briefing; do not read state.md wholesale):")
-    parts.append(_indent(digest_text))
-    parts.append("")
-    parts.append("Assertions you must satisfy (verbatim from contract.md, with their proof budget):")
-    if assertions:
-        for a in assertions:
-            parts.append(_assertion_line(a, True, "proof:"))
-    else:
-        parts.append("  (contract.md names no assertion for %s \u2014 say so in the handoff)" % feature.id)
-    parts.append("")
-    parts.append("Design guidelines that bind you (verbatim from design.md, with exemplars):")
-    parts += _design_lines(feature.id, design)
-    parts.append("Deviating from a guideline is allowed only if declared in the handoff with the reason.")
-    parts.append("")
-    parts.append("Procedures that apply: %s" % (feature.procedures or "as in the standing constraints above"))
-    parts.append("Files worth starting from: %s" % (", ".join("`%s`" % f for f in feature.files) or "none named"))
-    parts.append("Out of scope: %s" % (feature.out_of_scope or "everything not named above"))
-    parts.append("")
-    parts.append("Deliverables: working code, tests at the layer named above, one commit whose message")
-    parts.append("starts with \"%s:\", and .missions/%s/handoffs/%s.md written to the schema in" % (feature.id, slug, feature.id))
-    parts.append("%s/templates/MISSIONS_TEMPLATES.md. Do not push." % plugin)
-    parts.append("Changes outside the files named above are allowed only when the handoff names them under Completed with the reason.")
+    assertion_lines = [_assertion_line(a, True, "proof:") for a in assertions] or [
+        "  (contract.md names no assertion for %s \u2014 say so in the handoff)" % feature.id]
+    parts = [_brief(plugin, "worker", slug=slug, feature_id=feature.id,
+                    title=feature.title or feature.id, digest=_indent(digest_text),
+                    assertions="\n".join(assertion_lines), design="\n".join(_design_lines(feature.id, design)),
+                    procedures=feature.procedures or "as in the standing constraints above",
+                    files=", ".join("`%s`" % f for f in feature.files) or "none named",
+                    out_of_scope=feature.out_of_scope or "everything not named above",
+                    CLAUDE_PLUGIN_ROOT=str(plugin))]
+    # Driver-specific process ownership and recovery stay outside the shared dispatch content.
     parts.append("Do not spawn background work or sub-agents; the driver waits only for this process.")
-    parts.append("Before you exit, run `bash %s/bin/missions grade %s %s --self` and fix what it reports:" % (
-        plugin, mission_dir, feature.id))
+    parts.append("Before you exit, run `bash %s grade %s %s --self` and fix what it reports:" % (
+        shlex.quote(str(plugin / "bin" / "missions")), shlex.quote(str(mission_dir)), shlex.quote(feature.id)))
     parts.append("the driver runs the same check after you exit, and a handoff it rejects costs another run.")
     if inherited:
         parts.append("")
@@ -228,33 +308,17 @@ def _prior_attempt_lines(prior: Dict) -> List[str]:
 
 def reviewer_prompt(mission_dir: Path, feature: files.Feature, assertions: List[files.Assertion],
                     design: Tuple[str, List[str]], patch_path: Path, base: str, head: str,
-                    intelligence_line: str) -> str:
+                    intelligence_line: str, plugin: Path) -> str:
     """VALIDATE step 2's brief, in the SKILL's shape. It names the patch and what was written
     before the code (assertions, guidelines) and nothing after it: no handoff, no section of one,
     no git command -- the words hooks/mission-blind-review.sh rejects are the words that would
     leak the author's reasoning."""
-    slug = mission_dir.name
-    parts: List[str] = []
-    parts.append("Mission: %s. Feature: %s \u2014 %s." % (slug, feature.id, feature.title or feature.id))
-    parts.append("Review the patch for %s against these assertions. You have not seen how or why it was" % feature.id)
-    parts.append("written and you should not go looking.")
-    if assertions:
-        for a in assertions:
-            parts.append(_assertion_line(a, False, "proof budget:"))
-    else:
-        parts.append("  (contract.md names no assertion for %s \u2014 say so in your verdicts)" % feature.id)
-    parts.append("Design guidelines this feature was bound to (pre-code, from design.md):")
-    parts += _design_lines(feature.id, design)
-    parts.append("Patch: %s (base %s, head %s) \u2014 read this file; it is your only diff, and you do not run git yourself." % (
-        patch_path, base[:7], head[:7]))
-    parts.append("Codebase intelligence: %s \u2014 for every public symbol the patch changes, find its callers" % (
-        intelligence_line or "none"))
-    parts.append("(graphify affected \"<symbol>\" when graphify is named; grep otherwise) and grade them in your Impact table.")
-    parts.append("Return a per-assertion verdict (satisfied / not satisfied / cannot tell from the diff),")
-    parts.append("a per-guideline conformance verdict, the impact table, plus defects with file:line and a")
-    parts.append("root-cause cluster hint. \"cannot tell\" is a legitimate and useful answer.")
-    parts.append("Write nothing to the repository. Your final message is the review, in the format your instructions give.")
-    return "\n".join(parts) + "\n"
+    assertion_lines = [_assertion_line(a, False, "proof budget:") for a in assertions] or [
+        "  (contract.md names no assertion for %s \u2014 say so in your verdicts)" % feature.id]
+    return _brief(plugin, "reviewer", slug=mission_dir.name, feature_id=feature.id,
+                  title=feature.title or feature.id, assertions="\n".join(assertion_lines),
+                  design="\n".join(_design_lines(feature.id, design)), patch_path=str(patch_path),
+                  base=base[:7], head=head[:7], intelligence=intelligence_line or "none") + "\n"
 
 
 def scrutiny_prompt(mission_dir: Path, milestone: str, features: List[files.Feature],

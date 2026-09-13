@@ -13,4 +13,4 @@ journal!~="dispatch_id":"F002#2"
 state~=^phase: halted
 postcheck=sed -n '/^### F002/,/^##/p' "$M/features.md" | grep 'Status:\*\* pending' >/dev/null
 postcheck=grep -q '"rewritten": true' "$M/runs/F002#1/outcome.json"
-postcheck=! git log --oneline | grep -q 'F001: stub work'
+postcheck=! git log --oneline | grep 'F001: stub work' >/dev/null

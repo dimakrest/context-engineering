@@ -34,6 +34,22 @@ compares them. It is a separate plugin with its own enable flag.
 /plugin install missions@dimakrest-context-engineering
 ```
 
+### Missions in Codex
+
+The **missions** plugin also supports Codex, using the same skills, agent prompts, scripts and
+templates as Claude. Install it with:
+
+```bash
+codex plugin marketplace add dimakrest/context-engineering
+codex plugin add missions@dimakrest-context-engineering
+```
+
+Start a new session and use `$missions:mission-plan`, `$missions:mission-design`, then `$missions:mission-run`.
+Codex runs implementation and validation through the existing driver and completes the draft
+PR review in the session. See the [missions guide](plugins/missions/README.md#codex) for
+runtime differences, local development and follow-ups. Codex support is scoped to missions;
+the `context-engineering` plugin below uses Claude Code.
+
 ### Installation Scopes
 
 ```bash

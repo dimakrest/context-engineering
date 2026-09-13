@@ -50,8 +50,9 @@ Three questions that settle it:
   and re-deriving the assertions that are fine.
 
 A high defect *count* is not itself an argument for re-planning. Defects you have found and located
-are the cheap kind. Write the answer into the amendment record either way; if re-plan wins, stop and
-say so rather than doing a large amendment quietly.
+are the cheap kind. Keep the answer in the conversation until the read-only mapping and runtime
+prerequisites below pass; defer the amendment-record write to Step 7. If re-plan wins, stop and
+say so without writing an amendment record or changing any files.
 
 ## Step 2 — map the blast radius before you edit anything
 
@@ -73,6 +74,18 @@ document, and a plan doc that contradicts the contract is worse than no plan doc
 product intent as it stood when the mission was planned, and the contract governs after that — so
 amend it when this amendment changed **what the product does**, and when it only changed the
 decomposition, leave it and say in the amendment record that you did and why.
+
+### Runtime prerequisite — still read-only
+
+Complete the scope map, including mission records and the human-facing plan, before writing
+**any** mission or plan artifact, amendment record, state or journal entry. Determine whether
+`contract.md` would change or crosscheck is otherwise required (including by the user).
+Verify that the current runtime supports that crosscheck **before editing**. In Codex the
+reverse Codex → Claude adapter is unavailable: refuse such an amendment, report the blocker
+in the conversation, and leave all files, state and journal untouched. Do not apply the edit
+and discover at Step 8 that its mandatory audit cannot run. If mapping is uncertain, keep
+investigating read-only; do not presume crosscheck is optional. This prerequisite does not
+replace the mandatory post-amendment audit in Step 8.
 
 ## Step 3 — apply edits that abort rather than half-apply
 
@@ -174,7 +187,8 @@ reader can check.
 ## Step 8 — hand over
 
 **If `contract.md` changed, the amendment is not complete.** Run `/missions:mission-crosscheck contract` and
-report only after its audit passes.
+report only after its audit passes. If crosscheck was otherwise required, run that required
+check and pass its audit before reporting completion as well.
 
 This is the step people will want to skip, so here is the evidence: a careful amendment pass rewrote
 seven assertions and the blind review that followed found **three fresh defects in those seven** — a

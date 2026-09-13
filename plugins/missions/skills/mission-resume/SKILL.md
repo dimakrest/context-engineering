@@ -19,6 +19,17 @@ happened earlier in the conversation, stop — read the file instead.
 `design.md`, `features.md`, every file in `handoffs/` and `validation/`, `followups.md`, and the
 tail of `journal.jsonl`.
 
+If resuming **planning or design** (including after compaction), recover the separate
+`MCP waiver:` standing constraints and full referenced `decision` events from the journal;
+search beyond its tail. Preserve valid mission-scoped approvals without asking again.
+Apply the runtime guide's [Required MCP access](../../docs/RUNTIMES.md#required-mcp-access--planning-and-design-both-hosts)
+policy: repeat bounded read-only probes for **both Graphify MCP and Repowise MCP** before
+dependent research, dispatch or authoring. Historical success is not current access. Keep
+unwaived blockers under open issues and `resume_next`, retain `phase: planning`, and stop
+dependent work until restoration is verified or an explicit provider-specific waiver arrives.
+Do not treat ordinary resume/continue instructions as approval. On restoration or waiver,
+resolve only the affected blocker and preserve the waiver history and remaining issues.
+
 ## Step 2 — reconcile against reality
 
 This is the whole point of the skill. Check, don't assume:
@@ -35,7 +46,8 @@ This is the whole point of the skill. Check, don't assume:
 
 | Finding | Resume from |
 |---|---|
-| Contract exists but no `design.md` | Planning finished but the mandatory architecture step never ran (or died before writing its file). Continue with `/missions:mission-design` — never straight into `/missions:mission-run`, which will refuse anyway. |
+| Planning incomplete or `resume_next` names a planning/design MCP blocker | Resume the named stage through its access gate; an existing contract alone does not prove planning finished. |
+| Planning complete, contract exists but no `design.md` | Planning finished but the mandatory architecture step never ran (or died before writing its file). Continue with `/missions:mission-design` — never straight into `/missions:mission-run`, which will refuse anyway. |
 | Clean tree, handoff present for the last feature | The next feature. Normal case. |
 | Clean tree, **no** handoff for the last commit | Reconstruct the handoff from the diff and the commit, mark it `reconstructed`, and flag it — a reconstructed handoff is weaker evidence than a written one, because it was authored by someone who can see the code. |
 | Dirty tree, partial feature | Do **not** commit it blind. Show the user the diff and ask: finish, or discard and re-dispatch the feature to a fresh worker. Re-dispatching is usually right — half-finished work in a stale context is exactly what a mission is designed to avoid. |
@@ -49,13 +61,15 @@ This is the whole point of the skill. Check, don't assume:
 
 Rewrite `state.md` to the reconciled truth — the fenced `mission-state` block first (`phase`,
 `milestone`, `spend_usd` recomputed with `scripts/mission-spend.sh`, a fresh `resume_next`), then
-the prose — append a `resume` entry to the journal, and check the hook-owned locks: a `.writer` or
-`.lease` whose holder has an `agent_return` in the journal is stale; delete it and journal why.
+the prose, preserving MCP waiver summaries and unresolved blockers — append a `resume` entry
+to the journal, and check the hook-owned locks: a `.writer` or `.lease` whose holder has an `agent_return` in the journal is stale; delete it and journal why.
 Confirm `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mission-state.sh" .missions/<slug>` prints cleanly.
 Then report in five lines or fewer: where the mission is, what changed during reconciliation, and
 the next action.
 
-Then continue with `/missions:mission-run` — or with `/missions:mission-design` if `design.md` doesn't exist yet, or
+Then continue with the stage in `resume_next` if planning/design is incomplete, honoring its
+access gate and unresolved blockers; otherwise continue with `/missions:mission-run` — or with
+`/missions:mission-design` if `design.md` doesn't exist yet, or
 with `/missions:mission-pr-review` if the phase is `pr`, where the loop is already over. Never resume straight into dispatching a worker without the state file first
 agreeing with git — a mission that resumes onto a wrong assumption spends real money building the
 wrong thing.

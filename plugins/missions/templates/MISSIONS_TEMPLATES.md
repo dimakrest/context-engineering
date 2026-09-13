@@ -232,7 +232,8 @@ state_cap_lines: 200
 - <docs this repo expects updated, and where plans live>
 - <the repo's PR-creation and adversarial-review skills, if it has them — /missions:mission-pr-review uses both>
 - <anything with a real-world side effect that needs human confirmation>
-- Codebase intelligence: graphify=cli+mcp (graphify-out/, <date>) · repowise=index (.repowise/) — or `none`; the planner's probe writes it, every agent branches on it
+- Codebase intelligence: graphify=cli+mcp (query_graph, <repo>, <UTC>) · repowise=unavailable; local indexes: .repowise/; CLI: graphify available — capabilities only, MCP labels require current successful lookups
+- MCP waiver: Repowise; fallback=remaining MCP/local tools/docs/source; scope=planning,design; lifetime=mission; ts=<UTC>; decision=mcp-waiver-001 (journal.jsonl) — only after explicit human approval
 
 ## Key facts established during planning (do not re-research)
 - <seams, file:line citations, decisions already settled — saves every worker the lookup>
@@ -242,6 +243,14 @@ state_cap_lines: 200
 
 **Last updated:** <when, by which step>
 ```
+
+The MCP capability and waiver lines above are examples, not pre-approved access or waivers.
+Omit the waiver line when none is approved. Follow the runtime guide's **Required MCP access**
+policy for planning/design. An unresolved blocker belongs under Open issues (provider,
+operation/target, evidence or journal reference, affected stage), with `resume_next` naming
+restoration/verification or explicit waiver and `phase: planning`. Preserve approved waiver
+metadata when resuming or compacting; keep summaries and blockers within the digest cap by
+referencing full journal evidence. Before state exists, report blockers in the conversation.
 
 `phase` values: `planning` → `implementing` → `validating` → `negotiating` → … → `pr` → `done`, or
 `halted`. `pr` is the one phase in which pushing is allowed. The hooks normalise a few common
@@ -388,6 +397,18 @@ learned that changes no artifact — where a stale copy of an artifact was found
 {"ts":"...","event":"amendment","step":"scope-cut","files":["contract.md","features.md","design.md"],"summary":"F004 deleted, A015 retired; D003-D007 dropped F004 from their applicability columns","contract_changed":true}
 {"ts":"...","event":"decision","step":"mission-design","id":"D013","supersedes":"D013","summary":"REVERSED. Unpaginate-refine-slice replaced by a SQL twin plus an executed parity test","exemplar":"db/models/outbound_conversation_queue.py:124-136"}
 ```
+
+MCP waivers reuse `decision`; append to the journal, never overwrite existing history. Store
+the full human approval here and the compact summary above in standing constraints. A provider
+must be explicitly named and fallback authorized; generic continuation is not approval.
+
+```jsonl
+{"ts":"2026-09-13T12:00:00Z","event":"decision","id":"mcp-waiver-001","step":"mission-plan","mission":"<slug>","providers":["Repowise"],"fallback":["remaining MCP","local tools","documentation","source search"],"scope":["planning","design"],"lifetime":"mission","approval_text":"Proceed without Repowise MCP for this mission's planning and design using Graphify, local tools, docs and source search.","approval_ref":"<human message reference>"}
+```
+
+For both providers, record `providers: ["Graphify", "Repowise"]` only when the human approved
+both. A narrower approval retains its narrower fallback/scope. Restoration updates current
+capabilities and resolves the relevant blocker without erasing the mission's waiver decision.
 
 ## The `Amendments` table
 

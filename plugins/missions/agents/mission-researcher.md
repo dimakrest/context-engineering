@@ -28,8 +28,23 @@ the point: you are the only agent a mission runs in parallel, and read-only is w
 
 ## How to answer
 
-The digest in your brief carries a `Codebase intelligence:` line naming what this repo has
-(`graphify`, `repowise`, or `none`). Use it to pick the first step:
+Read and obey [Required MCP access](../docs/RUNTIMES.md#required-mcp-access--planning-and-design-both-hosts)
+and the policy supplied in your brief. During planning/design, **both Graphify MCP and
+Repowise MCP are independently required**. Verify each through a bounded read-only lookup
+against the target repository in your own session; parent success is not child access.
+A successful empty result counts; missing tools, auth/connection errors, timeouts and unusable
+indexes do not. The brief must identify the repository, stage, probe evidence and applicable
+human waivers. If policy/waiver context is missing, report it and stop dependent research.
+
+Report every access failure to the orchestrator with provider, attempted operation/target,
+error evidence and affected work, even when the failure is waived. Without an applicable
+explicit human waiver for that provider and stage, stop dependent research; do not fall back
+silently or grant a waiver yourself. With a waiver, use the remaining MCP, available local
+tooling, documentation and source search within its permitted fallback. The digest's separate
+`MCP waiver:` summary points to the full approval in the journal; `Codebase intelligence:`
+is capability evidence, never authorization. Outside planning/design this gate does not apply.
+
+After the access gate passes (or outside its scope), use available capabilities to orient:
 
 1. **Orient with the graph, when there is one.** One or two calls, small `token_budget`:
    `mcp__graphify__query_graph` (a term → the nodes and edges around it, each with
@@ -43,8 +58,8 @@ The digest in your brief carries a `Codebase intelligence:` line naming what thi
    already written down, and reading it costs a fraction of exploring the code.
 3. **Then the code itself.** Open what steps 1–2 pointed at, read what you must, stop.
 
-If the graph tools are absent from your tool list, or the line says `none`, skip step 1 — docs,
-then grep, as before. Their absence is not a finding; do not report it.
+In planning/design, skipping an unavailable MCP requires the applicable human waiver above.
+Outside those stages, use available documentation and source search if graph tools are absent.
 
 ## What to return
 
@@ -53,7 +68,8 @@ Three to fifteen lines. Structure:
 - **Answer** — the direct answer, first line, no preamble.
 - **Evidence** — `file.py:142` style citations. Every claim needs one, and it must come from a
   file you actually read: a graph node is a pointer, not evidence.
-- **Caveats** — what you could not determine, stated plainly.
+- **Caveats** — what you could not determine, MCP access failures and any human waivers
+  used (providers, fallback, scope and decision reference), stated plainly.
 
 ## Rules
 

@@ -50,6 +50,98 @@ def clean_env(**extra):
     return env
 
 
+class PlanningAccessTests(unittest.TestCase):
+    """Executable inventory/digest regressions, not a simulation of model compliance.
+
+    Instruction-level access and amendment scenarios are reviewed separately in
+    docs/PLANNING_ACCESS_REVIEW.md; no mock MCP response can prove a session obeys prose.
+    """
+
+    def test_local_inventory_reports_all_combinations_without_calling_configuration_or_cli(self):
+        plan = (PLUGIN / "skills/mission-plan/SKILL.md").read_text()
+        section = plan.split("**Local index inventory", 1)[1]
+        snippet = section.split("```bash\n", 1)[1].split("```", 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            checkout = Path(tmp)
+            fake_bin = checkout / "bin"
+            fake_bin.mkdir()
+            # Fail and leave evidence if inventory starts invoking CLIs/configuration again.
+            for name in ("claude", "codex", "graphify", "repowise"):
+                command = fake_bin / name
+                command.write_text('#!/bin/sh\necho invoked >> "$PROBE_LOG"\nexit 99\n')
+                command.chmod(0o755)
+            for graph, repo in ((False, False), (True, False), (False, True), (True, True)):
+                with self.subTest(graphify=graph, repowise=repo):
+                    shutil.rmtree(checkout / "graphify-out", ignore_errors=True)
+                    shutil.rmtree(checkout / ".repowise", ignore_errors=True)
+                    if graph:
+                        (checkout / "graphify-out").mkdir()
+                        (checkout / "graphify-out/graph.json").write_text("{}")
+                    if repo:
+                        (checkout / ".repowise").mkdir()
+                    result = subprocess.run(["bash", "-e", "-c", snippet], cwd=tmp,
+                                            env=clean_env(PATH=str(fake_bin) + os.pathsep + os.environ["PATH"],
+                                                          PROBE_LOG=str(checkout / "invoked")),
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.splitlines(), [
+                        "graphify_local_index=" + ("graphify-out/graph.json" if graph else "none"),
+                        "repowise_local_index=" + (".repowise/" if repo else "none")])
+                    self.assertFalse((checkout / "invoked").exists())
+
+    def test_waiver_decision_survives_repeated_digest_reads_and_enforces_byte_cap(self):
+        templates = (PLUGIN / "templates/MISSIONS_TEMPLATES.md").read_text()
+        decision = next(json.loads(line) for line in templates.splitlines()
+                        if line.startswith('{"ts":') and '"id":"mcp-waiver-001"' in line)
+        required = {"id", "ts", "providers", "fallback", "scope", "lifetime", "mission", "approval_text", "approval_ref"}
+        self.assertLessEqual(required, set(decision))
+        for providers in (["Graphify"], ["Repowise"], ["Graphify", "Repowise"]):
+            with self.subTest(providers=providers), tempfile.TemporaryDirectory() as tmp:
+                mission = Path(tmp)
+                decision["providers"] = providers
+                decision["mission"] = "demo"
+                # A prior journal entry and later unrelated history must not be overwritten.
+                history = json.dumps({"event": "note", "summary": "prior history"}) + "\n"
+                history += json.dumps(decision) + "\n"
+                history += (json.dumps({"event": "note", "summary": "later history"}) + "\n") * 80
+                (mission / "journal.jsonl").write_text(history)
+                summary = ("- MCP waiver: " + ",".join(providers)
+                           + "; fallback=remaining MCP/local tools/docs/source; scope=planning,design; "
+                           + "lifetime=mission; ts=" + decision["ts"]
+                           + "; decision=" + decision["id"] + " (journal.jsonl)\n")
+                blocked = next((p for p in ("Graphify", "Repowise") if p not in providers), None)
+                resume = ("design: verify " + blocked + " or obtain explicit waiver") if blocked else "resume design"
+                issue = (blocked + " MCP lookup against demo failed: connection refused; blocks design") if blocked else "none"
+                state = ("```mission-state\nphase: planning\nresume_next: " + resume + "\nstate_cap_lines: 200\n```\n"
+                         "## Open issues\n- " + issue + "\n## Standing constraints for every agent\n"
+                         "- Codebase intelligence: graphify=unavailable; repowise=unavailable\n" + summary)
+                (mission / "state.md").write_text(state)
+                def digest():
+                    return subprocess.run(["bash", str(PLUGIN / "scripts/mission-state.sh"), tmp],
+                                          env=clean_env(LC_ALL="C.UTF-8"), capture_output=True)
+                for _ in range(2):
+                    result = digest()
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(summary.encode(), result.stdout)
+                    self.assertIn(issue.encode(), result.stdout)
+                    self.assertIn(resume.encode(), result.stdout)
+                    self.assertNotIn(b"+mcp", result.stdout)
+                    self.assertLessEqual(len(result.stdout), 2048)
+                    self.assertEqual((mission / "journal.jsonl").read_text(), history)
+                # Exactly 2048 bytes succeeds; one additional multibyte character must fail.
+                padding = 2048 - len(result.stdout) - 1  # extra nonempty line adds a newline
+                padded = state + "é" * (padding // 2) + "x" * (padding % 2)
+                (mission / "state.md").write_text(padded)
+                result = digest()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(result.stdout), 2048)
+                (mission / "state.md").write_text(padded + "é")
+                result = digest()
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, b"")
+                self.assertIn(b"digest cannot fit", result.stderr)
+
+
 class PackagingTests(unittest.TestCase):
     """A plugin installation copies only plugins/missions. Both hosts must discover the same
     editable skills there, including their runtime instructions and executable assets; neither

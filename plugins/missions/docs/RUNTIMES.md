@@ -38,6 +38,85 @@ invoke them as written. In Codex, select the installed skill with `/skills` or `
 `skills/mission-*/SKILL.md`; do not send Claude slash commands to a shell. User arguments
 are the mission slug, mode and constraints supplied with the invocation.
 
+## Required MCP access — planning and design, both hosts
+
+Graphify MCP and Repowise MCP are **independently required** for planning and design.
+This policy applies before dependent codebase research, researcher dispatch or plan/design
+artifact authoring, at each stage's entry, and when resuming either stage after interruption
+or compaction. Reading mission records and project rules to establish the target and recover
+waivers is allowed before the gate. It does not add prerequisites to implementation,
+validation, status or terminal review.
+
+### Verify current access
+
+For **each** provider, discover its callable tools in the current host, then perform one
+bounded, read-only lookup against the **target repository**: for example Graphify
+`query_graph` with a narrow identifier and small supported result/token limit, and Repowise
+`search_codebase` with a narrow identifier and small supported result limit. Inspect the
+actual tool schema to select the repository/index and supported bounds; do not invent
+parameters. Use a finite host timeout (at most 60 seconds), report timeouts, and do not retry
+indefinitely. If repository identity cannot be established, the lookup is not usable proof.
+A successful empty result counts when the target repository/index was usable; an error
+about a missing, stale/unusable or wrong repository index does not.
+
+Registration (including disabled registration), configuration lookup commands, CLI access,
+local index files and historical success do **not** establish current MCP access. Do not use
+`claude mcp get` or `codex mcp get` as connectivity detection. Missing tools, connection or
+authentication errors, timeout, and unusable repository indexes each fail that provider's gate.
+One working MCP never replaces the other. Refresh capability evidence at each gate; mark
+failed providers unavailable in the current session rather than retaining historical `+mcp`.
+Record current successful operation, repository,
+timestamp and result summary; only a successful current MCP lookup earns `+mcp` on the
+`Codebase intelligence:` line. Track local indexes and CLI availability separately; an index
+file does not prove a CLI exists, and a working MCP need not have a local index.
+
+### Block visibly or honor an explicit human waiver
+
+On failure, report a visible blocker naming the server, attempted tool/operation and target
+(or the missing callable tool), available error evidence without secrets, and affected
+planning/design work. Stop dependent research and artifact authoring until that provider's
+access is restored and verified, or the human explicitly authorizes fallback for it.
+Do not silently proceed while awaiting a reply. An explicit refusal leaves the blocker open.
+
+A waiver must **name Graphify, Repowise, or both** and authorize proceeding without their MCP
+access. Silence, timeout, generic “continue” instructions and agent decisions do not grant a
+waiver. A provider-specific waiver covers only that provider. Its lifetime is **this mission**,
+including resumed sessions; honor it without asking again within its approved planning/design
+scope and permitted fallback. Do not extend it to other missions or broaden a narrower scope.
+Attempt the entry probes even with a waiver: restored access can be used, and failure already
+covered by the waiver does not block or require renewed approval. Keep the waiver decision
+when access is restored; remove only resolved blocker entries and update current capabilities.
+
+For an existing mission with `state.md`, keep `phase: planning`, record an unresolved MCP
+blocker under **Open issues**, and set `resume_next` to the blocked stage, named provider(s)
+and the required restoration/verification or explicit waiver. Append evidence as a `note`
+in `journal.jsonl` and reference it from the compact issue. A waived failure is reported but
+is not an unresolved blocker. Resolve only the provider/scope approved; other blockers remain.
+Before state exists, report the blocker in the conversation; do not create mission/plan
+artifacts merely to record it. Persist any subsequent approval during normal artifact creation.
+Never truncate or replace existing journal entries.
+
+Record an approved waiver as a `decision` in the existing journal with a unique id, UTC
+`ts`, `providers`, `fallback`, `scope` (planning and/or design), `lifetime: mission`, mission
+identity, and the human's approval text and/or retrievable message reference. Keep a compact
+**MCP waiver:** summary under **Standing constraints**, separate from `Codebase intelligence:`;
+include providers, fallback, scope, lifetime, timestamp and decision reference. Full approval
+text belongs in the journal. Never label a waived connection `+mcp`; a provider with a waiver
+can earn that label only through a successful current lookup. On resume, recover decisions
+by reference from the full journal, not just its tail, and preserve them when rewriting state.
+If a summary is absent, recover it from journal decisions; an unsupported claim of approval
+is not a waiver. Check the ≤ 2 KB digest; shorten other prose or reference the full decision,
+never silently drop waiver metadata or an open blocker to fit.
+
+Brief every researcher with this policy, target repository, stage, current probe evidence,
+and applicable waiver metadata/decision. A child must verify both providers in its own
+session; parent success does not establish child access. Child failures must be reported to
+the orchestrator even if waived. An unwaived child failure stops its dependent research and
+the orchestrator's dependent authoring until resolved or explicitly waived. Researchers
+cannot grant waivers. With an applicable waiver, use the remaining MCP, available local
+tooling, documentation and source search only within the permitted fallback. Include used
+waivers and access limitations in researcher returns and planning/design handovers.
+
 ## Claude Code
 
 Follow the shared workflow's Agent calls, model seats and review commands. The Claude
@@ -57,10 +136,16 @@ available delegation tools; the Claude `Agent` tool, `subagent_type`, model name
 bounded read-only lookup in the current session. Read-only is a task constraint here, not
 a claim that the role's Claude tool allowlist is enforced by Codex.
 
-Probe connected tools through the current host. Run `mission-plan`'s codebase-intelligence
-probe snippet as written, with `codex mcp get <name>` in place of `claude mcp get <name>`; a
-registered server is not proof that it is connected, and only a connected one earns `+mcp`.
-Record only available capabilities in the mission's standing constraints.
+Apply the shared **Required MCP access** policy above before planning/design research,
+including local research when delegation is unavailable. Tool discovery must be followed by
+an actual read-only lookup for each provider; configuration inspection is not verification.
+
+Amendment support is conditional: complete read-only scope mapping first. If `contract.md`
+would change, or crosscheck is otherwise required, refuse the amendment before writing any
+mission or plan artifact, state update, amendment record or journal event: the reverse
+cross-vendor adapter is unavailable. Report the prerequisite in the conversation and leave
+all files untouched. Amendments that do not require crosscheck may proceed with the shared
+coherence gate; the mandatory post-amendment audit is never waived by this runtime guide.
 
 Claude `Seat` fields stay Claude-only. For Codex driver model overrides, use
 `driver.json` → `roles.<role>.model`; `null` uses the CLI's configured default. Do not put
@@ -142,4 +227,5 @@ report that the reverse **Codex → Claude** adapter is unavailable. A second Co
 does not satisfy vendor independence. Preserve sealed packages and unfinished progress;
 do not mark the crosscheck passed or silently replace it with a same-vendor review.
 Other mission skills can proceed when crosscheck is optional; when the user requires it,
-record the unresolved prerequisite. See [design and follow-ups](CODEX_DESIGN.md).
+report the unresolved prerequisite (for amendments, before any writes as required above).
+See [design and follow-ups](CODEX_DESIGN.md).

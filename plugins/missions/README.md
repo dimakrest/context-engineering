@@ -54,13 +54,21 @@ loaded by both hosts; edit a workflow once. Both packages also share agents, tem
 scripts and the Python driver. Install the whole plugin: copying individual skill folders
 with a standalone skills installer omits their shared resources.
 
-Codex planning, design, amendment, status and PR review run in the session. `$missions:mission-run`
+Planning and design require **both Graphify MCP and Repowise MCP**, each verified through a
+current read-only lookup against the target repository. Unavailable access blocks dependent
+work unless the human explicitly names and waives that provider. Waivers persist for this
+mission across resumed planning/design sessions; CLI access and registration do not count.
+
+Codex planning, design, supported amendments, status and PR review run in the session. `$missions:mission-run`
 uses `bin/missions` with the Codex harness for implementation and milestone validation, then
 returns to the session for the terminal draft PR review. Claude's hooks are registered only
 in its manifest; native Codex session tools do not get the missions hook guards. The driver
 retains its existing locks, grading, validation and caps. Codex reports tokens, not measured
 USD, and cannot enforce a per-run dollar budget. `mission-crosscheck` currently supports
-Claude → Codex only and explicitly stops when invoked from Codex.
+Claude → Codex only and explicitly stops when invoked from Codex. Amendments that change
+`contract.md` or otherwise require crosscheck are therefore refused in Codex **before any
+writes**, after read-only scope mapping. Other amendments retain the shared coherence gate;
+the mandatory post-amendment audit is not bypassed.
 
 See [runtime behavior](docs/RUNTIMES.md) for invocation and enforcement details, and
 [design research and follow-ups](docs/CODEX_DESIGN.md) for the repository comparisons and

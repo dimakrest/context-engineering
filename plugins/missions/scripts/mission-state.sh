@@ -49,7 +49,8 @@ out+=$'\n'
 oi=$(section '[Oo]pen issues'); [ -n "$oi" ] && out+="$oi"$'\n'$'\n'
 sc=$(section '[Ss]tanding constraints'); [ -n "$sc" ] && out+="$sc"$'\n'
 
-size=${#out}
+# Count bytes, not locale-dependent characters: waiver approval metadata may be Unicode.
+size=$(printf '%s' "$out" | wc -c)
 if [ "$size" -gt "$CAP" ]; then
   echo "digest cannot fit: $size bytes > $CAP. Shorten '## Standing constraints for every agent' in $m/state.md (move project rules into the repo's own CLAUDE.md / rules files and reference them by path)." >&2
   printf '%s\n' "$out" | head -c "$CAP" >&2

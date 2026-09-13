@@ -1,6 +1,6 @@
 {
   "name": "missions",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Contract-first missions with shared Claude and Codex skills, serial driver execution, blind review and evidence-based validation.",
   "author": {
     "name": "Dima Krest"

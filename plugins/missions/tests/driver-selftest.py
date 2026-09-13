@@ -58,7 +58,7 @@ class PlanningAccessTests(unittest.TestCase):
     """
 
     def test_local_inventory_reports_all_combinations_without_calling_configuration_or_cli(self):
-        plan = (PLUGIN / "skills/mission-plan/SKILL.md").read_text()
+        plan = (PLUGIN / "skills/mission-spec/SKILL.md").read_text()
         section = plan.split("**Local index inventory", 1)[1]
         snippet = section.split("```bash\n", 1)[1].split("```", 1)[0]
         with tempfile.TemporaryDirectory() as tmp:
@@ -147,7 +147,7 @@ class PackagingTests(unittest.TestCase):
     editable skills there, including their runtime instructions and executable assets; neither
     may depend on a second generated tree or paths back into the source checkout."""
 
-    SKILLS = {"mission-amend", "mission-crosscheck", "mission-design", "mission-plan",
+    SKILLS = {"mission-amend", "mission-crosscheck", "mission-design", "mission-spec",
               "mission-pr-review", "mission-prd", "mission-resume", "mission-run", "mission-status"}
 
     def manifest(self, host, plugin=PLUGIN):

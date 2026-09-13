@@ -32,8 +32,8 @@ rather than relying on an earlier export. Keep the working directory at the **ta
 project's checkout**; `.missions/<slug>` belongs there, not in the installed plugin. Read the
 target project's `AGENTS.md`, `CLAUDE.md` and other applicable instructions.
 
-`/missions:mission-plan` and similar references in the shared text name skills. In Claude,
-invoke them as written. In Codex, select the installed skill with `/skills` or `$missions:mission-plan`
+`/missions:mission-spec` and similar references in the shared text name skills. In Claude,
+invoke them as written. In Codex, select the installed skill with `/skills` or `$missions:mission-spec`
 (installed plugin skills use the `missions` namespace). Continue by reading the corresponding
 `skills/mission-*/SKILL.md`; do not send Claude slash commands to a shell. User arguments
 are the mission slug, mode and constraints supplied with the invocation.

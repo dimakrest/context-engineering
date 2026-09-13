@@ -1,6 +1,6 @@
 ---
 name: mission-design
-description: The architecture step of a mission, run after /missions:mission-plan and before /missions:mission-run. Fans out read-only mission-researcher agents to find the repo's existing patterns, then writes design.md - numbered architectural guidelines (D001..) anchored to file:line exemplars - which binds every mission-worker and travels to the blind reviewers. Mandatory - /missions:mission-run refuses to dispatch without it. Writes zero product code. Use after the contract is reviewed, or when the user says "/missions:mission-design", "design the mission", or asks for architectural guidelines before implementation.
+description: The architecture step of a mission, run after /missions:mission-spec and before /missions:mission-run. Fans out read-only mission-researcher agents to find the repo's existing patterns, then writes design.md - numbered architectural guidelines (D001..) anchored to file:line exemplars - which binds every mission-worker and travels to the blind reviewers. Mandatory - /missions:mission-run refuses to dispatch without it. Writes zero product code. Use after the contract is reviewed, or when the user says "/missions:mission-design", "design the mission", or asks for architectural guidelines before implementation.
 ---
 
 Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
@@ -20,7 +20,7 @@ bookkeeping in existing `state.md` and `journal.jsonl`.
 ## Preconditions
 
 `contract.md` and `features.md` exist and passed the planner's coverage gate; otherwise stop and
-point to `/missions:mission-plan`. Read `mission.md`, `contract.md`, `features.md` and `state.md` first —
+point to `/missions:mission-spec`. Read `mission.md`, `contract.md`, `features.md` and `state.md` first —
 the design constrains the features that exist, not the ones you would have chosen.
 
 Before research, dispatch or design authoring, apply the runtime guide's

@@ -1,13 +1,13 @@
 ---
-name: mission-plan
-description: Plan a mission - a multi-feature agent run whose definition of done is written before any code. Interviews the user, then emits mission.md, contract.md and features.md in the mission directory. Use when a task is too big for one session, when the user says "mission", "/missions:mission-plan", or before /missions:mission-run. Writes zero product code.
+name: mission-spec
+description: Specify a mission - a multi-feature agent run whose scope, validation contract and feature decomposition are written before any code. Interviews the user, then emits mission.md, contract.md and features.md in the mission directory. Use when a task is too big for one session, when the user says "mission", "/missions:mission-spec", or before /missions:mission-run. Writes zero product code.
 ---
 
 Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
-# /missions:mission-plan — write the contract before the code
+# /missions:mission-spec — write the contract before the code
 
-You are planning a **mission**: a multi-feature run executed later by `/missions:mission-run`. Your entire
+You are specifying a **mission**: a multi-feature run executed later by `/missions:mission-run`. Your entire
 output is three files. **You write no product code in this skill.** Not a stub, not a scaffold, not
 "just the model file". If you write product code here, the contract becomes a description of what you
 already built, which is the exact failure this whole workflow exists to prevent.
@@ -32,7 +32,7 @@ possibly real spend on live systems. Don't spend it on a one-file change.
 1. **`.missions/<slug>/prd.md`, when one exists** — written or repaired by `/missions:mission-prd`.
    It is the product intent, and the contract is *lifted* from it rather than re-derived: its
    decision matrix and acceptance rows are most of `contract.md`, and its "decisions deferred to
-   `/missions:mission-plan`" section is your interview agenda. Adopt the slug it chose. If there is
+   `/missions:mission-spec`" section is your interview agenda. Adopt the slug it chose. If there is
    no PRD but the user has a requirements document that was not written for a mission, offer
    `/missions:mission-prd` in audit mode before you plan from it — a PRD written for a human review
    carries passages that read as requirements to you and are not.

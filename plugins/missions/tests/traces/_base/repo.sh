@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds the fixture checkout at <tmp>/repo on branch mission/demo, with a bare origin whose main
-# is the base commit -- the shape a real mission has after /missions:mission-plan.
+# is the base commit -- the shape a real mission has after /missions:mission-spec.
 set -e
 tmp="$1"
 git init -q --bare -b main "$tmp/origin.git"

@@ -40,7 +40,7 @@ possibly real spend on live systems. Don't spend it on a one-file change.
 
 ## Two ways to run a mission
 
-**Planning is identical either way.** `/missions:mission-plan` and `/missions:mission-design` write
+**Planning is identical either way.** `/missions:mission-spec` and `/missions:mission-design` write
 the same five files under `.missions/<slug>/`, and both runners read them. What differs is *what
 drives the loop* once the plan exists.
 
@@ -79,7 +79,7 @@ between them mid-flight — and today it has to, because the driver stops at the
                   # write a PRD, or audit an existing one, into .missions/<slug>/prd.md so the
                   # planner lifts the assertions instead of inventing them
 
-/missions:mission-plan     # interview, then write the contract. No product code is written here.
+/missions:mission-spec     # interview, then write the contract. No product code is written here.
                   # → review .missions/<slug>/contract.md yourself before continuing
 
 /missions:mission-crosscheck   # optional but cheap: an external reviewer derives the plan
@@ -188,12 +188,12 @@ The mission's **terminal state is a branch plus a draft PR**. Never a merge. A h
 
 | Skill | Does |
 |---|---|
-| `/missions:mission-prd` | Optional, before `/missions:mission-plan`. Writes a PRD, or audits an existing one, so the planner and the design step can read it literally: behavioural acceptance rows with fail-safe pairs, release metrics fenced off from implementation scope, no stale line anchors, superseded proposals marked as such, and the decisions deliberately left to the mission interview named. Chooses the slug and writes `.missions/<slug>/prd.md` — the one mission file that exists before the plan, and the only thing it writes. Zero product code. |
-| `/missions:mission-plan` | Interviews you, argues about scope, emits `mission.md` + `contract.md` + `features.md`. Refuses to finish unless every assertion maps to a feature and every feature to an assertion. Writes **zero** product code. |
+| `/missions:mission-prd` | Optional, before `/missions:mission-spec`. Writes a PRD, or audits an existing one, so the planner and the design step can read it literally: behavioural acceptance rows with fail-safe pairs, release metrics fenced off from implementation scope, no stale line anchors, superseded proposals marked as such, and the decisions deliberately left to the mission interview named. Chooses the slug and writes `.missions/<slug>/prd.md` — the one mission file that exists before the plan, and the only thing it writes. Zero product code. |
+| `/missions:mission-spec` | Interviews you, argues about scope, emits `mission.md` + `contract.md` + `features.md`. Refuses to finish unless every assertion maps to a feature and every feature to an assertion. Writes **zero** product code. |
 | `/missions:mission-design` | The mandatory architecture step between plan and run. Fans out read-only `mission-researcher` agents to find the repo's existing patterns, then writes `design.md` — guidelines `D001..` anchored to `file:line` exemplars. Workers are bound to them; blind reviewers grade conformance against them. Writes zero product code. |
 | `/missions:mission-run` | The orchestrator loop. Refuses to dispatch without `design.md`. Dispatches one writing agent at a time, ingests handoffs, blocks progress on open issues, fires blind validators at milestones, halts on the triggers below. Ends by handing the finished branch to `/missions:mission-pr-review`. |
 | `/missions:mission-pr-review` | The terminal whole-branch review, run in the `pr` phase. Opens the draft PR, runs `/simplify`, fires the general review and the repo's adversarial-review skill in parallel, assesses every finding with read-only agents, and writes an HTML findings report. Re-entrant via its progress file `validation/pr-review.md`. Fixes nothing — survivors go to `followups.md`. |
-| `/missions:mission-crosscheck` | The cross-vendor blind review of the plan, run after `/missions:mission-plan` (contract mode) or after `/missions:mission-design` (design mode). Seals a spec package with our conclusions stripped, has an external reviewer derive the architecture independently, then **audits the transcript for contamination before any finding is read**. Routes contract defects to the user and never patches `contract.md`. Re-entrant via `crosscheck/progress.md`. |
+| `/missions:mission-crosscheck` | The cross-vendor blind review of the plan, run after `/missions:mission-spec` (contract mode) or after `/missions:mission-design` (design mode). Seals a spec package with our conclusions stripped, has an external reviewer derive the architecture independently, then **audits the transcript for contamination before any finding is read**. Routes contract defects to the user and never patches `contract.md`. Re-entrant via `crosscheck/progress.md`. |
 | `/missions:mission-amend` | Changes a planned mission's contract, decomposition or scope without leaving half of it behind. Maps the blast radius before editing, applies edits that abort rather than half-apply, retires ids without renumbering, sweeps to zero live references, and gates on `check.sh` — a bidirectional coverage check, because the one-directional kind passes a mission whose two files disagree. **`planning` phase only**, and a contract amendment is not complete until `/missions:mission-crosscheck contract` passes on the result. |
 | `/missions:mission-status` | Renders `.missions/<slug>/` into a self-contained HTML page — assertion coverage by proof class, features, spend vs cap, open issues. |
 | `/missions:mission-resume` | Reconstructs position from disk and reconciles it against git. Git wins any disagreement. |
@@ -224,7 +224,7 @@ blast radius that includes auth, money or tenancy.
 
 ### Codebase intelligence — graphify and repowise
 
-The plugin is project-agnostic, so it never assumes a code graph exists. `/missions:mission-plan`
+The plugin is project-agnostic, so it never assumes a code graph exists. `/missions:mission-spec`
 probes once and writes one line under *Standing constraints* in `state.md` — `- Codebase
 intelligence: graphify=cli+mcp (graphify-out/, <date>) · repowise=index (.repowise/)`, or `none` —
 and every agent branches on that line from its digest.
@@ -232,7 +232,7 @@ and every agent branches on that line from its digest.
 | Consumer | Uses | Why |
 |---|---|---|
 | `mission-researcher` | `query_graph`, `get_neighbors`, `get_community`, `shortest_path`; `search_codebase`, `get_symbol`, `get_callers_callees`, `get_dependency_path` | orientation before reading — the graph says where to read, then the file is cited |
-| `/missions:mission-plan`, `/missions:mission-design` | `graphify query`, `graphify god-nodes`; researchers asked for the community hub | size features to files; pick the exemplar the codebase converges on |
+| `/missions:mission-spec`, `/missions:mission-design` | `graphify query`, `graphify god-nodes`; researchers asked for the community hub | size features to files; pick the exemplar the codebase converges on |
 | `mission-reviewer` | `graphify affected "<symbol>"` (Bash), `get_neighbors`, `get_callers_callees`, `get_dependency_path`, `get_dead_code`, `get_health` | per-feature impact: every caller of a changed public symbol gets a verdict |
 | `mission-validator-scrutiny` | `repowise health --format json` vs `baseline/health.json` | deterministic health delta — reported, never a gate |
 | `/missions:mission-run` ingest | `graphify update .` after every handoff | AST-only, keeps the graph current for the next reviewer |
@@ -402,7 +402,7 @@ on compaction); exact-range sealed review (patch files, no git for reviewers, ho
 and measured spend (dollar / dispatch / wall-clock / repair-round caps from the harness's cost-state).
 
 **Never run end to end on real work — either runner.** Planning has: one mission has been planned,
-designed, crosschecked twice and amended twice, which exercised `/missions:mission-plan`,
+designed, crosschecked twice and amended twice, which exercised `/missions:mission-spec`,
 `/missions:mission-design`, `/missions:mission-crosscheck` and `/missions:mission-amend` against a
 real codebase. The loop itself — the workers, the validators — has not run a real mission under
 `/missions:mission-run` or under the driver. What *has* run under the driver is a fixture repo with

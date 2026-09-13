@@ -4,7 +4,7 @@ Contract-first, multi-feature agent runs whose definition of done is written bef
 
 - `/missions:mission-prd` — optional, before the interview: write a PRD, or audit an existing one,
   into `.missions/<slug>/prd.md`, so the planner lifts its assertions instead of inventing them.
-- `/missions:mission-plan` — interview, validation contract (assertions with proof classes and proof
+- `/missions:mission-spec` — interview, validation contract (assertions with proof classes and proof
   budgets), features sized to files, milestones, caps.
 - `/missions:mission-design` — architecture guidelines (D00n) with exemplars, before any code.
 - `/missions:mission-run` — the orchestrator loop, driven by a Claude Code session or the Codex
@@ -48,7 +48,7 @@ codex plugin add missions@dimakrest-context-engineering
 ```
 
 Start a new session in the project you want to work on, then use `/skills` or type
-`$missions:mission-plan`, `$missions:mission-design`, `$missions:mission-run`, `$missions:mission-status` or `$missions:mission-resume`.
+`$missions:mission-spec`, `$missions:mission-design`, `$missions:mission-run`, `$missions:mission-status` or `$missions:mission-resume`.
 Installed skills use the `missions` namespace. The same nine `skills/*/SKILL.md` files are
 loaded by both hosts; edit a workflow once. Both packages also share agents, templates,
 scripts and the Python driver. Install the whole plugin: copying individual skill folders
@@ -76,7 +76,7 @@ remaining gaps. The root `context-engineering` plugin is still Claude-only.
 
 ## Running a mission — two ways
 
-Planning is the same either way: `/missions:mission-plan`, then `/missions:mission-design`, writing
+Planning is the same either way: `/missions:mission-spec`, then `/missions:mission-design`, writing
 the five files under `.missions/<slug>/`. What differs is what drives the loop afterwards.
 
 | | **A session** — `/missions:mission-run` | **The driver** — `bin/missions run` |

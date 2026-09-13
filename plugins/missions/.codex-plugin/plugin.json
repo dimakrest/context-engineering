@@ -16,7 +16,7 @@
       "Read",
       "Write"
     ],
-    "defaultPrompt": "Use $missions:mission-plan to plan a multi-feature task before writing code."
+    "defaultPrompt": "Use $missions:mission-spec to specify a multi-feature task before writing code."
   },
   "repository": "https://github.com/dimakrest/context-engineering"
 }

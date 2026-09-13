@@ -7,7 +7,7 @@ planner reading it.
 ```markdown
 # PRD: <feature, as a user would name it>
 
-Status: ready for `/missions:mission-plan`. Product interview completed <date>.
+Status: ready for `/missions:mission-spec`. Product interview completed <date>.
 Architecture, implementation and release measurements are separate work.
 
 Primary tickets: <#id — title>, <#id — title>.
@@ -34,7 +34,7 @@ the degraded path.>
 
 <Phase rule: whether a subset is a legitimate first mission, what a subset must name (its
 exclusions), and that a subset does not complete the feature. If no first phase was selected,
-say so and list it under decisions deferred to `/missions:mission-plan` below.>
+say so and list it under decisions deferred to `/missions:mission-spec` below.>
 
 Non-goals: <the adjacent channel>, <the legacy path>, <analytics or dashboards>, <the refactor
 that would make this easier>, <the irreversible side effect nobody asked to change>. Shared code
@@ -120,7 +120,7 @@ The design step must resolve the following. They do not reopen the resolved prod
 4. <Persistence and readers: the minimum representation, and every reader that must agree.>
 5. <Shared-code changes actually needed, and their regression evidence.>
 
-Decisions deferred to `/missions:mission-plan`, because they shape the mission rather than the
+Decisions deferred to `/missions:mission-spec`, because they shape the mission rather than the
 product: <delivery families in the first mission>; <whether a feasibility proof is the first
 milestone>; <the deadline rule that still needs a number>; <blast radius and reviewer seats>;
 <caps and autonomy ceiling>.

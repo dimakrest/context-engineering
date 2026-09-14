@@ -70,7 +70,8 @@ def repo_root(mission):
 
 # Exact workflow artifacts only. Arbitrary files under crosscheck/ and VOID* in
 # the mission remain protected. Raw evidence and snapshots belong outside the repo.
-ARTIFACTS = {"progress.json", "progress.md", "pass1-report.md", "pass2-report.md", "report.html"}
+ARTIFACTS = {"progress.json", "progress.md", "report.html",
+             "contract-pass1-report.md", "design-pass1-report.md", "design-pass2-report.md"}
 
 # The two repository trees the reviewer may never reach, relative to the repo root.
 FORBIDDEN = (".missions", "docs/plans")
@@ -80,15 +81,22 @@ TOKEN_RE = re.compile(r"[^\s<>\"'`\[\]()]+")
 WARNING_RE = re.compile(r"(?i)^\s*(?:[-*]\s*)?(?:warning:\s*)?(?:do not|never|must not)\s+"
                         r"(?:read|open|search|inspect|access|enumerate|follow|cite)\b")
 CITATION_RE = re.compile(r"(?:\[verified:\s*([^\]]+)\]|\]\(([^)]+)\))")
+# Punctuation around a cited path, then its :line[:col][-end] suffix, then punctuation again.
+LEADING, TRAILING = "`'\"[({", "`'\"])},;:."
+SUFFIX_RE = re.compile(r":\d+(?::\d+)?(?:-\d+)?$")
+INFORMATIONAL = {"status", "compact_boundary", "thinking_tokens", "api_retry", "informational", "notification"}
 
 # Executables such as rg can themselves run code (--pre). Only the documented
-# read/search subset is auditable, including its options.
+# read/search subset is auditable, including its options. Combined short options
+# (-rn, -nC3) are split; an attached value (-C3, -n20) is separated.
+COMMANDS = ("cat", "head", "tail", "nl", "wc", "rg", "grep", "ls", "pwd", "sed", "cd")
+SEARCH = ("rg", "grep")
 SWITCHES = {
     "cat": {"-n", "-b", "-s", "-v", "-A", "--number"},
-    "head": set(), "tail": set(),
-    "nl": {"-ba", "-bt"}, "wc": {"-l", "-c", "-w", "-m", "-L"},
+    "head": set(), "tail": set(), "nl": set(),
+    "wc": {"-l", "-c", "-w", "-m", "-L"},
     "pwd": {"-L", "-P"}, "sed": {"-n"},
-    "ls": {"-a", "-l", "-la", "-al", "-A", "-1", "-d"},
+    "ls": {"-a", "-l", "-A", "-1", "-d"},
     "rg": {"--files", "--hidden", "--no-ignore", "--no-ignore-vcs", "--no-ignore-parent",
            "--no-ignore-global", "--line-number", "--no-heading", "--files-with-matches",
            "--count", "--fixed-strings", "--ignore-case", "--smart-case", "--only-matching",
@@ -98,11 +106,14 @@ SWITCHES = {
 }
 VALUES = {
     "head": {"-n", "-c", "--lines", "--bytes"},
-    "tail": {"-n", "-c", "--lines", "--bytes"}, "sed": {"-e"},
+    "tail": {"-n", "-c", "--lines", "--bytes"},
+    "nl": {"-b", "-n", "-w"}, "sed": {"-e"},
     "rg": {"-g", "--glob", "--iglob", "-e", "--regexp", "-f", "--file", "-m", "--max-count",
            "-A", "-B", "-C", "--context", "--max-depth", "-t", "--type", "-T", "--type-not"},
     "grep": {"--exclude", "--exclude-dir", "-e", "--regexp", "-f", "--file", "-m", "-A", "-B", "-C"},
 }
+FILE_VALUES = {"-f", "--file"}
+PATTERN_FLAGS = {"-e", "--regexp", "-f", "--file", "--files"}
 
 
 def walk_error(error):
@@ -150,6 +161,7 @@ class Access:
         self.cwd = Path(cwd or repo).resolve()
         self.extra_reads = {Path(p).resolve() for p in extra_reads}
         self.forbidden = [self.repo / name for name in FORBIDDEN]
+        self.git = self.repo / ".git"
         # The audited tree is static, so path verdicts and discovery walks are memoized.
         self.verdicts, self.discovered = {}, set()
         self.inodes = set()
@@ -162,7 +174,12 @@ class Access:
                         self.inodes.add((info.st_dev, info.st_ino))
 
     def absolute(self, raw, cwd=None):
-        p = Path(raw).expanduser()
+        p = Path(raw)
+        if raw.startswith("~"):
+            try:
+                p = p.expanduser()
+            except RuntimeError:
+                pass  # bash leaves an unknown ~user literal
         return p if p.is_absolute() else (cwd or self.cwd) / p
 
     def allowed(self, resolved):
@@ -175,8 +192,10 @@ class Access:
         return self.verdicts[key]
 
     def _forbidden_path(self, raw, cwd):
-        raw = unquote(raw).removeprefix("file://")
-        raw = re.sub(r":\d+(?::\d+)?(?:-\d+)?$", "", raw).strip("`'\"[](),;")
+        raw = unquote(raw).removeprefix("file://").lstrip(LEADING).rstrip(TRAILING)
+        raw = SUFFIX_RE.sub("", raw).rstrip(TRAILING)
+        if not raw:
+            return False
         if FORBIDDEN_RE.search(raw):
             return True
         p = self.absolute(raw, cwd).resolve()
@@ -191,22 +210,30 @@ class Access:
         # Relative citations are checked against both the launch directory and the repo.
         return self.forbidden_path(raw) or (not Path(raw).is_absolute() and self.forbidden_path(raw, self.repo))
 
+    def readable(self, resolved, reason):
+        require(not within(resolved, self.git), "access to repository internals")
+        require(self.allowed(resolved), reason)
+
     def path(self, raw, cwd=None, discovery=False):
         require(isinstance(raw, str) and raw, "missing access path")
+        require("{" not in raw and "}" not in raw, "unauditable brace expansion in path")
         require(not self.forbidden_path(raw, cwd), "access to sealed material")
         expanded = self.absolute(raw, cwd)
-        require(self.allowed(expanded.resolve()), "access outside repository and designated review inputs")
+        self.readable(expanded.resolve(), "access outside repository and designated review inputs")
         if glob.has_magic(str(expanded)):
             for match in glob.glob(str(expanded), recursive=True):
                 require(not self.forbidden_path(match, cwd), "glob reaches sealed material")
-                require(self.allowed(Path(match).resolve()), "glob reaches an unsealed external input")
-        if discovery:
-            self.discover(Path(re.split(r"[?*\[]", str(self.absolute(raw, cwd)), maxsplit=1)[0]))
+                self.readable(Path(match).resolve(), "glob reaches an unsealed external input")
+                if discovery and Path(match).is_dir():
+                    self.discover(Path(match).resolve())
+        elif discovery and expanded.is_dir():
+            self.discover(expanded.resolve())
 
     def discover(self, root):
-        # Globs and searches can reach aliases even without spelling a sealed root.
-        if not root.is_dir():
-            root = root.parent
+        # Searches and listings enumerate a directory; a hardlink or symlink inside it
+        # aliases sealed material even without spelling a sealed root. External symlink
+        # targets are not followed by rg/grep/ls without -L/-R, which are rejected, and a
+        # direct read through one is refused by path().
         if root in self.discovered:
             return
         for directory, dirs, names in os.walk(root):
@@ -216,23 +243,26 @@ class Access:
                 target = base / name
                 if target.is_symlink() or (target.is_file() and target.stat().st_nlink > 1):
                     require(not self.forbidden_path(str(target)), "search can reach a sealed alias")
-                    require(any(within(target.resolve(), r) for r in (self.repo, self.package, self.cwd)),
-                            "search can reach an unsealed external alias")
         self.discovered.add(root)
 
-    def citations(self, text):
+    def citations(self, text, output=False):
         # Plain warnings naming the two forbidden trees are allowed. Paths to files,
-        # verified tags and Markdown links are evidence of contamination.
+        # verified tags and Markdown links are evidence of contamination. In tool output
+        # a colon-free relative token inside prose is a mention, not a read: rg/grep print
+        # `path:content` and listings print one path per line, and those stay strict.
         require(isinstance(text, str), "invalid tool output text")
         for pair in CITATION_RE.findall(text):
             for raw in pair:
                 require(not raw or not self.names_sealed(raw), "citation or output names sealed material")
         for line in text.splitlines():
             warning = WARNING_RE.match(line)
-            for raw in TOKEN_RE.findall(line):
+            tokens = TOKEN_RE.findall(line)
+            for raw in tokens:
                 if raw.rstrip("/.,:;") in FORBIDDEN_MENTIONS:
                     continue
                 if warning and not re.search(r":\d+", raw):
+                    continue
+                if output and ":" not in raw and len(tokens) > 1 and not raw.startswith(("/", "~")):
                     continue
                 require(not self.names_sealed(raw), "citation or output names sealed material")
 
@@ -246,9 +276,10 @@ class Access:
             raise Invalid("malformed shell command") from exc
         if len(words) == 3 and Path(words[0]).name in ("bash", "sh", "zsh") and words[1] in ("-c", "-lc"):
             return self.shell(words[2], cwd)
-        require(not re.search(r"[$`<>{}\n\\]", command), "unauditable shell expansion or redirection")
+        require(not re.search(r"[$`<>{}\n]", command), "unauditable shell expansion or redirection")
         lex = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
         lex.whitespace_split = True
+        lex.commenters = ""
         parts, part = [], []
         for word in lex:
             if word in (";", "&&", "||", "|"):
@@ -262,88 +293,139 @@ class Access:
             parts.append(part)
         for words in parts:
             name, args = words[0], words[1:]
-            require(name in ("cat", "head", "tail", "nl", "wc", "rg", "grep", "ls", "pwd", "sed", "cd"),
-                    "unknown or non-read-only shell command")
+            require(name in COMMANDS, "unknown or non-read-only shell command")
             if name == "cd":
                 require(len(args) == 1, "unauditable cd")
                 self.path(args[0], cwd)
-                cwd = (cwd / args[0]).resolve()
-                continue
-            switches, values = SWITCHES[name], VALUES.get(name, set())
-            normalized, i = [], 0
-            while i < len(args):
-                arg = args[i]
-                if arg == "--":
-                    normalized.extend(args[i + 1:])
-                    break
-                if arg in values:
-                    require(i + 1 < len(args), "missing option value")
-                    normalized.extend([arg, args[i + 1]])
-                    i += 2
-                    continue
-                if arg.startswith("--") and "=" in arg:
-                    flag, value = arg.split("=", 1)
-                    require(flag in values, "unauditable shell option")
-                    normalized.extend([flag, value])
-                elif name == "rg" and arg.startswith("-g") and len(arg) > 2:
-                    normalized.extend(["-g", arg[2:]])
-                elif re.fullmatch(r"-(?:n|c)\d+", arg) and name in ("head", "tail"):
-                    normalized.extend([arg[:2], arg[2:]])
+                cwd = self.absolute(args[0], cwd).resolve()
+            else:
+                self.command(name, args, cwd)
+
+    def options(self, name, args):
+        """Split argv into (flag, value) options and positional operands."""
+        switches, values = SWITCHES[name], VALUES.get(name, set())
+        options, positional, queue = [], [], list(args)
+        while queue:
+            arg = queue.pop(0)
+            if arg == "--":
+                positional.extend(queue)
+                break
+            if arg in values:
+                require(queue, "missing option value")
+                options.append((arg, queue.pop(0)))
+            elif arg.startswith("--") and "=" in arg:
+                flag, value = arg.split("=", 1)
+                require(flag in values, "unauditable shell option")
+                options.append((flag, value))
+            elif name in ("head", "tail") and re.fullmatch(r"-\d+", arg):
+                options.append(("-n", arg[1:]))
+            elif re.fullmatch(r"-[A-Za-z].+", arg):
+                flag, rest = arg[:2], arg[2:]
+                if flag in values:
+                    options.append((flag, rest))
                 else:
-                    require(not arg.startswith("-") or arg in switches, "unauditable shell option")
-                    normalized.append(arg)
-                i += 1
-            args = normalized
-            # Drop only real exclusion operands, never the entire command containing one.
-            effective, excluded, i = [], [], 0
-            while i < len(args):
-                arg = args[i]
-                if name in ("rg", "grep") and arg in ("--glob", "-g", "--iglob", "--exclude", "--exclude-dir"):
-                    require(i + 1 < len(args), "missing search operand")
-                    value = args[i + 1]
-                    if arg.startswith("--exclude") or value.startswith("!"):
-                        excluded.append(value.lstrip("!"))
-                        i += 2
-                        continue
-                if name in ("rg", "grep") and (arg.startswith(("--exclude=", "--exclude-dir=", "--glob=!", "--iglob=!", "-g!"))):
-                    excluded.append(arg.split("=", 1)[1].lstrip("!") if "=" in arg else arg[3:])
-                    i += 1
-                    continue
-                effective.append(arg)
-                i += 1
-            if name == "sed":
-                require(args and not any(a.startswith("-i") for a in args), "sed writes are forbidden")
-                expr = next((a for a in args if not a.startswith("-")), "")
-                require(re.fullmatch(r"\d+(?:,\d+)?p", expr) is not None, "unauditable sed expression")
-            searching = name in ("rg", "grep", "ls")
-            for arg in effective:
-                if not arg.startswith("-"):
-                    self.path(arg, cwd, discovery=searching and (cwd / arg).exists())
-            if name in ("rg", "grep"):
-                # Broad searches must explicitly exclude both protected trees.
-                roots = [(cwd / a).resolve() for a in effective if not a.startswith("-") and (cwd / a).is_dir()]
-                if not roots and not any((cwd / a).is_file() for a in effective if not a.startswith("-")):
-                    roots = [cwd]
-                if any(within(f, root) for root in roots for f in self.forbidden):
-                    require(all(any(x in excluded for x in (tree + "/**", "**/" + tree + "/**")) for tree in FORBIDDEN),
+                    require(flag in switches, "unauditable shell option")
+                    options.append((flag, None))
+                    queue.insert(0, "-" + rest)
+            elif arg.startswith("-") and arg != "-":
+                require(arg in switches, "unauditable shell option")
+                options.append((arg, None))
+            else:
+                positional.append(arg)
+        return options, positional
+
+    def command(self, name, args, cwd):
+        options, positional = self.options(name, args)
+        if name == "sed":
+            scripts = [value for flag, value in options if flag == "-e"]
+            if not scripts:
+                require(positional, "unauditable sed expression")
+                scripts, positional = positional[:1], positional[1:]
+            require(all(re.fullmatch(r"\d+(?:,\d+)?p", script) for script in scripts), "unauditable sed expression")
+        excluded, includes = [], []
+        for index, (flag, value) in enumerate(options):
+            if value is None:
+                continue
+            if flag in FILE_VALUES:
+                self.path(value, cwd)
+            elif name == "rg" and flag in ("-g", "--glob", "--iglob"):
+                (excluded if value.startswith("!") else includes).append((index, value.lstrip("!")))
+            elif name == "grep" and flag == "--exclude-dir":
+                excluded.append((index, value))
+        for _, value in includes:
+            self.path(value, cwd)
+        if name in SEARCH and positional and not any(flag in PATTERN_FLAGS for flag, _ in options):
+            positional = positional[1:]  # the first operand is the regex, not a file
+        listing = name in SEARCH or name == "ls"
+        for arg in positional:
+            self.path(arg, cwd, discovery=listing)
+        if name in SEARCH:
+            self.search(name, positional, includes, excluded, cwd)
+
+    def search(self, name, positional, includes, excluded, cwd):
+        # Broad searches must effectively exclude both protected trees; rg applies globs
+        # to the path as it prints it, and grep's --exclude-dir matches base names only.
+        roots = [arg for arg in positional if self.absolute(arg, cwd).is_dir()]
+        if not roots and not any(self.absolute(arg, cwd).is_file() for arg in positional):
+            roots = [None]  # no operand: the working directory is searched
+        for operand in roots:
+            root = (cwd if operand is None else self.absolute(operand, cwd)).resolve()
+            self.discover(root)
+            for tree in self.forbidden:
+                if within(tree, root):
+                    require(all(i < j for i, _ in includes for j, _ in excluded), "include glob after a sealed-tree exclusion")
+                    require(self.excludes(name, excluded, operand, cwd, root, tree),
                             "unbounded discovery without both sealed-tree exclusions")
+
+    def excludes(self, name, excluded, operand, cwd, root, tree):
+        rel = tree.relative_to(root)
+        chain = [Path(*rel.parts[:i + 1]) for i in range(len(rel.parts))]
+        if operand is None or operand == ".":
+            printed = ""
+        elif operand.startswith("~") or Path(operand).is_absolute():
+            expanded = self.absolute(operand, cwd)
+            printed = "" if expanded == cwd else str(expanded.relative_to(cwd)) if within(expanded, cwd) else str(expanded)
+        else:
+            printed = operand[2:] if operand.startswith("./") else operand
+        # rg prints operands verbatim, so anchored globs cannot be trusted past `.`/`..` segments.
+        literal = not re.search(r"(?:^|/)\.\.?(?:/|$)", printed)
+
+        def prints(directory):
+            return str(directory) if not printed else printed.rstrip("/") + "/" + str(directory)
+
+        for _, text in excluded:
+            if name == "grep" or "/" not in text:
+                if not glob.has_magic(text) and "/" not in text and text in rel.parts:
+                    return True
+                continue
+            anchored = not text.startswith("**/")
+            body = text if anchored else text[3:]
+            body = body[:-3] if body.endswith("/**") else body.rstrip("/")
+            if not body or body.startswith("/") or glob.has_magic(body) or "{" in body:
+                continue
+            if anchored and literal and any(prints(d) == body for d in chain):
+                return True
+            if not anchored and any(prints(d) == body or prints(d).endswith("/" + body) for d in chain):
+                return True
+        return False
 
     def native(self, name, args):
         require(isinstance(args, dict), "invalid tool arguments")
         if name == "Read":
             self.path(args.get("file_path"))
         elif name in ("Glob", "Grep"):
-            self.path(args.get("path", str(self.cwd)), discovery=True)
+            root = args.get("path", str(self.cwd))
+            self.path(root, discovery=True)
             pattern = args.get("pattern")
-            require(isinstance(pattern, str), "missing search pattern")
-            self.path(pattern)
+            require(isinstance(pattern, str) and pattern, "missing search pattern")
+            if name == "Glob":
+                self.path(pattern, self.absolute(root))
+            else:
+                self.citations(pattern)
             # Claude tools have no reliable per-call directory exclusion contract.
             # Restrict them to explicit safe subtrees/files, named in TASK.md.
-            root = Path(args.get("path", str(self.cwd)))
-            if not root.is_absolute():
-                root = self.cwd / root
-            root = root.resolve()
-            require(not any(within(f, root) for f in self.forbidden), "native discovery includes sealed trees")
+            resolved = self.absolute(root).resolve()
+            require(not any(within(f, resolved) for f in self.forbidden), "native discovery includes sealed trees")
         elif name == "Bash":
             self.shell(args.get("command"))
         else:
@@ -353,7 +435,7 @@ class Access:
 def events(raw):
     require(raw.endswith("\n"), "truncated stream")
     out = []
-    for line in raw.splitlines():
+    for line in raw[:-1].split("\n"):  # not splitlines(): JSON strings may carry U+2028
         require(bool(line.strip()), "empty stream event")
         try:
             ev = json.loads(line, object_pairs_hook=unique_object, parse_constant=invalid_constant)
@@ -377,8 +459,12 @@ def claude_report(raw, access, expected_session=None):
     pending, seen, report, terminal = set(), set(), "", False
     for ev in stream[1:]:
         require(not terminal, "events after terminal result")
-        require(ev.get("session_id") == session and not ev.get("parent_tool_use_id"), "inconsistent Claude session")
         kind = ev["type"]
+        if kind == "system":
+            # Progress metadata the CLI emits on honest runs; it carries no tool activity.
+            require(ev.get("subtype") in INFORMATIONAL and ev.get("session_id", session) == session, "unknown Claude event")
+            continue
+        require(ev.get("session_id") == session and not ev.get("parent_tool_use_id"), "inconsistent Claude session")
         if kind in ("assistant", "user"):
             require(not ev.get("error") and not ev.get("origin"), "errored or injected Claude message")
             message = ev.get("message")
@@ -402,7 +488,7 @@ def claude_report(raw, access, expected_session=None):
                         require(all(isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)
                                     for b in content), "unauditable tool result")
                         content = "\n".join(b["text"] for b in content)
-                    access.citations(content)
+                    access.citations(content, output=True)
                     pending.remove(key)
                 elif t == "text" and kind == "assistant" and isinstance(block.get("text"), str):
                     access.citations(block["text"])
@@ -420,6 +506,7 @@ def claude_report(raw, access, expected_session=None):
             usage = ev.get("modelUsage", {})
             require(isinstance(usage, dict) and all(isinstance(value, dict) and value.get("provider", "firstParty") == "firstParty"
                                                   for value in usage.values()), "unverified Claude serving provider")
+            require(seen, "review read nothing: no tool activity")
             report = ev.get("result")
             require(isinstance(report, str) and report.strip(), "empty Claude report")
             access.citations(report)
@@ -442,7 +529,7 @@ def codex_report(raw, access):
     require(stream[0]["type"] == "thread.started" and isinstance(stream[0].get("thread_id"), str) and
             stream[0]["thread_id"], "missing Codex thread")
     session = stream[0]["thread_id"]
-    pending, finished, report, turn, terminal = {}, set(), "", False, False
+    pending, finished, report, turn, terminal, succeeded = {}, set(), "", False, False, False
     for ev in stream[1:]:
         require(not terminal, "events after terminal result")
         require(ev.get("thread_id", session) == session, "inconsistent Codex thread")
@@ -450,21 +537,30 @@ def codex_report(raw, access):
         if kind == "turn.started":
             require(not turn, "duplicate Codex turn")
             turn = True
+        elif kind == "error":
+            # Transport retries ("Reconnecting..."); a completed turn is still required.
+            require(isinstance(ev.get("message"), str), "invalid Codex error event")
         elif kind in ("item.started", "item.updated", "item.completed"):
             require(turn, "item outside turn")
             item = ev.get("item")
             require(isinstance(item, dict) and isinstance(item.get("id"), str), "invalid Codex item")
             key, t = item["id"], item.get("type")
             require(key not in finished, "repeated completed item")
-            require(t in ("command_execution", "agent_message", "reasoning"), "unknown or non-read-only Codex item")
+            require(t in ("command_execution", "agent_message", "reasoning", "todo_list"), "unknown or non-read-only Codex item")
             if t == "command_execution":
                 access.shell(item.get("command"))
-                access.citations(item.get("aggregated_output", ""))
+                access.citations(item.get("aggregated_output", ""), output=True)
             elif t == "agent_message":
                 require(isinstance(item.get("text"), str), "invalid agent message")
                 access.citations(item["text"])
             elif t == "reasoning":
                 access.citations(item.get("text"))
+            else:
+                entries = item.get("items", [])
+                require(isinstance(entries, list) and all(isinstance(e, dict) and isinstance(e.get("text"), str) for e in entries),
+                        "invalid Codex todo list")
+                for entry in entries:
+                    access.citations(entry["text"])
             if kind == "item.started":
                 require(key not in pending, "duplicate item start")
                 pending[key] = (t, item.get("command"))
@@ -475,6 +571,7 @@ def codex_report(raw, access):
                     require(pending.get(key) == (t, item.get("command")) and
                             type(item.get("exit_code")) is int and item.get("status") in ("completed", "failed"),
                             "unresolved command")
+                    succeeded = succeeded or (item["status"] == "completed" and item["exit_code"] == 0)
                 if t == "agent_message":
                     report = item["text"]
                 pending.pop(key, None)
@@ -485,4 +582,5 @@ def codex_report(raw, access):
         else:
             raise Invalid("unknown or failed Codex event")
     require(terminal and report.strip(), "missing Codex completion/report")
+    require(succeeded, "review read nothing: no command succeeded")
     return report

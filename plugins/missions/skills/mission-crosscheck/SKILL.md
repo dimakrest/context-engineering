@@ -54,8 +54,9 @@ evidence cannot establish completion.
 Incomplete, contaminated, changed or unauditable output becomes `VOID-*` outside the repository.
 Fix the cause, reseal changed inputs, then explicitly use `--new-pass`; never automatically retry a
 failed review or salvage findings. If the saved process is alive, wait for it before resuming.
-The helper records `blind` and `sighted` independently, including their identities, evidence paths,
-process outcome, audit status/reason and report hash. Sighted work never satisfies the blind gate.
+The helper records one slot per pass — `contract-blind`, `design-blind` and `design-sighted` — with
+identities, evidence paths, process outcome, audit status/reason and report hash, so a design review
+never displaces the earlier contract review. Sighted work never satisfies the blind gate.
 
 ```markdown
 # Crosscheck findings
@@ -90,9 +91,11 @@ not cryptographic proof against an executable deliberately impersonating a vendo
 
 ## Step 1 — seal the package, outside the repo
 
-Choose a dedicated absolute scratch path outside the repository. The helper also rejects paths
-reachable through repository symlinks. The package contains only renamed inputs, `TASK.md`,
-`leak-hits.json` and `SEAL.json`; raw output belongs in a separate external run directory.
+Choose a dedicated absolute scratch path outside the repository, one directory per mode (the
+helper refuses to reseal a directory for another mode, since that would leave the other mode's saved
+pass unverifiable). The helper also rejects paths reachable through repository symlinks. The package
+contains only renamed inputs, `TASK.md`, `leak-hits.json` and `SEAL.json`; raw output belongs in a
+separate external run directory.
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/mission-crosscheck/crosscheck.py" seal \
@@ -108,10 +111,12 @@ dependencies, scope and non-goals. It never includes `design.md` in the blind pa
 It checks for `paginat|twin|parity|D0[0-9][0-9]` plus the supplied mission-specific pattern. Inspect
 `leak-hits.json`: report and assess each hit, never silently edit specification text to hide it.
 A benign hit, such as an original non-goal, can be retained with an explicit reason. Supply an
-external JSON assessment keyed by hit id and rerun `seal --leak-assessment <absolute-file>`:
+external JSON assessment keyed by the hit `id` from `leak-hits.json` and rerun
+`seal --leak-assessment <absolute-file>`. Ids derive from the file and line text, so an assessment
+never carries over to a different line after an edit:
 
 ```json
-{"1":{"disposition":"keep","reason":"Original non-goal predates the design and discloses no conclusion."}}
+{"3f0c2a9b7d1e":{"disposition":"keep","reason":"Original non-goal predates the design and discloses no conclusion."}}
 ```
 
 An actual leak blocks sealing; correct the source of the leak with the user's authority before
@@ -127,8 +132,12 @@ audit both re-derive it, so it cannot drift or be edited. Inspect it before disp
    working directory is a fresh external directory. The task also names the absolute repository path and safe search roots.
 2. **A named-decoy warning.** State plainly that longer, annotated copies of the same documents
    exist under `.missions/` and `docs/plans/`, that both trees are out of bounds entirely, and that
-   a filename search must not be followed there. Run 2 carried the exclusions in its own search
-   commands after being told this; run 1, told only "out of bounds", went looking.
+   a filename search must not be followed there, and the exclusion spellings that actually apply:
+   `rg -g '!.missions' -g '!plans'` and `grep --exclude-dir=.missions --exclude-dir=plans`. An
+   anchored glob such as `!docs/plans/**` matches nothing under an absolute search root, and GNU
+   grep's `--exclude-dir` matches base names only; the audit accepts only spellings that work for
+   the searched path. Run 2 carried the exclusions in its own search commands after being told
+   this; run 1, told only "out of bounds", went looking.
 3. **The framing: derive, do not review.** "Another team has independently produced their own
    architecture for the same specification; you have not seen theirs and they have not seen yours.
    The point is divergence." Never show it our answer and ask what it thinks — that anchors it onto
@@ -151,9 +160,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/mission-crosscheck/crosscheck.py" run \
   --author "$AUTHOR" --mission "$MISSION" --mode "$MODE" --package "$PKG"
 ```
 
-Run with a long host timeout and keep the process alive. Default reviewer timeout is 3600 seconds;
-`--timeout` can change it. Several minutes without output can be normal. Check file sizes and
-process status, and wait for the exit; never inspect raw findings before the audit.
+Run the helper in the background with a long host timeout: a foreground Bash call is capped at
+ten minutes, and a killed helper strands the reviewer (the helper records a termination signal as
+an incomplete run, which voids the pass). Default reviewer timeout is 3600 seconds; `--timeout` can
+change it. Several minutes without output can be normal. Check file sizes and process status, and
+wait for the exit; never inspect raw findings before the audit.
 
 Both providers start fresh in an external working directory with explicit absolute task paths.
 Claude uses `--output-format stream-json --verbose`, `--safe-mode`, empty setting sources,
@@ -162,12 +173,14 @@ tools. `--safe-mode` disables automatic project context while retaining normal a
 Flags are capability-checked before launch. See the
 [Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
 Codex uses JSONL, `--sandbox read-only`, `--ephemeral`, `--ignore-user-config`, an explicit OpenAI
-provider/model and disabled project instruction loading. See the
+provider/model and disabled project instruction loading. Codex still loads `$CODEX_HOME/AGENTS.md`
+and global skills, invisibly to the audit: keep them free of mission or project content. See the
 [Codex CLI reference](https://developers.openai.com/codex/cli/reference/).
 
 Before dispatch the helper hashes repository contents, including ignored and already-dirty files,
 and captures Git HEAD, branch and index plus mission checksums. Only the workflow's exact
-`crosscheck/{progress.json,progress.md,pass1-report.md,pass2-report.md,report.html}` files are excluded.
+`crosscheck/{progress.json,progress.md,contract-pass1-report.md,design-pass1-report.md,design-pass2-report.md,report.html}`
+files are excluded.
 Other `crosscheck/` files and mission `VOID*` files remain protected. The existing shell entrypoints
 stay compatible: `snapshot.sh <mission> <external-snapshot>` and `snapshot.sh --print <mission>`.
 
@@ -179,17 +192,20 @@ a valid structured stream, consistent session identity, resolved tool calls, suc
 result, nonempty report and process exit zero. Unknown events or tools that cannot be audited
 void the pass. Reads, discovery, outputs and citations into `.missions/` or `docs/plans/`, including
 absolute paths and resolved aliases, are contamination. Real exclusion operands and task warnings
-are distinguished from accesses. Shell commands are a restricted literal read/search subset;
-opaque scripts or expansion are unauditable. Access is limited to repository source, the sealed
-package and the explicitly designated external inputs for that pass; prior external review evidence
-is not an allowed input. Claude native searches use explicit safe subtrees.
+are distinguished from accesses, and prose in tool output that merely mentions a protected path is
+not a read, while `path:` output lines, listings and citations are. Shell commands are a restricted
+literal read/search subset (combined short options such as `-rn` are fine); opaque scripts,
+expansion, symlink following and `sed` regex addresses are unauditable. Access is limited to
+repository source, the sealed package and the explicitly designated external inputs for that pass;
+prior external review evidence is not an allowed input. Claude native searches use explicit safe
+subtrees.
 
 `audit.sh <transcript> <mission> <snapshot>` remains available for saved helper runs. Codex reviews
 now use structured JSONL transcripts: a text terminal marker can be forged by tool output and
 cannot establish completion. Legacy text/progress without structured process, seal and snapshot
 evidence must be rerun; use `--new-pass` to replace legacy machine progress.
 
-On success the helper saves `crosscheck/pass1-report.md` and its hash. Only now read findings.
+On success the helper saves `crosscheck/<mode>-pass1-report.md` and its hash. Only now read findings.
 On failure it quarantines output as `VOID-*`, records the reason and exits nonzero. Do not salvage
 any section. Fix the cause before using `--new-pass`.
 
@@ -223,7 +239,8 @@ what observation settles it; shared assumptions; and what each design lacks. Do 
 because we wrote more, or manufacture divergences. Other mission documents remain out of bounds.
 
 Blindness ends deliberately for this separate pass. Its task, inputs, process, audit and report
-(`pass2-report.md`) are recorded under `sighted`; it cannot replace `blind` or its saved report.
+(`design-pass2-report.md`) are recorded under `design-sighted`; it cannot replace `design-blind` or
+its saved report.
 
 ## Step 7 — hand over
 

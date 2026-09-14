@@ -1,0 +1,8 @@
+{"type":"system","subtype":"init","session_id":"SESSION","model":"claude-opus-4-6","tools":["Read","Grep","Glob"]}
+{"type": "rate_limit_event", "rate_limit_info": {"status": "allowed"}, "uuid": "event-1", "session_id": "SESSION"}
+{"type":"assistant","session_id":"SESSION","message":{"role":"assistant","content":[{"type":"tool_use","id":"read-1","name":"Read","input":{"file_path":"PACKAGE/SPEC-1-contract.md"}}]}}
+{"type":"user","session_id":"SESSION","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"read-1","content":"The service returns a value."}]}}
+{"type":"assistant","session_id":"SESSION","message":{"role":"assistant","content":[{"type":"tool_use","id":"search-1","name":"Grep","input":{"pattern":"value","path":"REPO/src"}}]}}
+{"type":"user","session_id":"SESSION","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"search-1","content":[{"type":"text","text":"REPO/src/app.py:1:value = 1"}]}]}}
+{"type":"assistant","session_id":"SESSION","message":{"role":"assistant","content":[{"type":"text","text":"## Contract\nNo issues found in this section. [verified: REPO/src/app.py:1]\n## MODE\nThe decomposition fits. [inferred]"}]}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"SESSION","result":"## Contract\nNo issues found in this section. [verified: REPO/src/app.py:1]\n## MODE\nThe decomposition fits. [inferred]"}

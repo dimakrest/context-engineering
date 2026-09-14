@@ -41,5 +41,7 @@ jobs:
         run: bash plugins/missions/scripts/lint-agents.sh
       - name: Exercise hook and script regressions
         run: bash plugins/missions/tests/run.sh
+      - name: Exercise offline cross-vendor review and resume
+        run: python3 plugins/missions/tests/crosscheck-selftest.py
       - name: Exercise driver traces and unit tests
         run: bash plugins/missions/tests/traces/run.sh

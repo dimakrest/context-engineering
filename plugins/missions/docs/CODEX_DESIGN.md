@@ -76,11 +76,19 @@ merely because implementation and milestone validation finished.
 
 ## Follow-ups
 
-- Reverse-vendor crosscheck: the current `mission-crosscheck` launches Codex to
-  critique a Claude-authored plan. Running it from Codex would lose the promised
-  vendor independence. Until a Claude reviewer adapter and transcript audit exist,
-  the Codex route reports this limitation instead of treating Codex-on-Codex as a
-  cross-vendor review. Tracked in [#28](https://github.com/dimakrest/context-engineering/issues/28).
+- Bidirectional crosscheck (#28) is implemented by the shared Python helper under
+  `skills/mission-crosscheck/`, separate from the implementation driver. Claude authors receive
+  Codex reviews; Codex authors receive Claude reviews. Preflight pins known providers, checks
+  capabilities/authentication and refuses same-vendor or unknown routing without mission writes.
+  Both use external sealed packages, structured transcripts, content snapshots and a shared
+  fail-closed audit. Machine progress verifies identities/evidence before reuse; the blind report
+  is saved before a separately recorded sighted design pass. Amendment preflight runs after
+  read-only mapping and before writes; approval, coherence and post-amendment audit remain gates.
+  Claude uses safe mode, disabled persistence and native read/search tools (the
+  [CLI reference](https://code.claude.com/docs/en/cli-reference) documents the controls).
+  Trusted local executable identity is verified by version/capabilities and pinned by hash;
+  this is not protection against a deliberately impersonating binary. Native Codex hook parity
+  remains outside this change.
 - Driver PR phase: [#30](https://github.com/dimakrest/context-engineering/issues/30) tracks
   the missing driver tail. [#10](https://github.com/dimakrest/context-engineering/issues/10)
   remains related authority/spend work; shared skills do not implement the driver phase.

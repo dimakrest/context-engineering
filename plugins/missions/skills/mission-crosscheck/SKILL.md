@@ -120,7 +120,8 @@ Never add transcripts or other artifacts to a sealed package.
 
 ## Step 2 — write the task file
 
-The helper writes `TASK.md` into the package directory. Inspect it before dispatch; it must contain:
+The helper writes `TASK.md` into the package directory and the seal pins its hash; dispatch and
+audit both re-derive it, so it cannot drift or be edited. Inspect it before dispatch. It contains:
 
 1. **Absolute paths to the three inputs.** Never "the files in this directory" — the reviewer's
    working directory is a fresh external directory. The task also names the absolute repository path and safe search roots.
@@ -157,9 +158,9 @@ process status, and wait for the exit; never inspect raw findings before the aud
 Both providers start fresh in an external working directory with explicit absolute task paths.
 Claude uses `--output-format stream-json --verbose`, `--safe-mode`, empty setting sources,
 disabled hooks, strict empty MCP config, `--no-session-persistence`, and only native `Read,Grep,Glob`
-tools. `--safe-mode` disables automatic project context while retaining normal authentication;
-`--bare` can exclude OAuth authentication in some CLI versions. Flags are capability-checked
-before launch. See the [Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
+tools. `--safe-mode` disables automatic project context while retaining normal authentication.
+Flags are capability-checked before launch. See the
+[Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
 Codex uses JSONL, `--sandbox read-only`, `--ephemeral`, `--ignore-user-config`, an explicit OpenAI
 provider/model and disabled project instruction loading. See the
 [Codex CLI reference](https://developers.openai.com/codex/cli/reference/).

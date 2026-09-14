@@ -72,6 +72,38 @@ def repo_root(mission):
 # the mission remain protected. Raw evidence and snapshots belong outside the repo.
 ARTIFACTS = {"progress.json", "progress.md", "pass1-report.md", "pass2-report.md", "report.html"}
 
+# The two repository trees the reviewer may never reach, relative to the repo root.
+FORBIDDEN = (".missions", "docs/plans")
+FORBIDDEN_RE = re.compile("|".join(r"(?:^|/)" + re.escape(name) + r"(?:/|$)" for name in FORBIDDEN))
+FORBIDDEN_MENTIONS = {name + suffix for name in FORBIDDEN for suffix in ("", "/**")}
+TOKEN_RE = re.compile(r"[^\s<>\"'`\[\]()]+")
+WARNING_RE = re.compile(r"(?i)^\s*(?:[-*]\s*)?(?:warning:\s*)?(?:do not|never|must not)\s+"
+                        r"(?:read|open|search|inspect|access|enumerate|follow|cite)\b")
+CITATION_RE = re.compile(r"(?:\[verified:\s*([^\]]+)\]|\]\(([^)]+)\))")
+
+# Executables such as rg can themselves run code (--pre). Only the documented
+# read/search subset is auditable, including its options.
+SWITCHES = {
+    "cat": {"-n", "-b", "-s", "-v", "-A", "--number"},
+    "head": set(), "tail": set(),
+    "nl": {"-ba", "-bt"}, "wc": {"-l", "-c", "-w", "-m", "-L"},
+    "pwd": {"-L", "-P"}, "sed": {"-n"},
+    "ls": {"-a", "-l", "-la", "-al", "-A", "-1", "-d"},
+    "rg": {"--files", "--hidden", "--no-ignore", "--no-ignore-vcs", "--no-ignore-parent",
+           "--no-ignore-global", "--line-number", "--no-heading", "--files-with-matches",
+           "--count", "--fixed-strings", "--ignore-case", "--smart-case", "--only-matching",
+           "--with-filename", "-n", "-H", "-i", "-l", "-S", "-F", "-w", "-c", "-o"},
+    "grep": {"-r", "-n", "-H", "-i", "-l", "-F", "-E", "-w", "-c", "-o",
+             "--recursive", "--line-number", "--files-with-matches", "--fixed-strings"},
+}
+VALUES = {
+    "head": {"-n", "-c", "--lines", "--bytes"},
+    "tail": {"-n", "-c", "--lines", "--bytes"}, "sed": {"-e"},
+    "rg": {"-g", "--glob", "--iglob", "-e", "--regexp", "-f", "--file", "-m", "--max-count",
+           "-A", "-B", "-C", "--context", "--max-depth", "-t", "--type", "-T", "--type-not"},
+    "grep": {"--exclude", "--exclude-dir", "-e", "--regexp", "-f", "--file", "-m", "-A", "-B", "-C"},
+}
+
 
 def walk_error(error):
     raise Invalid("cannot enumerate repository content for audit") from error
@@ -117,7 +149,9 @@ class Access:
         self.repo, self.package = Path(repo).resolve(), Path(package).resolve()
         self.cwd = Path(cwd or repo).resolve()
         self.extra_reads = {Path(p).resolve() for p in extra_reads}
-        self.forbidden = [self.repo / ".missions", self.repo / "docs/plans"]
+        self.forbidden = [self.repo / name for name in FORBIDDEN]
+        # The audited tree is static, so path verdicts and discovery walks are memoized.
+        self.verdicts, self.discovered = {}, set()
         self.inodes = set()
         for root in self.forbidden:
             for directory, _, names in os.walk(root):
@@ -127,15 +161,25 @@ class Access:
                         info = p.stat()
                         self.inodes.add((info.st_dev, info.st_ino))
 
+    def absolute(self, raw, cwd=None):
+        p = Path(raw).expanduser()
+        return p if p.is_absolute() else (cwd or self.cwd) / p
+
+    def allowed(self, resolved):
+        return any(within(resolved, root) for root in (self.repo, self.package, self.cwd)) or resolved in self.extra_reads
+
     def forbidden_path(self, raw, cwd=None):
+        key = (raw, cwd)
+        if key not in self.verdicts:
+            self.verdicts[key] = self._forbidden_path(raw, cwd)
+        return self.verdicts[key]
+
+    def _forbidden_path(self, raw, cwd):
         raw = unquote(raw).removeprefix("file://")
         raw = re.sub(r":\d+(?::\d+)?(?:-\d+)?$", "", raw).strip("`'\"[](),;")
-        if re.search(r"(?:^|/)\.missions(?:/|$)|(?:^|/)docs/plans(?:/|$)", raw):
+        if FORBIDDEN_RE.search(raw):
             return True
-        p = Path(raw).expanduser()
-        if not p.is_absolute():
-            p = (cwd or self.cwd) / p
-        p = p.resolve()
+        p = self.absolute(raw, cwd).resolve()
         if any(within(p, root.resolve()) for root in self.forbidden):
             return True
         if p.is_file():
@@ -143,58 +187,54 @@ class Access:
             return (info.st_dev, info.st_ino) in self.inodes
         return False
 
+    def names_sealed(self, raw):
+        # Relative citations are checked against both the launch directory and the repo.
+        return self.forbidden_path(raw) or (not Path(raw).is_absolute() and self.forbidden_path(raw, self.repo))
+
     def path(self, raw, cwd=None, discovery=False):
         require(isinstance(raw, str) and raw, "missing access path")
         require(not self.forbidden_path(raw, cwd), "access to sealed material")
-        expanded = Path(raw).expanduser()
-        if not expanded.is_absolute():
-            expanded = (cwd or self.cwd) / expanded
-        resolved = expanded.resolve()
-        require(any(within(resolved, root) for root in (self.repo, self.package, self.cwd)) or resolved in self.extra_reads,
-                "access outside repository and designated review inputs")
+        expanded = self.absolute(raw, cwd)
+        require(self.allowed(expanded.resolve()), "access outside repository and designated review inputs")
         if glob.has_magic(str(expanded)):
             for match in glob.glob(str(expanded), recursive=True):
                 require(not self.forbidden_path(match, cwd), "glob reaches sealed material")
-                resolved_match = Path(match).resolve()
-                require(any(within(resolved_match, root) for root in (self.repo, self.package, self.cwd)) or
-                        resolved_match in self.extra_reads, "glob reaches an unsealed external input")
+                require(self.allowed(Path(match).resolve()), "glob reaches an unsealed external input")
         if discovery:
-            # Globs and searches can reach aliases even without spelling a sealed root.
-            p = Path(raw)
-            if not p.is_absolute():
-                p = (cwd or self.cwd) / p
-            prefix = re.split(r"[?*\[]", str(p), maxsplit=1)[0]
-            p = Path(prefix)
-            if not p.is_dir():
-                p = p.parent
-            for directory, dirs, names in os.walk(p):
-                base = Path(directory)
-                dirs[:] = [d for d in dirs if d not in (".git", ".missions") and base / d != self.repo / "docs/plans"]
-                for name in dirs + names:
-                    target = base / name
-                    if target.is_symlink() or (target.is_file() and target.stat().st_nlink > 1):
-                        require(not self.forbidden_path(str(target)), "search can reach a sealed alias")
-                        require(any(within(target.resolve(), root) for root in (self.repo, self.package, self.cwd)),
-                                "search can reach an unsealed external alias")
+            self.discover(Path(re.split(r"[?*\[]", str(self.absolute(raw, cwd)), maxsplit=1)[0]))
+
+    def discover(self, root):
+        # Globs and searches can reach aliases even without spelling a sealed root.
+        if not root.is_dir():
+            root = root.parent
+        if root in self.discovered:
+            return
+        for directory, dirs, names in os.walk(root):
+            base = Path(directory)
+            dirs[:] = [d for d in dirs if d not in (".git", ".missions") and base / d != self.repo / "docs/plans"]
+            for name in dirs + names:
+                target = base / name
+                if target.is_symlink() or (target.is_file() and target.stat().st_nlink > 1):
+                    require(not self.forbidden_path(str(target)), "search can reach a sealed alias")
+                    require(any(within(target.resolve(), r) for r in (self.repo, self.package, self.cwd)),
+                            "search can reach an unsealed external alias")
+        self.discovered.add(root)
 
     def citations(self, text):
         # Plain warnings naming the two forbidden trees are allowed. Paths to files,
         # verified tags and Markdown links are evidence of contamination.
         require(isinstance(text, str), "invalid tool output text")
-        candidates = re.findall(r"(?:\[verified:\s*([^\]]+)\]|\]\(([^)]+)\))", text)
-        for raw in [x for pair in candidates for x in pair if x]:
-            require(not self.forbidden_path(raw) and not self.forbidden_path(raw, self.repo),
-                    "citation or output names sealed material")
+        for pair in CITATION_RE.findall(text):
+            for raw in pair:
+                require(not raw or not self.names_sealed(raw), "citation or output names sealed material")
         for line in text.splitlines():
-            warning = re.match(r"(?i)^\s*(?:[-*]\s*)?(?:warning:\s*)?(?:do not|never|must not)\s+"
-                               r"(?:read|open|search|inspect|access|enumerate|follow|cite)\b", line)
-            for raw in re.findall(r"[^\s<>\"'`\[\]()]+", line):
-                if raw.rstrip("/.,:;") in (".missions", "docs/plans", ".missions/**", "docs/plans/**"):
+            warning = WARNING_RE.match(line)
+            for raw in TOKEN_RE.findall(line):
+                if raw.rstrip("/.,:;") in FORBIDDEN_MENTIONS:
                     continue
                 if warning and not re.search(r":\d+", raw):
                     continue
-                require(not self.forbidden_path(raw) and not self.forbidden_path(raw, self.repo),
-                        "citation or output names sealed material")
+                require(not self.names_sealed(raw), "citation or output names sealed material")
 
     def shell(self, command, cwd=None):
         require(isinstance(command, str) and command, "missing shell command")
@@ -229,28 +269,7 @@ class Access:
                 self.path(args[0], cwd)
                 cwd = (cwd / args[0]).resolve()
                 continue
-            # Executables such as rg can themselves run code (--pre). Only the
-            # documented read/search subset is auditable, including its options.
-            switches = {
-                "cat": {"-n", "-b", "-s", "-v", "-A", "--number"},
-                "head": set(), "tail": set(),
-                "nl": {"-ba", "-bt"}, "wc": {"-l", "-c", "-w", "-m", "-L"},
-                "pwd": {"-L", "-P"}, "sed": {"-n"},
-                "ls": {"-a", "-l", "-la", "-al", "-A", "-1", "-d"},
-                "rg": {"--files", "--hidden", "--no-ignore", "--no-ignore-vcs", "--no-ignore-parent",
-                       "--no-ignore-global", "--line-number", "--no-heading", "--files-with-matches",
-                       "--count", "--fixed-strings", "--ignore-case", "--smart-case", "--only-matching",
-                       "--with-filename", "-n", "-H", "-i", "-l", "-S", "-F", "-w", "-c", "-o"},
-                "grep": {"-r", "-n", "-H", "-i", "-l", "-F", "-E", "-w", "-c", "-o",
-                         "--recursive", "--line-number", "--files-with-matches", "--fixed-strings"},
-            }[name]
-            values = {
-                "head": {"-n", "-c", "--lines", "--bytes"},
-                "tail": {"-n", "-c", "--lines", "--bytes"}, "sed": {"-e"},
-                "rg": {"-g", "--glob", "--iglob", "-e", "--regexp", "-f", "--file", "-m", "--max-count",
-                       "-A", "-B", "-C", "--context", "--max-depth", "-t", "--type", "-T", "--type-not"},
-                "grep": {"--exclude", "--exclude-dir", "-e", "--regexp", "-f", "--file", "-m", "-A", "-B", "-C"},
-            }.get(name, set())
+            switches, values = SWITCHES[name], VALUES.get(name, set())
             normalized, i = [], 0
             while i < len(args):
                 arg = args[i]
@@ -296,22 +315,18 @@ class Access:
                 require(args and not any(a.startswith("-i") for a in args), "sed writes are forbidden")
                 expr = next((a for a in args if not a.startswith("-")), "")
                 require(re.fullmatch(r"\d+(?:,\d+)?p", expr) is not None, "unauditable sed expression")
+            searching = name in ("rg", "grep", "ls")
             for arg in effective:
                 if not arg.startswith("-"):
-                    self.path(arg, cwd)
-            if name in ("rg", "grep", "ls"):
+                    self.path(arg, cwd, discovery=searching and (cwd / arg).exists())
+            if name in ("rg", "grep"):
                 # Broad searches must explicitly exclude both protected trees.
                 roots = [(cwd / a).resolve() for a in effective if not a.startswith("-") and (cwd / a).is_dir()]
                 if not roots and not any((cwd / a).is_file() for a in effective if not a.startswith("-")):
                     roots = [cwd]
-                broad = any(within(f, root) for root in roots for f in self.forbidden)
-                if broad and name in ("rg", "grep"):
-                    require(any(x in excluded for x in (".missions/**", "**/.missions/**")) and
-                            any(x in excluded for x in ("docs/plans/**", "**/docs/plans/**")),
+                if any(within(f, root) for root in roots for f in self.forbidden):
+                    require(all(any(x in excluded for x in (tree + "/**", "**/" + tree + "/**")) for tree in FORBIDDEN),
                             "unbounded discovery without both sealed-tree exclusions")
-                for arg in effective:
-                    if not arg.startswith("-") and (cwd / arg).exists():
-                        self.path(arg, cwd, discovery=True)
 
     def native(self, name, args):
         require(isinstance(args, dict), "invalid tool arguments")
@@ -346,7 +361,6 @@ def events(raw):
             raise Invalid("malformed JSON stream") from exc
         require(isinstance(ev, dict) and isinstance(ev.get("type"), str), "invalid stream event")
         out.append(ev)
-    require(out, "empty stream")
     return out
 
 

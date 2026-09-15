@@ -7,10 +7,10 @@ Read [the runtime guide](../../docs/RUNTIMES.md) before following this workflow.
 
 # /missions:mission-crosscheck — an outside opinion that is actually outside
 
-For a Claude-authored mission, another Claude review cannot vary the vendor. This skill adds
-an independent Codex reviewer, and spends that independence on the plan before the code exists
-to be defended. The reverse Codex-to-Claude workflow is not implemented; in a Codex session,
-follow the runtime guide's cross-vendor limitation before any dispatch.
+Claude-authored missions receive Codex reviews; Codex-authored missions receive Claude reviews.
+Declare the actual author provider explicitly. The shared `crosscheck.py` helper selects the opposite
+provider and rejects same-vendor or unknown configurations before dispatch. It is independent of
+the implementation driver and spends vendor independence on the plan before code exists to defend.
 
 **The failure mode this skill exists to prevent is not a bad review. It is a contaminated one.** A
 reviewer that has seen our conclusions produces a fluent, well-cited report that agrees with us, and
@@ -23,8 +23,8 @@ not skip because the output looks fine. It always looks fine.
 ## Preconditions
 
 - `contract.md`, `mission.md` and `features.md` exist. In `design` mode, `design.md` too.
-- `codex` is on PATH (`codex --version`). If not, say so and stop; do not substitute a Claude agent
-  and call it a crosscheck — the whole point is the vendor boundary.
+- The opposite provider CLI is installed and authenticated. Run the shared preflight below.
+  Failure is visible and blocking: never fall back to another provider or substitute a subagent.
 - Phase is `planning`. If it is not, this is the wrong moment: after implementation starts, findings
   cost a rewrite instead of an edit.
 
@@ -41,80 +41,103 @@ has been built on top of it. The first real run found an assertion that describe
 does not exist — a defect that needed no design to see, and that had already propagated into
 `features.md` by the time it was caught.
 
-## Progress file — this skill is re-entrant
+## Progress — verify evidence before skipping work
 
-Maintain `.missions/<slug>/crosscheck/progress.md`. Read it first, every time; skip any step it
-records as done. A reviewer pass takes ~10 minutes and real tokens, and a session can die mid-run.
+`crosscheck/progress.json` is the machine record; `crosscheck/progress.md` remains the findings and
+disposition record. Read both at entry. A Markdown checkbox is not proof of completion. Run the
+same helper command to resume: it verifies author/reviewer, executable hash, model, mode, mission,
+package/task hashes, process receipt, transcript, snapshot and saved report before reusing a pass.
+A completed but unaudited process is audited without another reviewer call. An unchanged valid
+pass is reused, even if authentication is no longer available. Legacy progress without this
+evidence cannot establish completion.
+
+Incomplete, contaminated, changed or unauditable output becomes `VOID-*` outside the repository.
+Fix the cause, reseal changed inputs, then explicitly use `--new-pass`; never automatically retry a
+failed review or salvage findings. If the saved process is alive, wait for it before resuming.
+The helper records one slot per pass — `contract-blind`, `design-blind` and `design-sighted` — with
+identities, evidence paths, process outcome, audit status/reason and report hash, so a design review
+never displaces the earlier contract review. Sighted work never satisfies the blind gate.
 
 ```markdown
-# Crosscheck — <slug>
+# Crosscheck findings
 
-**Mode:** contract | design
-**Package:** <absolute path, outside the repo>
-- [x] 1 package sealed — 3 files, leak-check: 1 benign hit (reported, kept)
-- [x] 2 task file written — TASK.md
-- [x] 3 reviewer run — pass1.raw.md, 220,659 tokens
-- [ ] 4 audit — PASS | VOID (reason)
-- [ ] 5 findings assessed
-- [ ] 6 pass 2 divergence — design mode only, or "skipped"
-- [ ] 7 report — crosscheck/report.html
+Machine evidence: progress.json. Checkboxes cannot establish completion.
 
-## Findings
 | # | Finding | Bucket | Verified | Disposition |
 |---|---|---|---|---|
 ```
 
-The raw transcript and the sealed package live **outside** the mission directory. A transcript is
-~750KB and is not run state, and the package must never be reachable from inside the repo.
+The package, raw stdout/stderr and snapshots live outside the repository. Do not tail reviewer
+output to check progress: use file size/process status until the audit passes.
+
+## Reviewer preflight — no mission writes
+
+Resolve the plugin path as described in the runtime guide. Set `AUTHOR` to `claude` or `codex`
+according to who actually authored the mission, and `MODE` to `contract` (default) or `design`.
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/mission-crosscheck/crosscheck.py" preflight \
+  --author "$AUTHOR" --mission "$MISSION" --mode "$MODE"
+```
+
+Preflight checks the selected executable's version, required flags and authentication using
+bounded probes (15 seconds each; `--preflight-timeout` can set at most 60 seconds). It makes no
+model call and writes no mission artifact. Only trusted native Claude and Codex installations
+are supported. `--reviewer` may name only the other provider; `--executable` selects a verified
+installation of that provider; `--model` accepts only that provider's model names. Defaults are
+Claude `opus` and Codex `gpt-5.4`. Custom gateways, unknown routing, arbitrary extra arguments and
+fallback providers are unsupported. CLI/version identity is a check of a trusted local binary,
+not cryptographic proof against an executable deliberately impersonating a vendor.
 
 ## Step 1 — seal the package, outside the repo
 
-Stage in the session scratchpad — never under `.missions/`, never anywhere in the project. Copy the
-inputs under **different names**, so a filename search cannot land on the originals:
-
-| Source | Becomes |
-|---|---|
-| `contract.md` | `SPEC-1-contract.md` |
-| `mission.md` | `SPEC-2-scope.md` |
-| `features.md`, procedures stripped | `SPEC-3-decomposition.md` |
-
-Strip `features.md`'s per-feature `Procedures` blocks — that is where the reasoning lives — and keep
-the ids, assertions, dependencies and scope boundaries, so the decomposition can still be critiqued:
-
-```python
-re.sub(r'- \*\*Procedures:\*\*\n(?:(?:  - |    ).*\n|\n(?=  ))*?(?=- \*\*Depends on:\*\*)', '', s)
-re.sub(r'- \*\*Seat:\*\*.*\n', '', s)          # our judgment of which features are hard
-```
-
-Strip the `Reviewer seat:` line from `mission.md` for the same reason. Also drop any Amendments
-section. Then leak-check the package and **report hits rather than editing
-them**:
+Choose a dedicated absolute scratch path outside the repository, one directory per mode (the
+helper refuses to reseal a directory for another mode, since that would leave the other mode's saved
+pass unverifiable). The helper also rejects paths reachable through repository symlinks. The package
+contains only renamed inputs, `TASK.md`, `leak-hits.json` and `SEAL.json`; raw output belongs in a
+separate external run directory.
 
 ```bash
-grep -rniE "paginat|twin|parity|D0[0-9][0-9]|<terms specific to this mission's conclusions>" "$PKG"
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/mission-crosscheck/crosscheck.py" seal \
+  --mission "$MISSION" --mode "$MODE" --package "$PKG" \
+  --leak-pattern "<terms specific to this mission's conclusions>"
 ```
 
-A hit is not automatically a leak. In the first run the only hit was a non-goal in `mission.md`
-("no query rewrite") that predated the design pass and said nothing about our answer — removing it
-would have been tampering with the specification. Surface hits, judge each, and say which you kept.
+The helper copies `contract.md` → `SPEC-1-contract.md`, `mission.md` → `SPEC-2-scope.md`, and
+`features.md` → `SPEC-3-decomposition.md`. It removes Procedures blocks and Seat lines from
+features, the Reviewer seat from mission, and Amendments sections. It retains ids, assertions,
+dependencies, scope and non-goals. It never includes `design.md` in the blind package.
 
-**Why outside the repo, specifically.** Run 1 staged the package inside `.missions/` and told the
-reviewer `.missions/` was out of bounds. Its first search honoured that exclusion — which also hid
-the package — found nothing, and it then enumerated `.missions/` by filename and read the unstripped
-original. The blacklist ate the whitelist. `mission-crosscheck-seal.sh` now blocks a `codex`
-invocation that references `.missions/` or `docs/plans/`, but that hook only guards the command line;
-the seal has to be right by construction.
+It checks for `paginat|twin|parity|D0[0-9][0-9]` plus the supplied mission-specific pattern. Inspect
+`leak-hits.json`: report and assess each hit, never silently edit specification text to hide it.
+A benign hit, such as an original non-goal, can be retained with an explicit reason. Supply an
+external JSON assessment keyed by the hit `id` from `leak-hits.json` and rerun
+`seal --leak-assessment <absolute-file>`. Ids derive from the file and line text, so an assessment
+never carries over to a different line after an edit:
+
+```json
+{"3f0c2a9b7d1e":{"disposition":"keep","reason":"Original non-goal predates the design and discloses no conclusion."}}
+```
+
+An actual leak blocks sealing; correct the source of the leak with the user's authority before
+resealing. The manifest pins source, package and task hashes. Dispatch and audit both verify it.
+Never add transcripts or other artifacts to a sealed package.
 
 ## Step 2 — write the task file
 
-Write `TASK.md` into the package directory. It must contain, and these are not optional:
+The helper writes `TASK.md` into the package directory and the seal pins its hash; dispatch and
+audit both re-derive it, so it cannot drift or be edited. Inspect it before dispatch. It contains:
 
 1. **Absolute paths to the three inputs.** Never "the files in this directory" — the reviewer's
-   working directory is the repo root, not the package.
+   working directory is a fresh external directory. The task also names the absolute repository path and safe search roots.
 2. **A named-decoy warning.** State plainly that longer, annotated copies of the same documents
    exist under `.missions/` and `docs/plans/`, that both trees are out of bounds entirely, and that
-   a filename search must not be followed there. Run 2 carried the exclusions in its own search
-   commands after being told this; run 1, told only "out of bounds", went looking.
+   a filename search must not be followed there, and the exclusion spellings that actually apply:
+   `rg -g '!.missions' -g '!plans'` and `grep --exclude-dir=.missions --exclude-dir=plans`. An
+   anchored glob such as `!docs/plans/**` matches nothing under an absolute search root, and GNU
+   grep's `--exclude-dir` matches base names only; the audit accepts only spellings that work for
+   the searched path. Run 2 carried the exclusions in its own search commands after being told
+   this; run 1, told only "out of bounds", went looking.
 3. **The framing: derive, do not review.** "Another team has independently produced their own
    architecture for the same specification; you have not seen theirs and they have not seen yours.
    The point is divergence." Never show it our answer and ask what it thinks — that anchors it onto
@@ -130,48 +153,61 @@ Write `TASK.md` into the package directory. It must contain, and these are not o
    Add both guards: *"do not manufacture findings to appear thorough — 'no issues found in this
    section' is a legitimate answer"* and *"do not hedge into uselessness; commit to a choice."*
 
-## Step 3 — run the reviewer
-
-Snapshot first, so Step 4 can prove nothing was written — the reviewer's sandbox defaults to
-`workspace-write` regardless of what the prompt says:
+## Step 3 — run or resume the reviewer
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/skills/mission-crosscheck/snapshot.sh "$MISSION" "$SNAP"
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/mission-crosscheck/crosscheck.py" run \
+  --author "$AUTHOR" --mission "$MISSION" --mode "$MODE" --package "$PKG"
 ```
 
-That script is the **only** definition of what counts as a mission file; Step 4 recomputes through
-the same script rather than a second copy of the expression. It skips `VOID*` transcripts and this
-skill's own `crosscheck/` directory, so **it does not matter whether you write the progress file
-before or after the snapshot** — it is excluded either way. Do not hand-roll the `find`: two copies
-of it is how the gate ends up accusing an innocent run of writing its own progress file.
+Run the helper in the background with a long host timeout: a foreground Bash call is capped at
+ten minutes, and a killed helper strands the reviewer (the helper records a termination signal as
+an incomplete run, which voids the pass). Default reviewer timeout is 3600 seconds; `--timeout` can
+change it. Several minutes without output can be normal. Check file sizes and process status, and
+wait for the exit; never inspect raw findings before the audit.
 
-Then run it in the background, with a long timeout:
+Both providers start fresh in an external working directory with explicit absolute task paths.
+Claude uses `--output-format stream-json --verbose`, `--safe-mode`, empty setting sources,
+disabled hooks, strict empty MCP config, `--no-session-persistence`, and only native `Read,Grep,Glob`
+tools. `--safe-mode` disables automatic project context while retaining normal authentication.
+Flags are capability-checked before launch. See the
+[Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
+Codex uses JSONL, `--sandbox read-only`, `--ephemeral`, `--ignore-user-config`, an explicit OpenAI
+provider/model and disabled project instruction loading. Codex still loads `$CODEX_HOME/AGENTS.md`
+and global skills, invisibly to the audit: keep them free of mission or project content. See the
+[Codex CLI reference](https://developers.openai.com/codex/cli/reference/).
 
-```bash
-codex exec --cd "$REPO" < "$PKG/TASK.md" > "$PKG/pass1.raw.md" 2>&1
-```
-
-Expect ~10 minutes and ~200k tokens. **A three-to-four minute gap with no output is normal, not a
-stall** — `reasoning summaries: none` means thinking produces nothing on stdout. Do not kill it.
-Check progress by file size and by tailing the transcript.
+Before dispatch the helper hashes repository contents, including ignored and already-dirty files,
+and captures Git HEAD, branch and index plus mission checksums. Only the workflow's exact
+`crosscheck/{progress.json,progress.md,contract-pass1-report.md,design-pass1-report.md,design-pass2-report.md,report.html}`
+files are excluded.
+Other `crosscheck/` files and mission `VOID*` files remain protected. The existing shell entrypoints
+stay compatible: `snapshot.sh <mission> <external-snapshot>` and `snapshot.sh --print <mission>`.
 
 ## Step 4 — the audit gate
 
-**Run this before reading a single finding.** Not after skimming the report, not "if something looks
-off" — the whole problem is that a contaminated report looks right.
+The helper captures process exit separately from stdout/stderr, then audits before saving any
+report. It requires a valid baseline, unchanged repository content, unchanged package/task inputs,
+a valid structured stream, consistent session identity, resolved tool calls, successful terminal
+result, nonempty report and process exit zero. Unknown events or tools that cannot be audited
+void the pass. Reads, discovery, outputs and citations into `.missions/` or `docs/plans/`, including
+absolute paths and resolved aliases, are contamination. Real exclusion operands and task warnings
+are distinguished from accesses, and prose in tool output that merely mentions a protected path is
+not a read, while `path:` output lines, listings and citations are. Shell commands are a restricted
+literal read/search subset (combined short options such as `-rn` are fine); opaque scripts,
+expansion, symlink following and `sed` regex addresses are unauditable. Access is limited to
+repository source, the sealed package and the explicitly designated external inputs for that pass;
+prior external review evidence is not an allowed input. Claude native searches use explicit safe
+subtrees.
 
-```bash
-bash ${CLAUDE_PLUGIN_ROOT}/skills/mission-crosscheck/audit.sh "$PKG/pass1.raw.md" "$MISSION" "$SNAP"
-```
+`audit.sh <transcript> <mission> <snapshot>` remains available for saved helper runs. Codex reviews
+now use structured JSONL transcripts: a text terminal marker can be forged by tool output and
+cannot establish completion. Legacy text/progress without structured process, seal and snapshot
+evidence must be rerun; use `--new-pass` to replace legacy machine progress.
 
-It fails on any of: a read of or citation into a sealed path, a change to `git status`, a change to
-any mission file's checksum, or a missing terminal marker (an unfinished run).
-
-On failure the run is **void**. Quarantine the transcript as `VOID-<date>.raw.md`, record the reason
-in the progress file, fix the seal, and re-run. Do not salvage a contaminated pass — not partially,
-not for one section that "looks unaffected". Its value was independence, and that is gone.
-
-Then extract the report: the last `codex` block before the terminal `tokens used` line.
+On success the helper saves `crosscheck/<mode>-pass1-report.md` and its hash. Only now read findings.
+On failure it quarantines output as `VOID-*`, records the reason and exits nonzero. Do not salvage
+any section. Fix the cause before using `--new-pass`.
 
 ## Step 5 — assess the findings
 
@@ -190,18 +226,27 @@ Rank the defects by cost of being wrong, not by how interesting they are.
 
 ## Step 6 — pass 2, divergence (design mode, optional)
 
-Only after pass 1's report is on disk. Give the reviewer its own output and our `design.md`, and ask
-for: the divergences (question at stake, what each design does, which is right, and what observation
-would settle it); where both may be wrong through shared assumption rather than shared evidence; and
-what each has that the other lacks. Tell it not to defer, not to concede because we wrote more, and
-not to manufacture divergences.
+Only after the audited blind report is saved:
 
-This is where blindness ends by design. `design.md` is now in its context, so the pass cannot be
-repeated — capture pass 1 first or the artifact is lost.
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/mission-crosscheck/crosscheck.py" run \
+  --author "$AUTHOR" --mission "$MISSION" --mode design --package "$PKG" --sighted
+```
+
+The helper revalidates the blind pass, then gives a fresh reviewer external copies of that report
+and `design.md`. Ask for divergences: question at stake, each design's choice, which is right and
+what observation settles it; shared assumptions; and what each design lacks. Do not defer, concede
+because we wrote more, or manufacture divergences. Other mission documents remain out of bounds.
+
+Blindness ends deliberately for this separate pass. Its task, inputs, process, audit and report
+(`design-pass2-report.md`) are recorded under `design-sighted`; it cannot replace `design-blind` or
+its saved report.
 
 ## Step 7 — hand over
 
-Write `crosscheck/report.html`, mark the progress file complete, and journal a `decision`. Report
+Write `crosscheck/report.html`, record assessment/report completion in `progress.md`, and journal a
+`decision`. Do not change machine audit results or treat a sighted pass as blind completion. The
+journal write is a new mission input state: subsequent runs revalidate and may require a fresh pass. Report
 tightly: the convergences first (they are the cheapest thing the user can act on — stop worrying
 about that decision), then the defects ranked by cost, then what needs the user's hand and why you
 did not do it yourself.

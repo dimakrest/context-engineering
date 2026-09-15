@@ -22,8 +22,8 @@ human reviewer can see what "done" was defined as without reading the run state.
   patches/F001.patch  the exact per-feature diff a blind reviewer receives (scripts/mission-patch.sh)
   handoffs/F001.md    one per feature, schema-enforced
   validation/         M1-scrutiny.md · M1-behavior.md · M1-review-F001.md · pr-review.md
-  crosscheck/          progress.md · pass1-report.md · report.html  (external review; raw
-                       transcript and sealed package live OUTSIDE the mission dir)
+  crosscheck/          progress.json · progress.md · <mode>-pass1-report.md · design-pass2-report.md
+                       · report.html  (external review; raw transcript and sealed package live OUTSIDE)
   followups.md        the finding registry — clustered, dispositioned; repairs become features
   journal.jsonl       append-only event log (hooks write dispatch / agent_return / locks / spend / model)
   baseline/health.json  `repowise health` at plan time, when the repo is indexed — the scrutiny

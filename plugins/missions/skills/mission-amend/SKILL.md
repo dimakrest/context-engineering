@@ -80,12 +80,22 @@ decomposition, leave it and say in the amendment record that you did and why.
 Complete the scope map, including mission records and the human-facing plan, before writing
 **any** mission or plan artifact, amendment record, state or journal entry. Determine whether
 `contract.md` would change or crosscheck is otherwise required (including by the user).
-Verify that the current runtime supports that crosscheck **before editing**. In Codex the
-reverse Codex → Claude adapter is unavailable: refuse such an amendment, report the blocker
-in the conversation, and leave all files, state and journal untouched. Do not apply the edit
+Verify the opposite reviewer with the shared crosscheck preflight **before editing**, after the
+read-only map is complete:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/mission-crosscheck/crosscheck.py" preflight \
+  --author "$AUTHOR" --mission "$MISSION" --mode contract
+```
+
+Set `AUTHOR` to the actual author provider (`claude` or `codex`), not merely the executable you
+prefer. The helper checks the other provider's executable, required session/transcript flags and
+authentication with bounded probes, without mission writes. Unknown routing, missing capabilities,
+missing authentication or same-vendor selection is a blocker: report it in the conversation and
+leave mission/plan files, state, journal and amendment records untouched. Do not apply the edit
 and discover at Step 8 that its mandatory audit cannot run. If mapping is uncertain, keep
-investigating read-only; do not presume crosscheck is optional. This prerequisite does not
-replace the mandatory post-amendment audit in Step 8.
+investigating read-only; do not presume crosscheck is optional. A preflight pass is a prerequisite,
+not a review: preserve user approval, coherence and the mandatory post-amendment audit in Step 8.
 
 ## Step 3 — apply edits that abort rather than half-apply
 

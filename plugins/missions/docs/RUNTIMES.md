@@ -140,12 +140,12 @@ Apply the shared **Required MCP access** policy above before planning/design res
 including local research when delegation is unavailable. Tool discovery must be followed by
 an actual read-only lookup for each provider; configuration inspection is not verification.
 
-Amendment support is conditional: complete read-only scope mapping first. If `contract.md`
-would change, or crosscheck is otherwise required, refuse the amendment before writing any
-mission or plan artifact, state update, amendment record or journal event: the reverse
-cross-vendor adapter is unavailable. Report the prerequisite in the conversation and leave
-all files untouched. Amendments that do not require crosscheck may proceed with the shared
-coherence gate; the mandatory post-amendment audit is never waived by this runtime guide.
+Amendments complete read-only scope mapping first. If `contract.md` would change, or crosscheck
+is otherwise required, run `skills/mission-crosscheck/crosscheck.py preflight --author codex`
+(with `--mission` and the required mode) before any mission/plan, state, amendment-record or
+journal write. This verifies a Claude reviewer without changing the mission. A failed prerequisite
+leaves those files untouched; a successful preflight permits the authorized amendment. Preserve
+the shared coherence gate, user authority and mandatory post-amendment crosscheck audit.
 
 Claude `Seat` fields stay Claude-only. For Codex driver model overrides, use
 `driver.json` → `roles.<role>.model`; `null` uses the CLI's configured default. Do not put
@@ -221,11 +221,26 @@ report that separately and respect the mission's terminal-review budget.
 
 ### Cross-vendor review
 
-`mission-crosscheck` currently implements **Claude-authored plan → Codex reviewer** and
-audits Codex text transcripts. In a Codex session, stop before launching that workflow and
-report that the reverse **Codex → Claude** adapter is unavailable. A second Codex instance
-does not satisfy vendor independence. Preserve sealed packages and unfinished progress;
-do not mark the crosscheck passed or silently replace it with a same-vendor review.
-Other mission skills can proceed when crosscheck is optional; when the user requires it,
-report the unresolved prerequisite (for amendments, before any writes as required above).
+`mission-crosscheck` supports **Claude-authored plan → Codex reviewer** and **Codex-authored
+plan → Claude reviewer** through one Python helper, separate from the implementation driver.
+Declare the actual author with `--author claude|codex`; the reviewer defaults to the other provider.
+Same-vendor and unknown/custom routing fail before dispatch. Executable and model overrides stay
+inside the verified provider boundary; missing binary/authentication/capabilities never trigger
+fallback. Preflight makes bounded local CLI checks and no mission writes or model calls.
+
+Follow the canonical skill for sealing, leak assessment and `crosscheck.py run`. Both providers
+use fresh sessions, external package/raw-evidence directories, read-only tools and structured
+transcripts. Claude disables automatic project context and persistence. The shared gate checks
+resolved accesses/citations, successful process and transcript completion, package hashes and a
+valid repository content snapshot, including further edits to already-dirty files. Findings stay
+unread until audit succeeds.
+
+`crosscheck/progress.json` verifies saved identities/evidence before resume or reuse. Completed
+unaudited runs are audited without redispatch; invalid or incomplete output becomes `VOID-*`.
+Markdown checkboxes and legacy terminal text alone cannot establish completion. The audited blind
+report must be saved before optional design divergence, whose evidence and report stay separate.
+Contract, design and decomposition changes still require the user's authority and finding dispositions.
+
+Native Codex sessions still do not acquire Claude plugin hooks. The reviewer helper enforces its
+own dispatch/audit gates; it does not extend native Codex hook support.
 See [design and follow-ups](CODEX_DESIGN.md).

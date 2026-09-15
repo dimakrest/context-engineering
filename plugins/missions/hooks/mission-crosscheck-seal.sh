@@ -28,6 +28,11 @@ raw=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 # heredoc bodies wholesale.
 cmd=$(printf '%s\n' "$raw" | mission_strip_heredocs)
 
+# The crosscheck helper names the vendor as an option value (`--author codex`,
+# `--reviewer codex`) and dispatches codex itself, outside this hook's view. That
+# is not an invocation; only a bare `codex` word is.
+cmd=$(printf '%s' "$cmd" | sed -E 's/--(author|reviewer)(=|[[:space:]]+)codex([[:space:]]|$)/--\1\2vendor\3/g')
+
 printf '%s' "$cmd" | grep -qE '(^|[;&|[:space:]])codex([[:space:]]|$)' || exit 0
 
 if printf '%s' "$raw" | grep -qE '(^|[^[:alnum:]_./-])\.missions/'; then

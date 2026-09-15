@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Missions",
     "shortDescription": "Plan, run and review contract-first missions.",
-    "longDescription": "Shares mission skills and agent instructions with Claude Code. Codex executes workers and validators through the missions driver; native session hook parity and reverse-vendor crosscheck are not included.",
+    "longDescription": "Shares mission skills and agent instructions with Claude Code. Codex executes workers and validators through the missions driver; cross-vendor reviews work in both directions; native session hook parity is not included.",
     "developerName": "Dima Krest",
     "category": "Productivity",
     "capabilities": [

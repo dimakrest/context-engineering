@@ -64,11 +64,14 @@ uses `bin/missions` with the Codex harness for implementation and milestone vali
 returns to the session for the terminal draft PR review. Claude's hooks are registered only
 in its manifest; native Codex session tools do not get the missions hook guards. The driver
 retains its existing locks, grading, validation and caps. Codex reports tokens, not measured
-USD, and cannot enforce a per-run dollar budget. `mission-crosscheck` currently supports
-Claude → Codex only and explicitly stops when invoked from Codex. Amendments that change
-`contract.md` or otherwise require crosscheck are therefore refused in Codex **before any
-writes**, after read-only scope mapping. Other amendments retain the shared coherence gate;
-the mandatory post-amendment audit is not bypassed.
+USD, and cannot enforce a per-run dollar budget. `mission-crosscheck` supports both
+Claude → Codex and Codex → Claude with shared sealing, preflight, transcript/content audits and
+verified resume. Only the opposite known provider is allowed; unknown routing and missing
+binary/authentication/capabilities fail visibly. Amendments requiring crosscheck run this read-only
+preflight after scope mapping and before any writes, then retain approval, coherence and the
+mandatory post-amendment audit. The audited blind report is saved before optional sighted design
+comparison; findings are never applied automatically. See the
+[crosscheck workflow](skills/mission-crosscheck/SKILL.md) for commands and evidence requirements.
 
 See [runtime behavior](docs/RUNTIMES.md) for invocation and enforcement details, and
 [design research and follow-ups](docs/CODEX_DESIGN.md) for the repository comparisons and
@@ -385,6 +388,7 @@ Trace tests run the real driver over a temporary repo with a stub worker (a shel
 
 ```
 bash plugins/missions/tests/traces/run.sh            # all traces + tests/driver-selftest.py
+python3 plugins/missions/tests/crosscheck-selftest.py # offline Claude/Codex fixtures; no paid calls
 bash plugins/missions/tests/traces/run.sh 'two-*'    # one case
 ```
 

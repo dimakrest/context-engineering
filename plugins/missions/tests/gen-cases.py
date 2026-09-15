@@ -373,6 +373,22 @@ case(C, "push-in-mission-repo-via-cd-still-blocked", "rc=2\nstderr~=no pushing\n
 case(C, "merge-in-other-repo-allowed", "rc=0\nsetup=" + OTHER, stdin=bash_payload("git -C $TMP/other merge feature"), missions={"demo": demo()})
 case(C, "heredoc-mentioning-push-ok", "rc=0", stdin=bash_payload("cat > notes.md <<'EOF'\nnever git push here\nEOF"), missions={"demo": demo()})
 
+# ================================================================ crosscheck seal
+CS = "mission-crosscheck-seal"
+# A bare codex invocation naming the mission tree is blocked; the crosscheck helper names the vendor
+# as an option value and dispatches codex itself, so its own invocations pass.
+case(CS, "codex-exec-missions-blocked", "rc=2\nstderr~=references .missions/",
+     stdin=bash_payload("codex exec 'read .missions/demo/contract.md and review it'"), missions={"demo": demo()})
+case(CS, "codex-exec-docs-plans-blocked", "rc=2\nstderr~=references docs/plans/",
+     stdin=bash_payload("cat docs/plans/demo.md | codex exec -"), missions={"demo": demo()})
+case(CS, "crosscheck-helper-author-codex-ok", "rc=0\nstderr_empty=1",
+     stdin=bash_payload('python3 "$CLAUDE_PLUGIN_ROOT/skills/mission-crosscheck/crosscheck.py" run --author codex --mission .missions/demo --package /tmp/pkg'),
+     missions={"demo": demo()})
+case(CS, "crosscheck-helper-reviewer-equals-codex-ok", "rc=0\nstderr_empty=1",
+     stdin=bash_payload("python3 crosscheck.py preflight --author=claude --reviewer=codex --mission .missions/demo"), missions={"demo": demo()})
+case(CS, "crosscheck-helper-then-bare-codex-blocked", "rc=2\nstderr~=references .missions/",
+     stdin=bash_payload("python3 crosscheck.py preflight --author codex; codex exec 'summarize .missions/demo/design.md'"), missions={"demo": demo()})
+
 # ================================================================ shell guard (v0.2)
 SG = "mission-shell-guard"
 # blindness: only the reviewer's own shell is policed, by agent_type

@@ -38,11 +38,13 @@ hook enforcement was added for these session-level gates.
 | Parent succeeds, child fails with applicable waiver | Child reports failure and uses only permitted fallback; handover identifies waiver. |
 | Digest carries either/both provider waivers | Preserve providers, fallback, scope, lifetime, timestamp and full-decision reference on repeated reads. |
 | Digest exceeds 2048 bytes, including Unicode metadata | Fail visibly, never emit a successful truncated digest. |
-| Codex amendment changes contract or otherwise requires crosscheck | Complete read-only scope map, then refuse before any artifact/state/journal writes. |
+| Either-host amendment changes contract or otherwise requires crosscheck | Complete read-only scope map, then run the opposite-provider crosscheck preflight before any artifact/state/journal writes. Failure leaves mission files unchanged. |
 | Codex amendment needs no crosscheck | Proceed through existing replacement, residue, coherence and recording steps. |
-| Supported runtime amendment changes contract | Verify crosscheck support before writes; mandatory post-amendment audit still must pass. |
+| Opposite-provider preflight succeeds | Apply only the authorized amendment; coherence and mandatory post-amendment audit still must pass. |
 | Re-plan wins or scope mapping is incomplete | No early amendment record; stop for re-plan or continue read-only mapping. |
 
 Run the executable regressions with `python3 plugins/missions/tests/driver-selftest.py
 PlanningAccessTests PackagingTests`, and the existing amendment/coherence cases with
-`bash plugins/missions/tests/run.sh 'check/*'`.
+`bash plugins/missions/tests/run.sh 'check/*'`. Issue #28 adds executable reviewer prerequisite,
+contamination and resume coverage in `python3 plugins/missions/tests/crosscheck-selftest.py`;
+its reviewer binaries are offline stubs. No native Codex hook enforcement is implied.

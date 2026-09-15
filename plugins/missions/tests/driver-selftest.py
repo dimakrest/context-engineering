@@ -247,6 +247,7 @@ class PackagingTests(unittest.TestCase):
                           "skills/mission-run/references/worker-brief.md",
                           "skills/mission-run/references/reviewer-brief.md",
                           "skills/mission-crosscheck/audit.sh", "skills/mission-crosscheck/snapshot.sh",
+                          "skills/mission-crosscheck/crosscheck.py", "skills/mission-crosscheck/review_audit.py",
                           "scripts/mission-state.sh", "scripts/check.sh", "hooks/claude.json"):
                 self.assertTrue((installed / asset).is_file(), asset)
             env = clean_env()
@@ -254,6 +255,10 @@ class PackagingTests(unittest.TestCase):
                                     cwd=tmp, env=env, capture_output=True, text=True)
             self.assertEqual(launch.returncode, 0, launch.stderr)
             self.assertIn("preflight", launch.stdout)
+            review = subprocess.run([sys.executable, str(installed / "skills/mission-crosscheck/crosscheck.py"), "--help"],
+                                    cwd=tmp, env=env, capture_output=True, text=True)
+            self.assertEqual(review.returncode, 0, review.stderr)
+            self.assertIn("preflight", review.stdout)
             mission = Path(tmp) / ".missions" / "demo"
             shutil.copytree(BASE, mission)
             digest = subprocess.run(["bash", str(installed / "scripts" / "mission-state.sh"), str(mission)],

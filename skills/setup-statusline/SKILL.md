@@ -25,10 +25,15 @@ quiet session stays short.
 
 ## What the segments mean
 
-**Effort** is read from `.effort.level` in the status line payload, which is the
-only source that tracks a mid-session `/effort` change. Models that do not
-support reasoning effort (Haiku 4.5, Sonnet 4.x, Opus 4.x) carry no effort level
-at all, and the segment is omitted rather than showing an invented default.
+**Effort** is read from `.effort.level` in the status line payload, falling back
+to `$CLAUDE_EFFORT` in the environment. Those are the only two sources that
+track a mid-session `/effort` change, and they are the only two consulted:
+`settings.json` is deliberately *not* a fallback, because its per-model key is a
+canonical model id that the payload's id does not always match, and a miss there
+lands on a global `effortLevel` that would paint a level on models which have
+none. Models that do not support reasoning effort (Haiku 4.5, Sonnet 4.x, Opus
+4.x) carry no effort level at all, and the segment is omitted rather than
+showing an invented default.
 
 **`⚠200k`** appears when the last request was billed in the premium pricing tier.
 Claude Code computes it from the last assistant message's usage, not the running

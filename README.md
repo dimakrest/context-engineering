@@ -97,9 +97,22 @@ Skills are triggered by user actions or slash commands.
 
 ### Status Line
 
-Run `/setup-statusline` to install a two-line status bar showing model, effort level, directory, git status, context window usage, cost, and duration.
+Run `/setup-statusline` to install a two-line status bar:
 
-![Status line preview](assets/statusline-preview.png)
+```
+[Opus 5 1M] [xhigh] my-project ⑂ main ~3 · ⧉ issue-28 · PR #35 ✓
+▓▓▓░░░░░░░ 34% (341k/1.0M) · $8.41 · 45m21s (18m0s api) · +156 −23 · ✓ cache 1h 94%
+```
+
+Model, reasoning effort, directory, git branch with change counts, worktree, and
+PR number with review state; then context window usage, premium-pricing-tier
+flag, cost, elapsed and API time, lines changed, and prompt-cache health with
+miss causes. Segments hide themselves when there is nothing to report, and the
+cache segment stays grey until a rebuild actually costs you tokens.
+
+Needs `jq`. The newer segments — effort, worktree, PR state, prompt cache — come
+from status line payload fields that older Claude Code builds do not send; those
+segments simply stay hidden rather than breaking the bar.
 
 ## Available Commands (6)
 
@@ -283,6 +296,7 @@ Every significant change follows the workflow:
 
 - Claude Code CLI (v1.0.33+)
 - Git and GitHub CLI (`gh`)
+- `jq` — required by `/setup-statusline` (`brew install jq`, `sudo apt install jq`)
 - Optional: [Codex plugin](https://github.com/openai/codex) for adversarial code review (see [Recommended Companion Plugin](#recommended-companion-plugin))
 
 ## License

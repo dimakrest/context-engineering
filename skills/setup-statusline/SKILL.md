@@ -40,21 +40,33 @@ Claude Code computes it from the last assistant message's usage, not the running
 context total, so it reflects what you were just charged rather than a threshold
 you crossed once.
 
+**`!N`** in red counts paths with an unresolved merge conflict (porcelain `U`
+in either column). It is deliberately the loudest thing on line 1: a half-done
+merge is worth interrupting for. `+N` green counts staged paths and `~N` yellow
+unstaged ones, typechanges included.
+
 **Prompt cache** has four states, grey when healthy and loud only when a rebuild
-costs you tokens:
+costs you tokens. The whole segment is hidden when the payload reports
+`caching_observed: false` — some providers and gateways never report cache
+usage, so `warm` stays false forever and a permanent amber "cold" would be a
+standing false alarm:
 
 | rendered | meaning |
 |---|---|
 | `✓ cache 1h 94%` | warm, with hit ratio — ignorable |
+| `✓ cache 1h` | warm, hit ratio not yet measured |
 | `⏳ cache 1h 3m6s` | expiring within 5 minutes |
 | `○ cache cold 338k` | cold, and what a rebuild would cost |
 | `✗ cache tools_changed 310k` | a miss just happened, with its cause and cost |
 
 Miss causes come from `prompt_cache.last_miss_cause` and include
 `tools_changed`, `system_prompt_changed`, `model_changed`, `messages_rewritten`,
-`ttl_expired_5m`, `ttl_expired_1h`, `likely_server_side` and `unknown`. The miss
-state clears after 90 seconds — `last_miss_cause` itself persists for the rest of
-the session, so showing it unconditionally would pin the bar red.
+`ttl_expired_5m`, `ttl_expired_1h`, `likely_server_side` and `unknown`. The
+cause is optional detail: the miss state is driven by `last_miss_at` being
+within 90 seconds, and an undiagnosed miss shows as plain `✗ cache miss`.
+Gating on the cause instead would report a healthy cache in the very render
+that re-paid for it, and gating on nothing would pin the bar red for the rest
+of the session, since `last_miss_cause` never clears.
 
 ## Process
 
@@ -65,8 +77,17 @@ the session, so showing it unconditionally would pin the bar red.
    The script needs only bash 3.2, so the `/bin/bash` that macOS ships is fine.
 
 2. **Handle an existing statusline.** Check whether `~/.claude/statusline.sh`
-   already exists. If it does, back it up to `~/.claude/statusline.sh.bak` and
-   tell the user where the backup is, so they can revert with a single `cp`.
+   already exists. If it does, first compare it with the bundled script
+   (`cmp -s`); if they are identical there is nothing to preserve, so skip the
+   backup. Otherwise back it up to a *timestamped* name and tell the user where
+   it is:
+   ```bash
+   cp ~/.claude/statusline.sh "~/.claude/statusline.sh.bak.$(date +%Y%m%d%H%M%S)"
+   ```
+   Do not write a fixed `statusline.sh.bak`: on a second run of this skill
+   (a version bump, or the user re-invoking it) that would overwrite their
+   original with a copy of the bundled script — destroying the very thing the
+   backup exists to protect.
 
 3. **Install the script.** Copy the bundled script and make it executable:
    ```bash
@@ -93,6 +114,11 @@ the session, so showing it unconditionally would pin the bar red.
    branch honest when you change it in another terminal. The script renders in
    ~20ms, so at 5 seconds this costs well under 1% of a core. Drop the key if the
    user prefers a bar that only repaints on events.
+
+   If you change this away from 5, keep it *below* `CACHE_TTL` at the top of
+   `statusline.sh` (15 seconds). At or above it, the git cache expires exactly
+   as the next timed render arrives and never serves once, so every render
+   forks git.
 
    **Do not clobber an existing `command` that points somewhere else.** Some
    setups chain the status line through a wrapper script (to tee the payload to

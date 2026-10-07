@@ -104,10 +104,10 @@ Run `/setup-statusline` to install a two-line status bar:
 ▓▓▓░░░░░░░ 34% (341k/1.0M) · $8.41 · 45m21s (18m0s api) · +156 −23 · ✓ cache 1h 94%
 ```
 
-Model, reasoning effort, directory, git branch with change counts, worktree, and
-PR number with review state; then context window usage, premium-pricing-tier
-flag, cost, elapsed and API time, lines changed, and prompt-cache health with
-miss causes. Segments hide themselves when there is nothing to report, and the
+Model, reasoning effort, directory, git branch with change counts (staged,
+unstaged, and unresolved merge conflicts in red), worktree, and PR number with
+review state; then context window usage, premium-pricing-tier flag, cost,
+elapsed and API time, lines changed, and prompt-cache health with miss causes. Segments hide themselves when there is nothing to report, and the
 cache segment stays grey until a rebuild actually costs you tokens.
 
 Needs `jq`. The newer segments — effort, worktree, PR state, prompt cache — come

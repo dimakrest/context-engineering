@@ -15,11 +15,23 @@
 # Portability: avoids mapfile (bash 4+) and hard-depending on $EPOCHSECONDS
 # (bash 5+) so it still works on the bash 3.2 that macOS ships as /bin/bash.
 
-CACHE_TTL=5          # git status cache, seconds
+# Must exceed statusLine.refreshInterval (the skill installs 5) or the cache
+# expires exactly as the next timed render arrives and never serves once.
+CACHE_TTL=15         # git status cache, seconds
 MISS_WINDOW=90       # how long a prompt-cache miss stays on the bar, seconds
 EXPIRY_WARN=300      # show the cache countdown under this many seconds left
 
-JSON=$(cat)
+# A real ESC byte, so the lines can be printed with %s. Passing payload-derived
+# text through printf '%b' let a backslash in a directory name be read as an
+# escape - and a `\c` truncated the line and swallowed its newline, merging
+# both lines of the bar into one.
+E=$'\033'
+
+# `command -v` is a builtin, so this costs no fork.
+if ! command -v jq >/dev/null 2>&1; then
+    printf '%s[statusline: jq not found]%s\n' "${E}[33m" "${E}[0m"
+    exit 0
+fi
 
 # One jq call, read straight into named variables. The two lists below are in
 # the same order, and each name sits opposite its expression: adding a field
@@ -51,6 +63,7 @@ JSON=$(cat)
     IFS= read -r PR_STATE
     IFS= read -r WT_NAME
     IFS= read -r PC_PRESENT
+    IFS= read -r PC_OBSERVED
     IFS= read -r PC_WARM
     IFS= read -r PC_TTL
     IFS= read -r PC_HIT
@@ -59,13 +72,14 @@ JSON=$(cat)
     IFS= read -r PC_RECACHE
     IFS= read -r PC_MISSTOK
     IFS= read -r PC_MISS_AT
-} < <(printf '%s' "$JSON" | jq -r '
+} < <(jq -r '
 [ (.model.display_name // "Unknown")                                  # MODEL
 , (.workspace.current_dir // "")                                      # CURRENT_DIR
 , ((.context_window.used_percentage // 0) | floor)                    # CONTEXT_PCT
-, ( (.context_window.current_usage.input_tokens // 0)
-  + (.context_window.current_usage.cache_creation_input_tokens // 0)
-  + (.context_window.current_usage.cache_read_input_tokens // 0) )    # TOTAL_TOKENS
+, ( .context_window.total_input_tokens                              # TOTAL_TOKENS
+  // ( (.context_window.current_usage.input_tokens // 0)
+     + (.context_window.current_usage.cache_creation_input_tokens // 0)
+     + (.context_window.current_usage.cache_read_input_tokens // 0) ) )
 , (.context_window.context_window_size // 200000)                     # MAX_TOKENS
 , (.cost.total_cost_usd // 0)                                         # COST
 , (.cost.total_duration_ms // 0)                                      # DURATION_MS
@@ -79,15 +93,27 @@ JSON=$(cat)
 , (.pr.review_state // "")                                            # PR_STATE
 , (.worktree.name // .workspace.git_worktree // "")                   # WT_NAME
 , (if .prompt_cache then "1" else "" end)                             # PC_PRESENT
+, (.prompt_cache.caching_observed != false)                            # PC_OBSERVED
 , (.prompt_cache.warm == true)                                        # PC_WARM
 , (.prompt_cache.ttl // "")                                           # PC_TTL
-, (((.prompt_cache.hit_ratio // 0) * 100) | floor)                    # PC_HIT
+, (if .prompt_cache.hit_ratio == null then ""                         # PC_HIT
+  else ((.prompt_cache.hit_ratio * 100) | floor) end)
 , (.prompt_cache.expires_at // 0)                                     # PC_EXPIRES
 , (.prompt_cache.last_miss_cause.causes[0] // "")                     # PC_CAUSE
 , (.prompt_cache.recache_tokens_if_cold // 0)                         # PC_RECACHE
 , (.prompt_cache.miss_recache_tokens // 0)                            # PC_MISSTOK
 , (.prompt_cache.last_miss_at // 0)                                   # PC_MISS_AT
 ] | map(tostring) | .[]')
+
+# If jq failed (malformed payload, or a build that changed the schema) every
+# read above came back empty. Default the numerics so the bar degrades to a
+# sparse line instead of a page of "integer expression expected".
+: "${MODEL:=Unknown}"
+: "${MAX_TOKENS:=200000}"
+for _n in CONTEXT_PCT TOTAL_TOKENS COST DURATION_MS API_MS LINES_ADD LINES_DEL \
+          PC_EXPIRES PC_RECACHE PC_MISSTOK PC_MISS_AT; do
+    eval "[ -n \"\${$_n}\" ] || $_n=0"
+done
 
 # $EPOCHSECONDS is bash 5.0+; fall back to a fork on older bash.
 if [ -n "${EPOCHSECONDS:-}" ]; then NOW=$EPOCHSECONDS; else NOW=$(date +%s); fi
@@ -118,12 +144,12 @@ EFFORT="$PAYLOAD_EFFORT"
 EFF=""
 case "$EFFORT" in
     "")     ;;
-    low)    EFF="\033[34mlow\033[0m" ;;
-    medium) EFF="\033[33mmedium\033[0m" ;;
-    high)   EFF="\033[35mhigh\033[0m" ;;
-    xhigh)  EFF="\033[91mxhigh\033[0m" ;;
-    max)    EFF="\033[31mmax\033[0m" ;;
-    *)      EFF="\033[90m${EFFORT}\033[0m" ;;
+    low)    EFF="${E}[34mlow${E}[0m" ;;
+    medium) EFF="${E}[33mmedium${E}[0m" ;;
+    high)   EFF="${E}[35mhigh${E}[0m" ;;
+    xhigh)  EFF="${E}[91mxhigh${E}[0m" ;;
+    max)    EFF="${E}[31mmax${E}[0m" ;;
+    *)      EFF="${E}[90m${EFFORT}${E}[0m" ;;
 esac
 
 # ---------------------------------------------------------------- helpers
@@ -147,39 +173,61 @@ MODEL_SHORT=$MODEL
 _model_re='^(.*) \((.*) context\)$'
 [[ $MODEL =~ $_model_re ]] && MODEL_SHORT="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
 
+# Strip every trailing slash, not just one: "/usr/share//" would otherwise
+# leave "/usr/share/" and then ##*/ would eat the whole thing.
 DIR_NAME="unknown"
-if [ -n "$CURRENT_DIR" ]; then DIR_NAME=${CURRENT_DIR%/}; DIR_NAME=${DIR_NAME##*/}; fi
+if [ -n "$CURRENT_DIR" ]; then
+    _d=$CURRENT_DIR
+    while [ "$_d" != "/" ] && [ "${_d%/}" != "$_d" ]; do _d=${_d%/}; done
+    DIR_NAME=${_d##*/}
+    [ -z "$DIR_NAME" ] && DIR_NAME="/"      # CURRENT_DIR was "/"
+fi
 
-SEP="\033[90m·\033[0m"
+SEP="${E}[90m·${E}[0m"
 
 # ---------------------------------------------------------------- git
 # The payload carries workspace.repo and worktree.branch but no plain branch or
 # dirty count, so this still needs a subprocess - one, not three: a single
-# `status --porcelain -b` yields the branch and both counts, and its failure
-# also tells us this is not a repo. (Testing for a `.git` directory, as earlier
-# versions did, is wrong inside worktrees and submodules, where .git is a file,
-# and in any subdirectory of a repo.)
+# `status --porcelain -b` yields the branch and every count, and its failure
+# also tells us this is not a repo.
 #
 # Cached because Claude Code can fire several renders inside a 300ms debounce
-# window. The timestamp lives on line 1 of the cache file so reading it costs
-# no stat, and the file is keyed by directory rather than by $$.
+# window, and again on every refreshInterval tick. The cache holds counts
+# rather than rendered colour, so nothing read back from disk is ever fed to
+# the terminal as an escape sequence.
 GIT_BRANCH=""; GIT_STATUS=""
 if [ -n "$CURRENT_DIR" ]; then
-    # Keep the tail of the path, but only trim when it is actually too long:
-    # `${K: -80}` on a shorter string yields the EMPTY string rather than
-    # clamping, which would give every project one shared cache file - and so
-    # another project's branch on the bar.
-    CACHE_KEY="${CURRENT_DIR//[^a-zA-Z0-9]/_}"
-    if [ "${#CACHE_KEY}" -gt 80 ]; then CACHE_KEY=${CACHE_KEY:${#CACHE_KEY}-80}; fi
-    CACHE_FILE="${TMPDIR:-/tmp}/claude_statusline_git_${CACHE_KEY}"
+    # Our own directory, mode 700, under the invoking user's id. /tmp is
+    # world-writable: a flat predictable filename there can be pre-created by
+    # another user, who then chooses what this script reads back.
+    CACHE_DIR="${TMPDIR:-/tmp}/claude-statusline-$EUID"
+    [ -d "$CACHE_DIR" ] || mkdir -m 700 "$CACHE_DIR" 2>/dev/null
+
+    # -O: skip the cache entirely unless the directory is ours.
+    CACHE_FILE=""
+    if [ -d "$CACHE_DIR" ] && [ -O "$CACHE_DIR" ]; then
+        # Collapsing punctuation to _ makes "my-app" and "my_app" collide, so
+        # the full path is stored in the file and checked on read. A collision
+        # then costs a recompute instead of showing another project's branch.
+        CACHE_KEY="${CURRENT_DIR//[^a-zA-Z0-9]/_}"
+        if [ "${#CACHE_KEY}" -gt 80 ]; then CACHE_KEY=${CACHE_KEY:${#CACHE_KEY}-80}; fi
+        CACHE_FILE="${CACHE_DIR}/git_${CACHE_KEY}"
+    fi
 
     CACHED=0
-    if [ -f "$CACHE_FILE" ]; then
-        { IFS= read -r _TS; IFS= read -r _BRANCH; IFS= read -r _STATUS; } < "$CACHE_FILE"
+    if [ -n "$CACHE_FILE" ] && [ -f "$CACHE_FILE" ]; then
+        {
+            IFS= read -r _TS; IFS= read -r _PATH; IFS= read -r _BRANCH
+            IFS= read -r _STAGED; IFS= read -r _MODIFIED; IFS= read -r _CONFLICT
+        } < "$CACHE_FILE"
         case "$_TS" in
             ''|*[!0-9]*) : ;;                       # truncated or clobbered
-            *) if [ $(( NOW - _TS )) -lt "$CACHE_TTL" ]; then
-                   GIT_BRANCH=$_BRANCH; GIT_STATUS=$_STATUS; CACHED=1
+            *) if [ $(( NOW - _TS )) -lt "$CACHE_TTL" ] \
+                  && [ "$_PATH" = "$CURRENT_DIR" ] \
+                  && [ -n "$_CONFLICT" ]; then      # last line present => not torn
+                   GIT_BRANCH=$_BRANCH
+                   STAGED=$_STAGED; MODIFIED=$_MODIFIED; CONFLICT=$_CONFLICT
+                   CACHED=1
                fi ;;
         esac
     fi
@@ -187,9 +235,9 @@ if [ -n "$CURRENT_DIR" ]; then
     if [ "$CACHED" -eq 0 ]; then
         # Counted while streaming, with no array: a tree with thousands of dirty
         # files would otherwise spend hundreds of ms per render appending to one.
-        # -uno for the same reason - untracked entries match neither case below,
-        # and skipping them also saves git the walk of every untracked directory.
-        STAGED=0; MODIFIED=0
+        # -uno for the same reason - untracked entries match no case below, and
+        # skipping them also saves git the walk of every untracked directory.
+        STAGED=0; MODIFIED=0; CONFLICT=0
         {
             # "## main...origin/main" | "## HEAD (no branch)"; absent if not a repo
             if IFS= read -r L; then
@@ -202,85 +250,110 @@ if [ -n "$CURRENT_DIR" ]; then
                 GIT_BRANCH=$B
             fi
             while IFS= read -r L; do
-                case "${L:0:1}" in [MADRC]) STAGED=$(( STAGED + 1 )) ;; esac
-                case "${L:1:1}" in [MD])    MODIFIED=$(( MODIFIED + 1 )) ;; esac
+                # U in either column is an unresolved merge (DD AU UD UA DU AA UU)
+                # and must win: a half-done merge is the one thing worth shouting
+                # about. T is a typechange, e.g. a file replaced by a symlink.
+                case "$L" in
+                    U?*|?U*) CONFLICT=$(( CONFLICT + 1 )); continue ;;
+                esac
+                case "${L:0:1}" in [MADRCT]) STAGED=$(( STAGED + 1 )) ;; esac
+                case "${L:1:1}" in [MDT])    MODIFIED=$(( MODIFIED + 1 )) ;; esac
             done
         } < <(git -C "$CURRENT_DIR" status --porcelain -b -uno 2>/dev/null)
-        [ "$STAGED" -gt 0 ]   && GIT_STATUS="${GIT_STATUS} \033[32m+${STAGED}\033[0m"
-        [ "$MODIFIED" -gt 0 ] && GIT_STATUS="${GIT_STATUS} \033[33m~${MODIFIED}\033[0m"
+
         # Written even when this is not a repo, so a non-repo directory costs
-        # one git fork per CACHE_TTL rather than one per render.
-        printf '%s\n%s\n%s\n' "$NOW" "$GIT_BRANCH" "$GIT_STATUS" > "$CACHE_FILE" 2>/dev/null
+        # one git fork per CACHE_TTL rather than one per render. Via a temp file
+        # and mv so a concurrent reader never sees a half-written cache, and
+        # with 2>/dev/null AHEAD of the redirection - bash applies redirections
+        # left to right, so a trailing one does not suppress its own failure.
+        if [ -n "$CACHE_FILE" ]; then
+            _TMP="${CACHE_FILE}.$$"
+            if printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$NOW" "$CURRENT_DIR" \
+                   "$GIT_BRANCH" "$STAGED" "$MODIFIED" "$CONFLICT" \
+                   2>/dev/null > "$_TMP"; then
+                mv -f "$_TMP" "$CACHE_FILE" 2>/dev/null || rm -f "$_TMP" 2>/dev/null
+            fi
+        fi
     fi
+
+    # Rendered here, not cached, so the cache never holds escape sequences.
+    [ "$CONFLICT" -gt 0 ] && GIT_STATUS="${GIT_STATUS} ${E}[31m!${CONFLICT}${E}[0m"
+    [ "$STAGED"   -gt 0 ] && GIT_STATUS="${GIT_STATUS} ${E}[32m+${STAGED}${E}[0m"
+    [ "$MODIFIED" -gt 0 ] && GIT_STATUS="${GIT_STATUS} ${E}[33m~${MODIFIED}${E}[0m"
 fi
 
 # ---------------------------------------------------------------- line 1
-L1="[\033[1m${MODEL_SHORT}\033[0m]"
+L1="[${E}[1m${MODEL_SHORT}${E}[0m]"
 [ -n "$EFF" ] && L1="${L1} [${EFF}]"
-[ "$FAST_MODE" = "true" ] && L1="${L1} \033[93m⚡\033[0m"
+[ "$FAST_MODE" = "true" ] && L1="${L1} ${E}[93m⚡${E}[0m"
 L1="${L1} ${DIR_NAME}"
-[ -n "$GIT_BRANCH" ] && L1="${L1} \033[90m⑂\033[0m ${GIT_BRANCH}${GIT_STATUS}"
-[ -n "$WT_NAME" ]    && L1="${L1} ${SEP} \033[36m⧉ ${WT_NAME}\033[0m"
+[ -n "$GIT_BRANCH" ] && L1="${L1} ${E}[90m⑂${E}[0m ${GIT_BRANCH}${GIT_STATUS}"
+[ -n "$WT_NAME" ]    && L1="${L1} ${SEP} ${E}[36m⧉ ${WT_NAME}${E}[0m"
 if [ -n "$PR_NUM" ]; then
     case "$PR_STATE" in
-        approved)          PRC="\033[32m✓\033[0m" ;;
-        changes_requested) PRC="\033[31m✗\033[0m" ;;
-        draft)             PRC="\033[90m◌\033[0m" ;;
-        *)                 PRC="\033[33m◔\033[0m" ;;
+        approved)          PRC="${E}[32m✓${E}[0m" ;;
+        changes_requested) PRC="${E}[31m✗${E}[0m" ;;
+        draft)             PRC="${E}[90m◌${E}[0m" ;;
+        *)                 PRC="${E}[33m◔${E}[0m" ;;
     esac
-    L1="${L1} ${SEP} \033[94mPR #${PR_NUM}\033[0m ${PRC}"
+    L1="${L1} ${SEP} ${E}[94mPR #${PR_NUM}${E}[0m ${PRC}"
 fi
 
 # ---------------------------------------------------------------- line 2
 BAR_LENGTH=10
 FILLED=$(( CONTEXT_PCT * BAR_LENGTH / 100 )); EMPTY=$(( BAR_LENGTH - FILLED ))
-if   [ "$CONTEXT_PCT" -lt 70 ]; then BAR_COLOR="\033[32m"
-elif [ "$CONTEXT_PCT" -lt 90 ]; then BAR_COLOR="\033[33m"
-else                                 BAR_COLOR="\033[31m"; fi
+if   [ "$CONTEXT_PCT" -lt 70 ]; then BAR_COLOR="${E}[32m"
+elif [ "$CONTEXT_PCT" -lt 90 ]; then BAR_COLOR="${E}[33m"
+else                                 BAR_COLOR="${E}[31m"; fi
 BAR=$BAR_COLOR
 _i=0; while [ "$_i" -lt "$FILLED" ]; do BAR="${BAR}▓"; _i=$(( _i + 1 )); done
-BAR="${BAR}\033[0m"
+BAR="${BAR}${E}[0m"
 _i=0; while [ "$_i" -lt "$EMPTY" ];  do BAR="${BAR}░"; _i=$(( _i + 1 )); done
 
 L2="${BAR} ${CONTEXT_PCT}% ($(tok "$TOTAL_TOKENS")/$(tok "$MAX_TOKENS"))"
 # Claude Code computes this from the last assistant message's usage, not the
 # running total: a live "that request was billed in the premium tier" flag.
-[ "$EXCEEDS_200K" = "true" ] && L2="${L2} \033[33m⚠200k\033[0m"
+[ "$EXCEEDS_200K" = "true" ] && L2="${L2} ${E}[33m⚠200k${E}[0m"
 
 L2="${L2} ${SEP} \$$(printf '%.2f' "$COST")"
 L2="${L2} ${SEP} $(dur "$(( DURATION_MS / 1000 ))")"
 # Before the first request there is no API time to report, so don't print "(0s api)".
 if [ "$API_MS" -gt 0 ]; then
-    L2="${L2} \033[90m($(dur "$(( API_MS / 1000 ))") api)\033[0m"
+    L2="${L2} ${E}[90m($(dur "$(( API_MS / 1000 ))") api)${E}[0m"
 fi
 if [ "$LINES_ADD" -gt 0 ] || [ "$LINES_DEL" -gt 0 ]; then
-    L2="${L2} ${SEP} \033[32m+${LINES_ADD}\033[0m \033[31m−${LINES_DEL}\033[0m"
+    L2="${L2} ${SEP} ${E}[32m+${LINES_ADD}${E}[0m ${E}[31m−${LINES_DEL}${E}[0m"
 fi
 
 # Prompt-cache segment: grey and ignorable when healthy, loud only when it costs
-# money. last_miss_cause persists for the rest of the session, so the miss state
-# is gated on last_miss_at being recent - otherwise one early miss would pin the
-# bar red for the whole run.
-if [ -n "$PC_PRESENT" ]; then
+# money. Skipped entirely when caching_observed is false - the provider does not
+# report cache usage (some gateways, Bedrock/Vertex), so `warm` is false forever
+# and a permanent amber "cold" would be a standing false alarm.
+if [ -n "$PC_PRESENT" ] && [ "$PC_OBSERVED" = "true" ]; then
     MISS_AGE=$(( NOW - PC_MISS_AT ))
     LEFT=$(( PC_EXPIRES - NOW ))
-    # An absent last_miss_at is 0, so MISS_AGE is ~now and far outside the
-    # window; no separate test for it. The lower bound rejects a timestamp in
-    # the future, which is what a switch to milliseconds would look like - and
-    # would otherwise read as "always recent" and pin the bar red forever.
-    if   [ -n "$PC_CAUSE" ] && [ "$MISS_AGE" -ge 0 ] && [ "$MISS_AGE" -lt "$MISS_WINDOW" ]; then
-        CSEG="\033[31m✗ cache ${PC_CAUSE}\033[0m"
-        [ "$PC_MISSTOK" -gt 0 ] && CSEG="${CSEG} \033[31m$(tok "$PC_MISSTOK")\033[0m"
+    # Gated on last_miss_at being recent, not on a cause being present:
+    # last_miss_cause is null when the miss was not diagnosed, and gating on it
+    # reported a cache as healthy in the very render that re-paid for it. The
+    # cause is detail when it exists. An absent last_miss_at is 0, so MISS_AGE
+    # is ~now and far outside the window; no separate test for it. The lower
+    # bound rejects a timestamp in the future, which is what a switch to
+    # milliseconds would look like, and would otherwise pin the bar red forever.
+    if   [ "$PC_MISS_AT" -gt 0 ] && [ "$MISS_AGE" -ge 0 ] && [ "$MISS_AGE" -lt "$MISS_WINDOW" ]; then
+        CSEG="${E}[31m✗ cache ${PC_CAUSE:-miss}${E}[0m"
+        [ "$PC_MISSTOK" -gt 0 ] && CSEG="${CSEG} ${E}[31m$(tok "$PC_MISSTOK")${E}[0m"
     elif [ "$PC_WARM" != "true" ]; then
-        CSEG="\033[33m○ cache cold\033[0m"
-        [ "$PC_RECACHE" -gt 0 ] && CSEG="${CSEG} \033[33m$(tok "$PC_RECACHE")\033[0m"
+        CSEG="${E}[33m○ cache cold${E}[0m"
+        [ "$PC_RECACHE" -gt 0 ] && CSEG="${CSEG} ${E}[33m$(tok "$PC_RECACHE")${E}[0m"
     elif [ "$LEFT" -gt 0 ] && [ "$LEFT" -lt "$EXPIRY_WARN" ]; then
-        CSEG="\033[33m⏳ cache ${PC_TTL} $(dur "$LEFT")\033[0m"
+        CSEG="${E}[33m⏳ cache ${PC_TTL} $(dur "$LEFT")${E}[0m"
     else
-        CSEG="\033[90m✓ cache ${PC_TTL} ${PC_HIT}%\033[0m"
+        # An absent hit_ratio means unmeasured, not 0%: omit it rather than
+        # assert a number the payload did not give us.
+        CSEG="${E}[90m✓ cache ${PC_TTL}${PC_HIT:+ ${PC_HIT}%}${E}[0m"
     fi
     L2="${L2} ${SEP} ${CSEG}"
 fi
 
-printf '%b\n' "$L1"
-printf '%b\n' "$L2"
+printf '%s\n' "$L1"
+printf '%s\n' "$L2"

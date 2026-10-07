@@ -8,8 +8,8 @@
   "plugins": [
     {
       "name": "context-engineering",
-      "description": "Complete development workflow with specialized agents, commands, skills, and execution context. Provides 10 agents for code research and implementation, 6 commands for structured development workflows, 4 skills (commit, debug, describe-pr, code-review).",
-      "version": "1.0.5",
+      "description": "Complete development workflow with specialized agents, commands, skills, and execution context. Provides 10 agents for code research and implementation, 6 commands for structured development workflows, 5 skills (commit, debug, describe-pr, code-review-by-team, setup-statusline).",
+      "version": "1.0.6",
       "author": {
         "name": "Dima Krest"
       },

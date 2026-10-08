@@ -1,0 +1,20 @@
+{
+ "name": "smoke",
+ "about": "Proves the router against real Orca on harmless work: two workers at once, a heartbeat, a question, a failure with a retry, a script step, a gate. Workers write only under {OUT}. Start it with OUT=<an empty scratch directory>.",
+ "vars": {"MODEL": "claude-sonnet-5-5"},
+ "steps": [
+  {"id": "alpha", "group": "pair", "agent": "claude", "model": "{MODEL}", "spec": "smoke-write.md",
+   "checks": ["{CHECKS}/file-exists.sh {OUT}/alpha.txt"]},
+  {"id": "beta", "group": "pair", "agent": "claude", "model": "{MODEL}", "spec": "smoke-write.md",
+   "checks": ["{CHECKS}/file-exists.sh {OUT}/beta.txt"]},
+  {"id": "ask", "agent": "claude", "model": "{MODEL}", "spec": "smoke-ask.md",
+   "checks": ["{CHECKS}/verdict-line.sh {OUT}/ask.txt"]},
+  {"id": "record", "type": "script", "exports": ["ANSWER"],
+   "run": "echo \"VAR ANSWER=$(sed -n 's/^VERDICT: *//p' {OUT}/ask.txt)\"; echo OK recorded the answer"},
+  {"id": "flaky", "agent": "claude", "model": "{MODEL}", "spec": "smoke-flaky.md",
+   "checks": ["{CHECKS}/file-exists.sh {OUT}/flaky.txt"]},
+  {"id": "accept", "type": "gate", "title": "smoke gate: the lines below are what the coordinator would read",
+   "show": ["{CHECKS}/file-exists.sh {OUT}/alpha.txt", "{CHECKS}/file-exists.sh {OUT}/beta.txt",
+            "{CHECKS}/verdict-line.sh {OUT}/ask.txt", "echo OK the answer recorded by the script step: {ANSWER}"]}
+ ]
+}

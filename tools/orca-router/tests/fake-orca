@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""A stand-in for the Orca CLI, for router.py's tests. It answers with the JSON shapes Orca 1.4.219 printed on
+2026-10-04 (check, worker-start, worker-release, reply, run-current, worker-list).
+
+State lives in $FAKE_ORCA_DIR:
+  scenario.json   {"rules": [{"match": "<regex on the task title>", "start": "ok" | "fail", "repeat": false,
+                              "start_delay": <seconds worker-start blocks before it answers>,
+                              "effect": "<shell, run when the worker starts>",
+                              "events": [{"after": 0.2, "type": "heartbeat", "phase": "x"},
+                                         {"after": 0.4, "type": "question", "question": "…", "options": ["A", "B"],
+                                          "on_reply": [{"after": 0.1, "type": "worker_done", "outcome": "succeeded"}]},
+                                         {"after": 0.5, "type": "worker_done", "outcome": "failed", "reportPath": "…"}]}]}
+                  A rule is used once, in order, unless it says repeat.
+  queue/          messages not yet due or not yet delivered
+  delivery.json   the delivery that was handed out and not yet acknowledged (it is replayed until --ack)
+  starts.jsonl, releases.log, replies.jsonl      what the router asked for
+  callers.log     the terminal handle each run-use and run-current call came from
+  workers.json    the rows worker-list answers with (default: none)
+  fail_checks     a number: that many checks answer runtime_unavailable
+  lost_checks     a number: that many checks answer ok with connectionLost true and no message
+"""
+import datetime
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+D = Path(os.environ["FAKE_ORCA_DIR"])
+(D / "queue").mkdir(parents=True, exist_ok=True)
+(D / "on_reply").mkdir(parents=True, exist_ok=True)
+
+
+class Lock:
+    def __enter__(self):
+        while True:
+            try:
+                (D / "lock").mkdir()
+                return self
+            except FileExistsError:
+                time.sleep(0.005)
+
+    def __exit__(self, *a):
+        (D / "lock").rmdir()
+
+
+def out(result=None, error=None, code=0):
+    body = {"id": "fake", "ok": error is None, "_meta": {"runtimeId": "fake"}}
+    if error is None:
+        body["result"] = result
+    else:
+        body["error"] = error
+    print(json.dumps(body, indent=2))
+    sys.exit(code)
+
+
+def opt(args, name, default=None):
+    return args[args.index(name) + 1] if name in args else default
+
+
+def next_id(prefix):
+    n = int((D / "counter").read_text()) + 1 if (D / "counter").exists() else 1
+    (D / "counter").write_text(str(n))
+    return f"{prefix}_{n:012x}"
+
+
+def iso(t):
+    return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def enqueue(events, task, dispatch, base):
+    for e in events:
+        due = base + float(e.get("after", 0))
+        mid = next_id("msg")
+        payload = {"taskId": task, "dispatchId": dispatch}
+        for k in ("phase", "outcome", "reportPath", "question", "options"):
+            if k in e:
+                payload[k] = e[k]
+        msg = {"id": mid, "run_id": "run_fake", "delivery_contract": "current_delivery",
+               "from_handle": f"dispatch:{dispatch}" if e["type"] == "question" else f"term_{dispatch}",
+               "to_handle": "run:run_fake", "subject": e.get("subject", "alive" if e["type"] == "heartbeat" else e["type"]),
+               "body": e.get("body", e.get("question", "")), "type": e["type"], "priority": "normal",
+               "thread_id": mid if e["type"] == "question" else None, "payload": json.dumps(payload),
+               "created_at": iso(due), "delivered_at": None}
+        (D / "queue" / f"{int(due * 1e6):020d}-{mid}.json").write_text(json.dumps(msg))
+        if e.get("on_reply"):
+            (D / "on_reply" / f"{mid}.json").write_text(json.dumps({"events": e["on_reply"], "task": task, "dispatch": dispatch}))
+
+
+def take_due():
+    cur = D / "delivery.json"
+    if cur.exists():
+        d = json.loads(cur.read_text())
+        return dict(d, replayed=True)
+    due = [p for p in sorted((D / "queue").glob("*.json")) if int(p.name.split("-")[0]) <= time.time() * 1e6][:50]
+    if not due:
+        return None
+    d = {"deliveryId": next_id("delivery"), "messages": [json.loads(p.read_text()) for p in due]}
+    cur.write_text(json.dumps(d))
+    for p in due:
+        p.unlink()
+    return dict(d, replayed=False)
+
+
+def check(args):
+    ack = opt(args, "--ack")
+    failing = D / "fail_checks"
+    if failing.exists() and int(failing.read_text() or 0) > 0:
+        failing.write_text(str(int(failing.read_text()) - 1))
+        out(error={"code": "runtime_unavailable", "message": "fake: runtime closed the connection",
+                   "data": {"orchestrationRequestId": "req_fake"}}, code=1)
+    losing = D / "lost_checks"
+    if losing.exists() and int(losing.read_text() or 0) > 0:
+        losing.write_text(str(int(losing.read_text()) - 1))
+        out({"runId": "run_fake", "deliveryId": None, "messages": [], "count": 0, "acknowledged": None,
+             "timedOut": False, "cancelled": False, "connectionLost": True})
+    acked = None
+    with Lock():
+        if ack:
+            cur = D / "delivery.json"
+            if not cur.exists() or json.loads(cur.read_text())["deliveryId"] != ack:
+                out(error={"code": "stale_delivery", "message": f"Delivery {ack} does not belong to this mailbox."}, code=1)
+            cur.unlink()
+            acked = ack
+    deadline = time.time() + int(opt(args, "--timeout-ms", "0")) / 1000 if "--wait" in args else 0
+    while True:
+        with Lock():
+            d = take_due()
+        if d or time.time() >= deadline:
+            break
+        time.sleep(0.02)
+    base = {"runId": "run_fake", "acknowledged": acked, "cancelled": False, "connectionLost": False}
+    if d:
+        out(dict(base, deliveryId=d["deliveryId"], messages=d["messages"], count=len(d["messages"]),
+                 replayed=d["replayed"], timedOut=False))
+    out(dict(base, deliveryId=None, messages=[], count=0, timedOut="--wait" in args))
+
+
+def worker_start(args):
+    title = opt(args, "--task-title", "")
+    with Lock():
+        sc = json.loads((D / "scenario.json").read_text())
+        rule = None
+        for r in sc["rules"]:
+            if re.search(r["match"], title) and (r.get("repeat") or not r.get("used")):
+                rule = r
+                r["used"] = True
+                break
+        (D / "scenario.json").write_text(json.dumps(sc))
+        task, dispatch = next_id("task"), next_id("ctx")
+        rec = {"title": title, "task": task, "dispatch": dispatch, "t": time.time(),
+               "started": bool(rule) and rule.get("start", "ok") == "ok"}
+        for k in ("--spec", "--agent", "--model", "--effort", "--worktree", "--run"):
+            rec[k[2:]] = opt(args, k)
+        with open(D / "starts.jsonl", "a") as f:
+            f.write(json.dumps(rec) + "\n")
+    if rule is None or rule.get("start", "ok") != "ok":
+        out(error={"code": "worker_start_failed", "message": "fake: the agent did not become ready",
+                   "data": {"failedStage": "agent_ready", "residualResources": []}}, code=1)
+    time.sleep(float(rule.get("start_delay", 0)))   # the real call blocks until the agent is ready
+    with Lock():
+        if rule.get("effect"):
+            subprocess.run(["bash", "-c", rule["effect"]], check=False)
+        enqueue(rule.get("events") or [], task, dispatch, time.time())
+    launch = {"agent": opt(args, "--agent"), "model": opt(args, "--model"), "effort": opt(args, "--effort")}
+    out({"runId": "run_fake", "taskId": task, "dispatchId": dispatch, "state": "ready", "stage": "input_accepted",
+         "launch": {"requested": launch, "effective": launch}, "residualResources": []})
+
+
+def main():
+    args = sys.argv[1:]
+    if args[:1] != ["orchestration"]:
+        out({"app": {"running": True}})
+    verb = args[1]
+    if verb == "check":
+        check(args)
+    if verb == "worker-start":
+        worker_start(args)
+    if verb == "worker-release":
+        dispatch = opt(args, "--dispatch")
+        with Lock():
+            seen = dispatch in (D / "releases.log").read_text().split() if (D / "releases.log").exists() else False
+            with open(D / "releases.log", "a") as f:
+                f.write(dispatch + "\n")
+        out({"dispatchId": dispatch, "state": "already_released" if seen else "released",
+             "processAction": "none" if seen else "closed_agent_terminal"})
+    if verb == "reply":
+        mid = opt(args, "--id")
+        with Lock():
+            with open(D / "replies.jsonl", "a") as f:
+                f.write(json.dumps({"id": mid, "body": opt(args, "--body")}) + "\n")
+            hook = D / "on_reply" / f"{mid}.json"
+            if hook.exists():
+                h = json.loads(hook.read_text())
+                enqueue(h["events"], h["task"], h["dispatch"], time.time())
+                hook.unlink()
+        out({"message": {"id": next_id("msg")}})
+    if verb in ("run-current", "run-use"):
+        with open(D / "callers.log", "a") as f:
+            f.write(f"{verb} {os.environ.get('ORCA_TERMINAL_HANDLE', '-')}\n")
+        out({"run": {"id": "run_fake", "objective": "fake", "coordinator_handle": "term_fake"}})
+    if verb == "worker-list":
+        rows = json.loads((D / "workers.json").read_text()) if (D / "workers.json").exists() else []
+        out({"workers": rows, "counts": {"total": len(rows)}, "page": {"hasMore": False}})
+    if verb == "inject":  # test hook: a message from a worker the router did not start
+        with Lock():
+            enqueue([json.loads(opt(args, "--event"))], "task_stranger", "ctx_stranger", time.time())
+        out({})
+    out(error={"code": "unknown_verb", "message": verb}, code=1)
+
+
+if __name__ == "__main__":
+    main()

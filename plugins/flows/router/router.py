@@ -468,7 +468,12 @@ def load_def(path: Path) -> dict:
     return d
 
 
-def validate(defn: dict, def_dir: Path, variables: "dict[str, str]") -> "list[str]":
+def kit_of(def_path: Path, defn: dict) -> Path:
+    """Where specs/ and checks/ are: the definition's own directory, or the "kit" it names relative to itself."""
+    return (def_path.parent / str(defn.get("kit") or ".")).resolve()
+
+
+def validate(defn: dict, kit: Path, variables: "dict[str, str]") -> "list[str]":
     """Every problem that would stop the chain later is found before the first worker starts."""
     problems: "list[str]" = []
     ids: "list[str]" = []
@@ -491,7 +496,7 @@ def validate(defn: dict, def_dir: Path, variables: "dict[str, str]") -> "list[st
         if typ == "worker":
             if not s.get("agent"):
                 problems.append(f"step {sid}: a worker step needs an agent")
-            spec = def_dir / "specs" / str(s.get("spec", ""))
+            spec = kit / "specs" / str(s.get("spec", ""))
             if not s.get("spec") or not spec.is_file():
                 problems.append(f"step {sid}: spec file missing: {spec}")
             else:
@@ -562,10 +567,13 @@ def cmd_chain(S: State, a: argparse.Namespace) -> int:
             die(f"{kv!r}: variables are given as K=V", 2)
         k, v = kv.split("=", 1)
         variables[k] = v
-    variables.update(PR=a.pr, STATE=str(S.root), DEF_DIR=str(def_path.parent), CHECKS=str(def_path.parent / "checks"))
+    kit = kit_of(def_path, defn)
+    if not kit.is_dir():
+        die(f"{a.pr}: the definition's kit {defn.get('kit')!r} is not a directory: {kit}")
+    variables.update(PR=a.pr, STATE=str(S.root), DEF_DIR=str(def_path.parent), KIT=str(kit), CHECKS=str(kit / "checks"))
     if os.environ.get("SCRATCH"):
         variables.setdefault("SCRATCH", os.environ["SCRATCH"])
-    problems = validate(defn, def_path.parent, variables)
+    problems = validate(defn, kit, variables)
     for s in defn["steps"]:
         extra = f" ∥{s['group']}" if s.get("group") else ""
         what = {"worker": render(f"{s.get('agent')} {s.get('model', '')} {s.get('effort', '')}".strip(), variables, set()),
@@ -586,7 +594,7 @@ def cmd_chain(S: State, a: argparse.Namespace) -> int:
         die(f"{len(open_chains(S))} chains are open ({', '.join(open_chains(S))}) and ROUTER_MAX_CHAINS is {MAX_CHAINS}: {a.pr} was not started")
     if not pid_alive(S / "mailbox.pid"):
         die("the mailbox daemon is not running: router.py init")
-    st = {"pr": a.pr, "def": str(def_path), "def_dir": str(def_path.parent), "created": now(), "status": "running",
+    st = {"pr": a.pr, "def": str(def_path), "def_dir": str(def_path.parent), "kit_dir": str(kit), "created": now(), "status": "running",
           "vars": variables, "steps": [{"id": s["id"], "def": s, "status": "pending", "attempts": []} for s in defn["steps"]]}
     cdir.mkdir(parents=True, exist_ok=True)
     save_chain(S, st)
@@ -650,7 +658,7 @@ def start_worker(S: State, st: dict, step: dict) -> bool:
     step["attempts"].append(attempt)
     try:
         v = step_vars(st, step)
-        spec = render((Path(st["def_dir"]) / "specs" / d["spec"]).read_text(), v)
+        spec = render((Path(st.get("kit_dir") or st["def_dir"]) / "specs" / d["spec"]).read_text(), v)
         worktree = render(d.get("worktree", "current"), v)
         model = render(d["model"], v) if d.get("model") else ""
         effort = render(d["effort"], v) if d.get("effort") else ""

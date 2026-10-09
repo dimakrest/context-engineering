@@ -1,11 +1,18 @@
-# The Orca router
+# flows: the Orca router
 
-Scripts that sit between an Orca Run's mailbox and the coordinator. No model runs in them.
+A Claude Code plugin for running a flow of inner PRs through Orca workers. Its core is the router: scripts that
+sit between an Orca Run's mailbox and the coordinator. No model runs in them. Two skills drive it:
+`/flows:flow-run` (the coordinator's loop) and `/flows:flow-status` (where a run is).
 
-In the last Orca run (group B, 2026-09-28 to 10-01) a waiter script already kept heartbeats away from the
-coordinator, but every `worker_done` still woke it: 102 of them, plus 5 questions. Each time it read the result,
-released the terminal, acknowledged the delivery, wrote the journal line and started the next worker by hand.
-The router does those steps. The coordinator is rung only when something needs a decision.
+```sh
+/plugin install flows@dimakrest-context-engineering
+```
+
+The router was extracted from a Bell pipecat-upgrade run. In that run (group B, 2026-09-28 to 10-01) a waiter
+script already kept heartbeats away from the coordinator, but every `worker_done` still woke it: 102 of them,
+plus 5 questions. Each time it read the result, released the terminal, acknowledged the delivery, wrote the
+journal line and started the next worker by hand. The router does those steps. The coordinator is rung only when
+something needs a decision.
 
 Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-coordinators-loop) ·
 [Seeing progress](#seeing-progress) · [What rings](#what-rings) ·
@@ -16,16 +23,21 @@ Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-
 
 | File | What it is |
 |---|---|
-| `router.py` | The mailbox daemon, the chain runner, the doorbell and the coordinator's commands. `router.py --help` prints all of it. Python 3.9+, standard library only. |
-| `progress.py` | Renders the owner's view: the text of `router.py progress` and `progress.html`. It reads nothing itself. |
-| `chain-inner-pr.json` | One inner PR of the upgrade as a chain: 17 steps, two gates (contract acceptance, merge). `--dry-run` lists the steps and names anything missing. |
-| `specs/*.md`, `contract-template.md` | The 12 role specs the chain names, one per worker step, in Orca's shape (target, change, constraints, ownership, observable acceptance); `arbiter.md`, a template the coordinator fills for a test dispute; and the template every contract follows. |
-| `chain-smoke.json`, `specs/smoke-*.md` | A harmless chain that proves the router against real Orca: two workers at once, a question, a failure with a retry, a script step, a gate. |
-| `checks/*` | Checks that print one line, `OK …` or `NOT OK …`, and exit 0 or 1. |
-| `draft-pr.sh` | Opens the inner PR as a draft, so that step needs no model. Refuses `main` as the base. |
-| `tests/` | `test_router.py` (71 tests) and `fake-orca`, a stand-in for the Orca CLI. |
+| `router/router.py` | The mailbox daemon, the chain runner, the doorbell and the coordinator's commands. `router.py --help` prints all of it. Python 3.9+, standard library only. |
+| `router/progress.py` | Renders the owner's view: the text of `router.py progress` and `progress.html`. It reads nothing itself. |
+| `router/templates/inner-pr.json` | One inner PR of a larger change as a chain: 17 steps, two gates (contract acceptance, merge). `--dry-run` lists the steps and names anything missing. |
+| `router/specs/*.md`, `router/contract-template.md` | The 12 role specs the chain names, one per worker step, in Orca's shape (target, change, constraints, ownership, observable acceptance); `arbiter.md`, a template the coordinator fills for a test dispute; and the template every contract follows. |
+| `router/templates/smoke.json`, `router/specs/smoke-*.md` | A harmless chain that proves the router against real Orca: two workers at once, a question, a failure with a retry, a script step, a gate. |
+| `router/checks/*` | Checks that print one line, `OK …` or `NOT OK …`, and exit 0 or 1. |
+| `router/draft-pr.sh` | Opens the inner PR as a draft, so that step needs no model. Refuses `main` as the base. |
+| `tests/` | `test_router.py` (76 tests) and `fake-orca`, a stand-in for the Orca CLI. |
+| `skills/flow-run`, `skills/flow-status` | The two skills. |
 
-State lives in `$ROUTER_STATE` (default `$SCRATCH/router`). `router.py --help` lists the files.
+State lives in `$ROUTER_STATE` (default `$SCRATCH/router`, where `SCRATCH` is the run directory). `router.py --help`
+lists the files.
+
+Below, `$FLOWS` is the plugin's directory: `${CLAUDE_PLUGIN_ROOT}` inside Claude Code, `plugins/flows` in a checkout
+of this repository.
 
 ## Try it
 
@@ -33,11 +45,11 @@ The smoke chain runs today, from any Orca terminal (the router reads `ORCA_TERMI
 from it). It starts 5 Sonnet workers, takes about five minutes and writes only under `OUT`.
 
 ```sh
-R=$HOME/.claude/skills/pipecat-upgrade/scripts/orca/router.py
+R=$FLOWS/router/router.py
 export ROUTER_STATE=$HOME/.cache/router-smoke/state; mkdir -p $HOME/.cache/router-smoke/out
 orca orchestration run-create --objective "router smoke" --json     # skip it when the terminal already has a Run
 $R init
-$R chain smoke --def "$(dirname $R)/chain-smoke.json" OUT=$HOME/.cache/router-smoke/out
+$R chain smoke --def $FLOWS/router/templates/smoke.json OUT=$HOME/.cache/router-smoke/out
 $R wait                                                             # blocks, then prints one screen
 ```
 
@@ -54,14 +66,16 @@ It rings three times. Answer each, then run `$R wait` again:
 ## The coordinator's loop
 
 ```sh
-export SCRATCH=~/.cache/bell-pipecat-upgrade/<target>     # the run dir; the router's state is $SCRATCH/router
-R=$SCRATCH/bin/orca/router.py
+export SCRATCH=<the run directory>                        # the router's state is $SCRATCH/router
+R=$FLOWS/router/router.py
 
 orca orchestration run-create --objective "…" --json      # once; a later session: $R init --run <run_id>
 $R init                                                   # records the Run, starts the mailbox daemon
-$R chain b3.1 --def $SCRATCH/bin/orca/chain-inner-pr.json WT=<worktree> TITLE="B3.1: …"   # one per PR slot
+$R chain <pr> --def $FLOWS/router/templates/inner-pr.json WT=<worktree> ISSUE=<n> BASE_BRANCH=<branch> TITLE="<pr>: …"   # one per PR slot
 $R wait                                                   # in the background, as the LAST action of every turn
 ```
+
+`/flows:flow-run` walks through the same loop.
 
 `wait` blocks until something needs the coordinator, prints one screen and exits; the harness then wakes the
 coordinator. Every screen ends with a `next:` line. The answers:
@@ -120,15 +134,15 @@ It asks Orca nothing. Three banners on it mean that someone has to act:
 A plan is one JSON file:
 
 ```json
-{"title": "Pipecat 1.8.1 → 1.11.0", "prs": [
-  {"id": "B1.1", "title": "Both Google pins in one edit", "part": "B1 · Dependency moves · cp5-deps"},
-  {"id": "B2.1", "title": "Pin 1.11.0", "part": "B2 · Bump · cp6-1.11"}]}
+{"title": "Move the payments client to v3", "prs": [
+  {"id": "p1", "title": "Pin the new client next to the old one", "part": "Part 1 · Dependencies"},
+  {"id": "p2", "title": "Switch the checkout flow", "part": "Part 2 · Callers"}]}
 ```
 
 `id` is the `<pr>` given to `router.py chain`; upper and lower case are the same. Rows with the same `part` are drawn
 as one group, in the plan's order. Without a plan the view lists only the PRs whose chain was started. A chain the
 plan does not name is listed last, as "not in the plan". A chain is "done" when its last step has passed; in
-`chain-inner-pr.json` that is the merge gate. The router does not check that the merge happened.
+`templates/inner-pr.json` that is the merge gate. The router does not check that the merge happened.
 
 `progress.py` only renders, and `router.py` catches whatever it raises: a mistake in the view does not stop a
 daemon. The daemon's log then says `progress.html was not rewritten`.
@@ -161,13 +175,16 @@ between two waits can still produce a nudge; it needs no action.
 
 ## A chain definition
 
-A JSON object with `steps`, run in order. Text fields are templates: `{NAME}` is replaced, and a name with no value
+A JSON object with `steps`, run in order. An optional `kit` is a directory, relative to the definition file, that
+holds the `specs/` and `checks/` the steps use (default: the definition's own directory). Both templates set
+`"kit": ".."`, so they find `router/specs/` and `router/checks/`. A `kit` that is not a directory is refused when the
+chain is created. Text fields are templates: `{NAME}` is replaced, and a name with no value
 stops `router.py chain` before anything starts. In a command (`run`, `when`, `checks`, `show`) the value is
 shell-quoted for you, so write `{TITLE}`, not `"{TITLE}"`. `${NAME}` is left to the shell.
 
 | Step type | Fields | Meaning |
 |---|---|---|
-| worker (default) | `id`, `agent`, `model`, `effort`, `worktree`, `spec` (a file under `specs/`), `checks`, `readonly`, `group`, `when` | Starts one fresh Orca worker with the rendered spec. `readonly: true` requires HEAD and the uncommitted files of `{WT}` to be the same afterwards. Adjacent steps with the same `group` run at once. |
+| worker (default) | `id`, `agent`, `model`, `effort`, `worktree`, `spec` (a file under the kit's `specs/`), `checks`, `readonly`, `group`, `when` | Starts one fresh Orca worker with the rendered spec. `readonly: true` requires HEAD and the uncommitted files of `{WT}` to be the same afterwards. Adjacent steps with the same `group` run at once. |
 | `script` | `run`, `timeout` (s, default 600), `exports`, `when` | Runs a command. Exit 0 goes on. A line `VAR NAME=value` stores a variable for later steps (declare it in `exports`). |
 | `gate` | `title`, `show` | Pauses for the coordinator. Each `show` command contributes its last line to the screen. |
 
@@ -176,12 +193,29 @@ shell-quoted for you, so write `{TITLE}`, not `"{TITLE}"`. `${NAME}` is left to 
 Values a template can use:
 
 - given on the command line (`K=V`) or in the definition's `vars`;
-- always: `PR`, `STATE`, `DEF_DIR`, `CHECKS`, and `SCRATCH` when it is exported;
+- always: `PR`, `STATE`, `DEF_DIR` (the definition's directory), `KIT`, `CHECKS` (`{KIT}/checks`), and `SCRATCH`
+  when it is exported;
 - in a step: `STEP`, `ATTEMPT`, `HEAD_BEFORE`; in its checks also `TASK`, `DISPATCH`, `REPORT`, `HEAD_AFTER`.
   `HEAD_BEFORE` is where the step's first attempt started, and a retry keeps it: a commit that attempt 1 should not
   have made stays inside the range its checks look at, and a retry that reverts it passes. `resume` re-runs the
   checks with `HEAD_AFTER` at the tree as it is then;
 - from earlier steps: `HEAD_BEFORE_<ID>` and `HEAD_AFTER_<ID>` (the id in upper case), and every exported `VAR`.
+
+`templates/inner-pr.json` declares these (its `"variables"` says the same):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `WT` | none | The PR's worktree, on the PR's branch, cut from the PR's base commit. |
+| `ISSUE` | none | The sub-issue whose "For the agent" comment is the PR's intent, kept at `$SCRATCH/intent/<number>.md`. |
+| `BASE_BRANCH` | none | The integration branch the PR merges into (never `main`). A chain started without it is refused before anything runs, naming it. |
+| `TITLE` | none | The PR title. |
+| `RUN_CONTEXT` | empty | One or two sentences about this run that every worker should know, for example the upgrade or feature the PR belongs to. The contract and Codex review specs carry it. |
+| `TESTS` | `1` | A blind test writer runs. Empty for a PR that only moves a dependency version: the contract then names every test the implementer writes or changes. |
+| `LEDGER` | `1` | The PR has code to mutate. Empty for a PR with none. |
+| `GREEN_PINNED` | empty | `1` when the PR's tests pin behaviour the old code already has, so the ledger runs a round 0 on the old code. |
+| `IMPL_EFFORT` | `high` | The implementer's effort; `xhigh` for the hardest PR of a run. |
+| `EXTRA_SUITE` | empty | One extra test suite the validator runs as its own run (a contract or ABI suite). Empty: the gate is skipped and reported as skipped. |
+| `GOLDENS` | empty | The golden files the PR must not change unless its contract says so. Empty: the gate is skipped and reported as skipped. |
 
 A retry is a new Orca task with the same spec plus the coordinator's note; it does not use `--retry-of`, because
 the spec of an existing task cannot carry a note.
@@ -190,14 +224,14 @@ the spec of an existing task cannot carry a note.
 
 | Script | OK when |
 |---|---|
-| `checks/xfail-only.py <wt> <from> <to> [prefix…]` | Under `tests/`, the only change is removed xfail markers and imports the removal left unused. An added, deleted or non-Python test file, a changed body, a new or loosened marker, a new or changed import (module, name, alias or relative level), or an uncommitted edit is NOT OK. It does not see `pytest.ini`: guard that with the next check. |
-| `checks/files-untouched.sh <wt> <from> <to> <pathspec…>` or `… --changed-in <a> <b>` | None of the named files changed between the two commits, and none has an uncommitted change. |
-| `checks/pr-head.sh <wt> <pr>` | The PR's head commit is the worktree's HEAD and no tracked file is uncommitted. Without it, a commit that was never pushed gets "OK ci" for the commit before it. Read-only. |
-| `checks/head-unmoved.sh <wt> <sha>` | HEAD is still that commit. |
-| `checks/contract-sha.sh record <file>` / `check <file> <sha>` | `record` prints `VAR CONTRACT_SHA=…`; `check` is OK when the file still has that sha256. |
-| `checks/verdict-line.sh <file> [pattern]` | The file's first `VERDICT:` line matches (default `PASS`, `OK` or `ACCEPT`). |
-| `checks/file-exists.sh <path> [min lines]` | The file exists with at least that many lines. |
-| `checks/ci-green.sh [--watch] <pr>` | No check of the PR failed, was cancelled or is pending. Read-only. |
+| `router/checks/xfail-only.py <wt> <from> <to> [prefix…]` | Under `tests/`, the only change is removed xfail markers and imports the removal left unused. An added, deleted or non-Python test file, a changed body, a new or loosened marker, a new or changed import (module, name, alias or relative level), or an uncommitted edit is NOT OK. It does not see `pytest.ini`: guard that with the next check. |
+| `router/checks/files-untouched.sh <wt> <from> <to> <pathspec…>` or `… --changed-in <a> <b>` | None of the named files changed between the two commits, and none has an uncommitted change. |
+| `router/checks/pr-head.sh <wt> <pr>` | The PR's head commit is the worktree's HEAD and no tracked file is uncommitted. Without it, a commit that was never pushed gets "OK ci" for the commit before it. Read-only. |
+| `router/checks/head-unmoved.sh <wt> <sha>` | HEAD is still that commit. |
+| `router/checks/contract-sha.sh record <file>` / `check <file> <sha>` | `record` prints `VAR CONTRACT_SHA=…`; `check` is OK when the file still has that sha256. |
+| `router/checks/verdict-line.sh <file> [pattern]` | The file's first `VERDICT:` line matches (default `PASS`, `OK` or `ACCEPT`). |
+| `router/checks/file-exists.sh <path> [min lines]` | The file exists with at least that many lines. |
+| `router/checks/ci-green.sh [--watch] <pr>` | No check of the PR failed, was cancelled or is pending. Read-only. |
 
 Every script prints its header with `--help` and exits 2 on bad usage.
 
@@ -216,6 +250,18 @@ Every script prints its header with `--help` and exits 2 on bad usage.
 
 ## Tested how
 
+2026-10-09, the move into this plugin.
+
+- `cd plugins/flows && python3 tests/test_router.py`: 76 tests, green. The 5 new ones: an `inner-pr.json` chain
+  without `BASE_BRANCH` is refused and starts no worker; a definition in a subdirectory finds its kit; a sweep that
+  keeps project names, version literals and past PR names out of `router/specs/` and `router/templates/` (and a check
+  of its pattern); the quoting test run under a 120-character `TMPDIR`.
+- `router.py chain <pr> --def router/templates/inner-pr.json --dry-run` without `BASE_BRANCH` exits 1 and names
+  `{BASE_BRANCH}`; with it, `OK … 17 steps`.
+
+The entries below predate the move: `chain-inner-pr.json` and `chain-smoke.json` are today's
+`templates/inner-pr.json` and `templates/smoke.json`.
+
 2026-10-04, on Orca 1.4.219.
 
 - `python3 tests/test_router.py`: 52 tests, about 110 s, against `tests/fake-orca`, which answers with the JSON
@@ -228,8 +274,7 @@ Every script prints its header with `--help` and exits 2 on bad usage.
   swap that `xfail-only.py` accepted, and smaller ones). Each is fixed and has a test in the class `Review` or
   `Checks`; the 13 router tests written for them fail on the router as it was before.
 - 36 mutations of the scripts, one at a time, each run against the test that should catch it: 36 caught.
-- Live, Run `run_0bd539a0200b`, `chain-smoke.json`, 6 worker starts on Sonnet 5.5: see the proposal page,
-  section "Keeping the coordinator's context clean", for the result.
+- Live, Run `run_0bd539a0200b`, `chain-smoke.json`, 6 worker starts on Sonnet 5.5.
 - `checks/ci-green.sh 3973` on the real PR printed `OK ci: 9 pass, 6 skipping`.
 
 2026-10-05, the owner's view (`progress`, `plan`, `progress.html`), against the stand-in only.
@@ -261,7 +306,7 @@ Every script prints its header with `--help` and exits 2 on bad usage.
 - `stop <pr>` does not end a script step: the runner finishes the script first (a CI wait can take 90 minutes),
   and `stop` says `STILL RUNNING` after 15 s. The page shows the script as running until then.
 
-- `draft-pr.sh` has never opened a real PR, and `chain-inner-pr.json` has never run. Its role specs were written on 2026-10-05 and no worker has run one: the pilot PR is their first run.
+- `draft-pr.sh` has never opened a real PR, and `templates/inner-pr.json` has never run. Its role specs were written on 2026-10-05 and no worker has run one: the pilot PR is their first run.
 - Codex as a worker under the router, a worker in another worktree (`path:` or `new-child`), and a run longer
   than a few minutes are untested. The pilot PR is where they get their first run.
 - A reboot is untested; the recovery above is by construction (state on disk) and by the killed-process tests.

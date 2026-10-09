@@ -52,6 +52,11 @@ directions (Claude → Codex and Codex → Claude), with
 sealed inputs, audited transcripts and verified resume. Codex support is scoped to missions;
 the `context-engineering` plugin below uses Claude Code.
 
+The marketplace also ships **`flows`**: a router for Orca runs that carries a flow of inner PRs through
+its chain of workers, scripts and gates, and wakes the coordinator only when a decision is needed
+(`/flows:flow-run`, `/flows:flow-status`). Install it with `/plugin install flows@dimakrest-context-engineering`;
+[`plugins/flows/README.md`](plugins/flows/README.md) is its guide.
+
 ### Installation Scopes
 
 ```bash

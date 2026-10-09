@@ -8,6 +8,7 @@ Each test gets its own state directory and its own fake Orca, and stops every da
 """
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -18,9 +19,11 @@ import time
 import unittest
 from pathlib import Path
 
-KIT = Path(__file__).resolve().parent.parent
+TESTS = Path(__file__).resolve().parent
+KIT = TESTS.parent / "router"
 ROUTER = str(KIT / "router.py")
 CHECKS = KIT / "checks"
+TEMPLATES = KIT / "templates"
 
 
 class RouterCase(unittest.TestCase):
@@ -34,7 +37,7 @@ class RouterCase(unittest.TestCase):
         (self.kit / "checks").symlink_to(CHECKS)
         (self.kit / "specs" / "w.md").write_text("Target: {OUT}\nChange: write {OUT}/{STEP}.txt (attempt {ATTEMPT})\n")
         self.env = dict(os.environ, ROUTER_STATE=str(self.state), FAKE_ORCA_DIR=str(self.fake),
-                        ORCA_CLI_COMMAND=str(KIT / "tests" / "fake-orca"), ROUTER_WAIT_MS="300", ROUTER_POLL_S="0.05",
+                        ORCA_CLI_COMMAND=str(TESTS / "fake-orca"), ROUTER_WAIT_MS="300", ROUTER_POLL_S="0.05",
                         ROUTER_SILENT_MIN=self.silent_min, ROUTER_REGISTRY_WAIT_S="0.3",
                         ORCA_TERMINAL_HANDLE="term_fake", ORCA_PANE_KEY="pane_fake")
         self.env.pop("SCRATCH", None)
@@ -400,7 +403,7 @@ class Daemons(RouterCase):
     def test_a_stranger_and_an_ad_hoc_worker(self):
         self.scenario({"match": "arbiter", "events": [self.done(0.1, subject="row 4 is wrong", body="The test asks more than the row.")]})
         self.R("init", ok=True)
-        subprocess.run([str(KIT / "tests" / "fake-orca"), "orchestration", "inject", "--event",
+        subprocess.run([str(TESTS / "fake-orca"), "orchestration", "inject", "--event",
                         json.dumps(self.done(0, subject="hello"))], env=self.env, capture_output=True, check=True)
         text = self.bell()
         self.assertIn("WAKE unrouted · worker_done succeeded from a worker the router did not start", text)
@@ -518,15 +521,29 @@ class Daemons(RouterCase):
         (self.kit / "specs" / "s.md").write_text("Use ${HOME} and $SCRATCH as they are; the label is {LABEL}.\n")
         self.scenario({"match": "t1 a", "events": [self.done(0.1)]})
         self.R("init", ok=True)
-        evil = f"a b; touch {self.out}/pwned $(touch {self.out}/pwned2)"
+        evil = "a b; touch pwned $(touch pwned2)"                      # short and fixed: a long one is cut on the screen
         rc, out = self.chain([self.worker("a", spec="s.md", checks=["echo OK label: {LABEL}"]),
                               {"id": "accept", "type": "gate", "show": ["echo ${HOME:+home is set} {LABEL}"]}], LABEL=evil)
         self.assertEqual(rc, 0, out)
         text = self.bell()
         self.assertIn(f"home is set {evil}", text)                     # ${HOME} is the shell's, {LABEL} is one quoted word
-        self.assertFalse((self.out / "pwned").exists() or (self.out / "pwned2").exists())
+        cwd = Path(self.chain_state()["def_dir"])                      # where the checks and the gate's show lines run
+        self.assertEqual(cwd, self.kit.resolve())
+        self.assertFalse((cwd / "pwned").exists() or (cwd / "pwned2").exists())
         self.assertIn(f"check: OK label: {evil}", self.journal())
         self.assertEqual(self.starts()[0]["spec"], f"Use ${{HOME}} and $SCRATCH as they are; the label is {evil}.\n")
+
+    def test_quoting_holds_under_a_120_character_tmpdir(self):
+        """A sandbox gives a long TMPDIR: the quoting test, run with one, must not depend on how long its paths are."""
+        name = "test_values_are_quoted_in_commands_and_shell_variables_are_left_alone"
+        long_tmp = self.tmp / "t"
+        long_tmp = long_tmp.with_name("t" * max(1, 120 - len(str(long_tmp)) + 1))
+        long_tmp.mkdir()
+        self.assertGreaterEqual(len(str(long_tmp)), 120)
+        p = subprocess.run([sys.executable, str(TESTS / "test_router.py"), "-k", name], capture_output=True, text=True,
+                           env=dict(os.environ, TMPDIR=str(long_tmp)), timeout=120)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("Ran 1 test", p.stderr)
 
     def test_a_word_no_command_takes_is_refused(self):
         rc, out = self.R("status", "--bogus")
@@ -935,6 +952,60 @@ class Progress(RouterCase):
         self.assertNotIn("Which base?", self.page())                            # the reply rewrote the page
         self.assertIn("WAKE done · ad hoc worker arbiter B3.4", self.bell_for("WAKE done"))
         self.assertNotIn("workers outside a chain", self.R("progress")[1])
+
+
+class Templates(RouterCase):
+    def test_inner_pr_without_a_base_branch_is_refused_before_anything_starts(self):
+        self.scenario({"match": ".", "events": [self.done(0.1)], "repeat": True})
+        self.R("init", ok=True)
+        given = [f"WT={self.repo()}", "ISSUE=1", "TITLE=t", f"SCRATCH={self.out}"]
+        rc, out = self.R("chain", "demo", "--def", str(TEMPLATES / "inner-pr.json"), *given)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NOT OK demo:", out)
+        self.assertIn("no value for {BASE_BRANCH}", out)
+        self.assertFalse((self.state / "chains" / "demo").exists())
+        time.sleep(0.3)
+        self.assertEqual(self.starts(), [])                            # the fake Orca saw no worker-start
+        rc, out = self.R("chain", "demo", "--def", str(TEMPLATES / "inner-pr.json"), "--dry-run", "BASE_BRANCH=dev", *given)
+        self.assertEqual(rc, 0, out)                                   # the branch was all it lacked
+        self.assertIn("OK demo: 17 steps", out)
+
+    def test_a_definition_in_a_subdirectory_finds_specs_and_checks_in_its_kit(self):
+        self.scenario({"match": "t1 a$", "events": [self.done(0.1)], "effect": f"echo OK > {self.out}/a.txt"})
+        self.R("init", ok=True)
+        (self.kit / "templates").mkdir()
+        path = self.kit / "templates" / "c.json"
+        path.write_text(json.dumps({"name": "t1", "kit": "..", "steps": [
+            self.worker("a", checks=["{CHECKS}/file-exists.sh {OUT}/a.txt", "echo OK kit: {KIT}"])]}))
+        rc, out = self.R("chain", "t1", "--def", str(path), f"OUT={self.out}")
+        self.assertEqual(rc, 0, out)
+        self.until(lambda: self.chain_state()["status"] == "done", what="the chain to finish")
+        self.assertEqual(self.starts()[0]["spec"], f"Target: {self.out}\nChange: write {self.out}/a.txt (attempt 1)\n")   # the kit's specs/w.md
+        self.assertEqual(self.chain_state()["kit_dir"], str(self.kit.resolve()))
+        self.assertIn(f"check: OK kit: {self.kit.resolve()}", self.journal())
+        path.write_text(json.dumps({"name": "t2", "kit": "../nowhere", "steps": [self.worker("a")]}))
+        rc, out = self.R("chain", "t2", "--def", str(path), "--dry-run", f"OUT={self.out}")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("t2: the definition's kit '../nowhere' is not a directory", out)
+
+
+class Sweep(unittest.TestCase):
+    """The specs and templates serve any repository: nothing of the run they were written for may come back."""
+    FORBIDDEN = re.compile(r"pipecat|\b\d+\.\d+\.\d+\b|\b1\.(?:8|11)\b|\bB\d+\.\d+[a-z]?\b|\bM0\b", re.IGNORECASE)
+
+    def test_the_pattern_catches_what_the_last_run_left(self):
+        for bad in ("Pipecat", "pipecat-1.11", "1.8.1", "moved in 1.11", "B1.1", "B4.2a", "the M0 PR"):
+            self.assertTrue(self.FORBIDDEN.search(bad), bad)
+        for fine in ("claude-opus-5-5", "ledger-r1.md", "(B3) a group", "M01", "--tb=line"):
+            self.assertFalse(self.FORBIDDEN.search(fine), fine)
+
+    def test_specs_and_templates_name_no_project_version_or_pr_of_a_past_run(self):
+        files = sorted(p for d in (KIT / "specs", TEMPLATES) for p in d.rglob("*") if p.is_file()) + [KIT / "contract-template.md"]
+        self.assertGreater(len(files), 15)
+        hits = [f"{p.relative_to(KIT)}:{n}: {m.group(0)}" for p in files
+                for n, line in enumerate(p.read_text().splitlines(), 1) for m in self.FORBIDDEN.finditer(line)]
+        hits += [f"{p.relative_to(KIT)}: in the name" for p in files if self.FORBIDDEN.search(p.name)]
+        self.assertEqual(hits, [])
 
 
 class ProgressView(unittest.TestCase):

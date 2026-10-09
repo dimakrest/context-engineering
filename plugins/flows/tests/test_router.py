@@ -1254,6 +1254,28 @@ class FlowScheduler(FlowCase):
         self.until(lambda: self.chain_state("B1")["status"] == "done")
         self.assertEqual(self.starts()[0]["worktree"], f"path:{self.out}")
 
+    def test_a_value_that_names_a_declared_variable_nobody_gives_waits_for_it(self):
+        self.template("one", [self.worker("a", checks=["echo OK {TEST_CMD}"])], variables={"WT": "the worktree"})   # no step names {WT}
+        self.scenario({"match": ".", "events": [self.done(0.2)], "repeat": True})
+        self.R("init", ok=True)
+        flow_vars = {"OUT": str(self.out), "TEST_CMD": "run in {WT}"}
+        self.apply(self.pr("B1"), vars=flow_vars)
+        time.sleep(1.0)
+        self.assertEqual(self.chains(), [])
+        self.assertIn("B1 · Part B · what B1 does · after - · waiting for: WT", self.show())
+        rc, out = self.apply(self.pr("B1", vars={"WT": str(self.out)}), vars=flow_vars)
+        self.assertIn("started B1 (v2)", out)
+        self.assertEqual(self.chain_state("B1")["vars"]["TEST_CMD"], f"run in {self.out}")
+
+    def test_a_runner_whose_chain_completes_starts_the_next_pr_itself(self):
+        self.env["ROUTER_WAIT_MS"] = "30000"                           # the daemon ticks at init, then not for 30 s
+        self.template("one", [self.worker("a"), {"id": "s", "type": "script", "run": "sleep 1; echo OK done"}])
+        self.scenario({"match": "A1 a$", "events": [self.done(0.2)]}, {"match": "A2 a$", "events": []})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1"), self.pr("A2", after=["A1"]))
+        self.until(lambda: self.chain_state("A1")["status"] == "done", what="the fake Orca to finish A1")
+        self.until(lambda: "flow: started A2" in self.journal(), seconds=5, what="A1's runner to start A2")
+
     def test_scheduler_passes_that_race_start_one_pr_once(self):
         self.template("one", [{"id": "g", "type": "gate", "title": "hold"}])
         self.apply(self.pr("A1"), self.pr("B1"))                       # no daemon yet: the apply starts nothing
@@ -1384,6 +1406,32 @@ class FlowReread(FlowCase):
         self.assertEqual(self.starts()[0]["model"], "m-sonnet")        # what ran is what the flow says
         self.assertEqual(self.chain_state("A1")["flow"]["claimed"], [])
 
+    def test_the_worktree_and_the_kit_of_a_settled_worker_step_cannot_change(self):
+        kit2 = self.tmp / "kit2"
+        shutil.copytree(self.kit / "specs", kit2 / "specs")
+        (kit2 / "checks").symlink_to(CHECKS)
+        self.scenario({"match": ".", "events": [self.done(0.1)], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1", vars={"WT": "wt1"}))
+        self.assertIn("WAKE gate · A1 · g: hold", self.bell())
+        self.assertEqual(self.refused(self.pr("A1", vars={"WT": "wt2"})), ["A1: WT wt1 -> wt2, and settled step(s) a used it"])
+        self.template("one", self.steps, kit="../../kit2")              # a's spec text is the same in both kits
+        lines = self.refused(self.pr("A1", vars={"WT": "wt1"}))
+        self.assertEqual(len(lines), 1, lines)
+        self.assertRegex(lines[0], r"^A1: KIT (changed|\S+ -> \S+), and settled step\(s\) a used it$")
+
+    def test_the_runner_waits_for_the_flow_lock_at_a_step_boundary(self):
+        self.at_gate()
+        held = open(self.state / "flow.lock", "a")                     # an apply, say, holds the lock
+        self.addCleanup(held.close)
+        fcntl.flock(held, fcntl.LOCK_EX)
+        self.R("resume", "A1", ok=True)
+        time.sleep(1.5)
+        self.assertEqual([s["title"] for s in self.starts()], ["A1 a"])   # b waits for the boundary's re-read
+        held.close()
+        self.until(lambda: len(self.starts()) > 1, what="b to start once the lock is free")
+        self.assertEqual(self.starts()[1]["title"], "A1 b")
+
     def test_what_a_step_exported_survives_the_re_read(self):
         self.template("one", [{"id": "s", "type": "script", "exports": ["V"], "run": "echo VAR V=7; echo OK set"},
                               {"id": "g", "type": "gate", "title": "hold", "show": ["echo OK V is {V}"]},
@@ -1489,6 +1537,20 @@ class FlowCompat(FlowCase):
         self.assertIn("  - profile: vars.TEST_CMD set to python -m pytest -q\n", out)
         self.assertIn("A1 · Part A · the first · after - · ready", self.show())
         self.assertEqual(self.copy()["resolved"]["profile"]["name"], "python")
+
+    def test_a_profiles_scratch_wt_and_pr_are_filled_by_the_flow(self):
+        self.template("one", [self.worker("a", worktree="path:{WT}", checks=["echo OK {TEST_CMD}"])], variables={"WT": "the worktree"})
+        self.env["SCRATCH"] = str(self.out)
+        self.scenario({"match": ".", "events": [], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1", vars={"WT": "{SCRATCH}/wt/{PR}"}), self.pr("A2"), slots=2, profile=str(PROFILES / "bell.json"))
+        self.until(lambda: self.chains() == ["A1"])
+        wt, v = f"{self.out}/wt/A1", self.chain_state("A1")["vars"]
+        self.assertEqual(v["TEST_CMD"], f"PYTEST_PY={wt}/.venv/bin/python {self.out}/bin/bounded.sh 600 {self.out}/bin/pytest-limited.sh -q")
+        self.assertEqual(v["RULES"], f"{self.out}/briefs/rules-worker.md")
+        self.until(lambda: self.starts(), what="A1's worker to start")
+        self.assertEqual(self.starts()[0]["worktree"], f"path:{wt}")
+        self.assertIn("A2 · Part A · what A2 does · after - · waiting for: WT", self.show())   # bell's TEST_CMD names {WT}
 
     def test_a_run_without_a_flow_is_as_it_was(self):
         self.scenario({"match": ".", "events": [self.done(0.1)], "repeat": True})

@@ -1,0 +1,16 @@
+{
+ "name": "python",
+ "about": "A Python repository tested with pytest and linted with ruff, its tests under tests/ and its test settings in pytest.ini. It has no rules file, no frozen paths and no extra suite, and commits with plain git commit.",
+ "vars": {
+  "RULES": "none",
+  "TEST_CMD": "python -m pytest -q",
+  "UNIT_DIRS": "tests",
+  "TEST_PATHS": "tests/",
+  "TEST_CONFIG": "pytest.ini",
+  "COPY_SETUP": "none",
+  "LINT_CMD": "git diff --name-only --diff-filter=d \"$BASE\" -- '*.py' | xargs -r ruff check",
+  "FROZEN_PATHS": "none",
+  "EXTRA_SUITE": "none",
+  "COMMIT_CMD": "git commit"
+ }
+}

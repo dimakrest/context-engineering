@@ -1,0 +1,16 @@
+{
+ "name": "typescript",
+ "about": "A TypeScript repository whose tests run with npm test (Vitest or Jest), as *.test.ts files next to the code under src/, type-checked with tsc and linted with eslint. It has no rules file, no frozen paths and no extra suite, and commits with plain git commit.",
+ "vars": {
+  "RULES": "none",
+  "TEST_CMD": "npm test --",
+  "UNIT_DIRS": "src",
+  "TEST_PATHS": ":(glob)**/*.test.ts",
+  "TEST_CONFIG": "vitest.config.ts",
+  "COPY_SETUP": "ln -s {WT}/node_modules node_modules",
+  "LINT_CMD": "npx tsc --noEmit && git diff --name-only --diff-filter=d \"$BASE\" -- '*.ts' '*.tsx' | xargs -r npx eslint",
+  "FROZEN_PATHS": "none",
+  "EXTRA_SUITE": "none",
+  "COMMIT_CMD": "git commit"
+ }
+}

@@ -1101,6 +1101,11 @@ class FlowValidation(FlowCase):
         self.assertIn("A1: vars.TITLE: {NOPE} is not a variable", lines)
         self.assertEqual(lines.count("vars.X: {ALSO_NOPE} is not a variable"), 1)   # a flow variable is named once, not per PR
         self.assertIn("vars.A: its value names itself: A -> B -> A", self.refused(self.pr("A1"), vars={"OUT": "o", "A": "{B}", "B": "{A}"}))
+        (self.tmp / "mine.json").write_text(json.dumps({"name": "mine", "vars": {"X": "{NOPE}/x"}}))
+        self.template("one", [self.worker("a")], vars={"Y": "{NOPE}/y"})
+        lines = self.refused(self.pr("A1"), self.pr("A2"), profile="mine.json")
+        self.assertEqual([l for l in lines if "NOPE" in l], ["profile mine: vars.X: {NOPE} is not a variable",   # its layer, once
+                                                             "template one: vars.Y: {NOPE} is not a variable"])
 
     def test_a_steps_override_the_definition_validator_rejects(self):
         lines = self.refused(self.pr("A1", steps=[{"id": "a", "spec": "w.md"}, self.worker("b", spec="gone.md")]))

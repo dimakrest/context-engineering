@@ -1665,19 +1665,23 @@ def def_sha(d: dict) -> str:
     return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()[:12]
 
 
-def fill_values(layers: "dict[str, str]", own: "dict[str, str]", declared: "set[str]") -> "tuple[dict[str, str], set[str], list[tuple[str, str]]]":
+def fill_values(layers: "dict[str, str]", own: "dict[str, str]", declared: "set[str]", where: "dict[str, str]") -> "tuple[dict[str, str], set[str], list[str]]":
     """Fill the {NAME}s inside variable values ("WT": "{SCRATCH}/wt/{PR}"). Returns (values, the names a value waits
-    for: declared by the template and given by nobody, [(variable, problem)] for a name nobody declares or a loop)."""
+    for: declared by the template and given by nobody, a problem line for a name nobody declares or a loop). A line
+    names the layer the value came from: where[NAME] ("profile bell", "template one", "A1"), the flow's own vars else."""
     raw = dict(layers, **own)
     done: "dict[str, str]" = dict(own)
     waits: "set[str]" = set()
-    problems: "list[tuple[str, str]]" = []
+    problems: "list[str]" = []
+
+    def label(k: str) -> str:
+        return f"{where[k]}: vars.{k}" if where.get(k) else f"vars.{k}"
 
     def fill(k: str, seen: "list[str]") -> str:
         if k in done:
             return done[k]
         if k in seen:
-            problems.append((seen[0], f"vars.{seen[0]}: its value names itself: {' -> '.join(seen + [k])}"))
+            problems.append(f"{label(seen[0])}: its value names itself: {' -> '.join(seen + [k])}")
             return raw[k]
 
         def sub(m: "re.Match[str]") -> str:
@@ -1687,7 +1691,7 @@ def fill_values(layers: "dict[str, str]", own: "dict[str, str]", declared: "set[
             if n in declared:
                 waits.add(n)
             else:
-                problems.append((k, f"vars.{k}: {{{n}}} is not a variable"))
+                problems.append(f"{label(k)}: {{{n}}} is not a variable")
             return m.group(0)
         done[k] = VAR_RE.sub(sub, raw[k])
         return done[k]
@@ -1703,12 +1707,17 @@ def flow_effective(S: State, f: dict, p: dict) -> dict:
     t = f["resolved"]["templates"][p["template"]]
     tdef, kit = t["def"], Path(t["kit"])
     layers: "dict[str, str]" = {}
-    for layer in (f["resolved"].get("env"), (f["resolved"].get("profile") or {}).get("vars"), tdef.get("vars"), f.get("vars"), p.get("vars")):
-        layers.update({str(k): str(v) for k, v in (layer or {}).items() if k not in ROUTER_VARS})
+    where: "dict[str, str]" = {}   # the layer each value comes from, for a problem line; "" is the flow's own vars
+    profile = f["resolved"].get("profile") or {}
+    for name, layer in (("environment", f["resolved"].get("env")), (f"profile {profile.get('name') or ''}".strip(), profile.get("vars")),
+                        (f"template {p['template']}", tdef.get("vars")), ("", f.get("vars")), (p["id"], p.get("vars"))):
+        for k, v in (layer or {}).items():
+            if k not in ROUTER_VARS:
+                layers[str(k)], where[str(k)] = str(v), name
     own = {"PR": p["id"], "STATE": str(S.root), "DEF_DIR": str(Path(t["path"]).parent), "KIT": str(kit), "CHECKS": str(kit / "checks")}
     if p.get("base"):
         own["BASE_BRANCH"] = str(p["base"])
-    values, waits, problems = fill_values(layers, own, set(tdef.get("variables") or {}))
+    values, waits, problems = fill_values(layers, own, set(tdef.get("variables") or {}), where)
     override = isinstance(p.get("steps"), list)
     return {"def": dict(tdef, steps=p["steps"] if override else tdef["steps"]), "kit": str(kit), "def_path": t["path"],
             "def_dir": str(Path(t["path"]).parent), "override": override, "vars": values, "waits": waits, "problems": problems}
@@ -1864,8 +1873,7 @@ def flow_build(S: State, raw: object, base_dir: Path) -> "tuple[dict, list[str]]
         if t not in resolved["templates"] or problems and any(x.startswith(f"{pid}: vars") for x in problems):
             continue
         eff = flow_effective(S, f, p)
-        for k, prob in eff["problems"]:
-            line = f"{pid}: {prob}" if k in (p.get("vars") or {}) else prob
+        for line in eff["problems"]:   # a flow, template or profile value is named once, not once per PR
             if line not in seen_problems:
                 seen_problems.add(line)
                 problems.append(line)

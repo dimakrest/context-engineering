@@ -1971,6 +1971,23 @@ class Collector(RouterCase):
         self.assertEqual(rows["ctx_cx"]["session"], {"provider": "codex", "path": str(self.sessions / self.CODEX), "match": "unique", "candidates": 1})
         self.assertEqual((rows["ctx_cl"]["head_before"], rows["ctx_cl"]["head_after"], rows["ctx_cl"]["step"]), ("a" * 40, "b" * 40, "implement"))
 
+    def test_only_the_matched_sessions_own_subagents_are_copied(self):
+        # 22222222…/subagents is a decoy: its session is two hours early and never matched. A session a day later has none.
+        plain = self.sessions / "claude" / "-work-wt-fixture" / "99999999-aaaa-4aaa-8aaa-000000000009.jsonl"
+        plain.write_text((self.sessions / self.MAIN).read_text().replace("2026-01-10", "2026-01-11")
+                         .replace("11111111-aaaa-4aaa-8aaa-000000000001", plain.stem))
+        self.seed("ctx_a")
+        self.seed("ctx_plain", pr="p2", started="2026-01-11T10:00:00Z", ended="2026-01-11T10:30:00Z")
+        rc, out = self.collect("--all")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.meta("ctx_plain", pr="p2")["session"]["path"], str(plain))
+        self.assertFalse((self.logs("ctx_plain", pr="p2") / "session.subagents").exists())
+        tok = json.loads((self.logs("ctx_plain", pr="p2") / "tokens.json").read_text())
+        self.assertEqual((tok["subagents"]["files"], tok["output"], tok["turns"]), (0, 95, 4))   # the parent's own, as worked out above
+        self.assertNotIn("subagents", next(r for r in self.index() if r["dispatch"] == "ctx_plain")["tokens"])
+        self.assertEqual(sorted(p.name for p in (self.logs("ctx_a") / "session.subagents").iterdir()),
+                         ["agent-0001.jsonl", "agent-0001.meta.json"])
+
     def test_two_overlapping_candidates_are_ambiguous_and_nothing_is_copied(self):
         twin = self.sessions / "claude" / "-work-wt-fixture" / "77777777-aaaa-4aaa-8aaa-000000000007.jsonl"
         shutil.copy(self.sessions / self.MAIN, twin)
@@ -2105,12 +2122,15 @@ class Collector(RouterCase):
         self.seed("ctx_a")
         lock = self.state / "logs" / ".locks" / "ctx_a"
         lock.mkdir(parents=True)
+        held = time.time() - 600                                         # taken 10 minutes ago: still live
+        os.utime(lock, (held, held))
         for _ in range(2):
             rc, out = self.collect("--dispatch", "ctx_a")
             self.assertEqual(rc, 0, out)
             self.assertIn("skip ctx_a: locked by another collector", out)
             self.assertIn("OK collected 0 · skipped 0 · locked 1 · not settled 0 · failed 0", out)
         self.assertEqual(self.journal().count("collector: ctx_a: locked by another collector since"), 1, self.journal())
+        self.assertEqual(int(lock.stat().st_mtime), int(held))          # the "reported" marker does not make the lock younger
         self.assertFalse(self.logs("ctx_a").exists())
         old = time.time() - 3 * 3600                                     # a lock older than 2 hours is a dead collector's
         os.utime(lock, (old, old))

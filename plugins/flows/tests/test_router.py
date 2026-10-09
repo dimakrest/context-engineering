@@ -8,6 +8,7 @@ Each test gets its own state directory and its own fake Orca, and stops every da
 """
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -972,6 +973,25 @@ class Templates(RouterCase):
         rc, out = self.R("chain", "t2", "--def", str(path), "--dry-run", f"OUT={self.out}")
         self.assertEqual(rc, 1, out)
         self.assertIn("t2: the definition's kit '../nowhere' is not a directory", out)
+
+
+class Sweep(unittest.TestCase):
+    """The specs and templates serve any repository: nothing of the run they were written for may come back."""
+    FORBIDDEN = re.compile(r"pipecat|\b\d+\.\d+\.\d+\b|\b1\.(?:8|11)\b|\bB\d+\.\d+[a-z]?\b|\bM0\b", re.IGNORECASE)
+
+    def test_the_pattern_catches_what_the_last_run_left(self):
+        for bad in ("Pipecat", "pipecat-1.11", "1.8.1", "moved in 1.11", "B1.1", "B4.2a", "the M0 PR"):
+            self.assertTrue(self.FORBIDDEN.search(bad), bad)
+        for fine in ("claude-opus-5-5", "ledger-r1.md", "(B3) a group", "M01", "--tb=line"):
+            self.assertFalse(self.FORBIDDEN.search(fine), fine)
+
+    def test_specs_and_templates_name_no_project_version_or_pr_of_a_past_run(self):
+        files = sorted(p for d in (KIT / "specs", TEMPLATES) for p in d.rglob("*") if p.is_file()) + [KIT / "contract-template.md"]
+        self.assertGreater(len(files), 15)
+        hits = [f"{p.relative_to(KIT)}:{n}: {m.group(0)}" for p in files
+                for n, line in enumerate(p.read_text().splitlines(), 1) for m in self.FORBIDDEN.finditer(line)]
+        hits += [f"{p.relative_to(KIT)}: in the name" for p in files if self.FORBIDDEN.search(p.name)]
+        self.assertEqual(hits, [])
 
 
 class ProgressView(unittest.TestCase):

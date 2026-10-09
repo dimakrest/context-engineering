@@ -7,6 +7,7 @@
 Each test gets its own state directory and its own fake Orca, and stops every daemon it started.
 """
 import fcntl
+import html
 import json
 import os
 import re
@@ -3610,6 +3611,54 @@ class Skills(unittest.TestCase):
         for cmd in ("flow apply $SCRATCH/flow.json --dry-run", "page --open", "collect --all", "report --metrics",
                     "reply msg_", "retry smoke1 --note", "resume smoke1", "stop --all"):
             self.assertIn(cmd, page)
+
+    PAGE_COMMANDS = TESTS / "fixtures" / "page-commands.txt"
+    NOT_RUN = "  # not run in the pilot"
+
+    def page_commands(self):
+        """The commands on the getting-started page: each line of a <pre> block and each <code> in a table cell that
+        starts with a program (python3, orca, mkdir, /plugin), with the outputs and comments (the <span>s) left out.
+        A variable assignment (export, R=) runs nothing, so it is not one."""
+        page = self.texts["docs/FLOWS_GETTING_STARTED.html"]
+        lines = []
+        for block in re.findall(r"<pre><code>(.*?)</code></pre>", page, re.S):
+            lines += re.sub(r"<span[^>]*>.*?</span>", "", block, flags=re.S).replace("\\\n", " ").splitlines()
+        for cell in re.findall(r"<td>(.*?)</td>", page, re.S):
+            lines += re.findall(r"<code>(.*?)</code>", cell)
+        cmds = [re.sub(r"\s+", " ", html.unescape(ln)).strip() for ln in lines]
+        return [c for c in cmds if re.match(r"(python3|orca|mkdir|/plugin) ", c)]
+
+    def listed_page_commands(self):
+        """tests/fixtures/page-commands.txt: the page's commands as the pilot ran them; a line that ends in
+        "# not run in the pilot" is one it did not run."""
+        return [ln for ln in self.PAGE_COMMANDS.read_text().splitlines() if ln and not ln.startswith("#")]
+
+    def test_the_getting_started_page_shows_the_listed_commands_only(self):
+        listed = self.listed_page_commands()
+        self.assertEqual(sorted(set(self.page_commands())), sorted(c.replace(self.NOT_RUN, "") for c in listed),
+                         "a command on the page that is not in tests/fixtures/page-commands.txt, or the other way")
+        page = self.texts["docs/FLOWS_GETTING_STARTED.html"]
+        for c in listed:
+            if c.endswith(self.NOT_RUN):   # the page says so next to it
+                self.assertRegex(page, re.escape(html.escape(c.replace(self.NOT_RUN, ""), quote=False))
+                                 + r"</code> \([^)]*not run in the pilot")
+
+    def test_every_listed_page_command_is_in_the_pilots_command_log(self):
+        """FLOWS_PILOT_LOG names the pilot's commands.log, which stays outside the repository: each listed command
+        that is not marked "not run" matches one of its "$ " lines, a <placeholder> standing for one argument."""
+        log = os.environ.get("FLOWS_PILOT_LOG")
+        if not log:
+            self.skipTest("FLOWS_PILOT_LOG names no pilot commands.log")
+        ran = [ln[2:].strip() for ln in Path(log).read_text().splitlines() if ln.startswith("$ ")]
+        missing = []
+        for c in self.listed_page_commands():
+            if c.endswith(self.NOT_RUN):
+                continue
+            pat = re.sub(r'"?<[^<>]*>"?', lambda m: '(?:"[^"]*"|\\S+)', re.escape(c))
+            if not any(re.fullmatch(pat, r) for r in ran):
+                missing.append(c)
+        if missing:
+            self.fail("not in the pilot's command log:\n" + "\n".join(missing))
 
     def test_committed_docs_hold_no_path_of_this_machine(self):
         files = [self.ROOT / n for n in self.texts] + list((self.ROOT / "evals").rglob("*.*"))

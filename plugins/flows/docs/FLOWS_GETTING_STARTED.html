@@ -71,8 +71,8 @@
   <div class="kicker">flows · getting started</div>
   <h1>Your first flow: the smoke chain on real Orca</h1>
   <p class="sub">One PR, five Sonnet workers, a question, a failure and its retry, a script step and a gate, in about
-  three minutes. Every command below was run on real Orca (1.4.223) on 2026-10-09; the outputs are what it printed,
-  with this machine's paths replaced by variables. <code>FLOWS.md</code> next to this page is the reference.</p>
+  three minutes. Every command below but the plugin install line was run on real Orca (1.4.223) on 2026-10-09; the
+  outputs are what it printed, with this machine's paths replaced by variables. <code>FLOWS.md</code> next to this page is the reference.</p>
 </header>
 
 <nav>
@@ -151,7 +151,7 @@
 <tr><td>Orca, with its CLI on the PATH</td><td><code>orca orchestration --help</code></td></tr>
 <tr><td>A terminal Orca started (it carries <code>ORCA_TERMINAL_HANDLE</code>)</td><td>run everything below from it</td></tr>
 <tr><td>Python 3.9+; nothing to install</td><td><code>python3 --version</code></td></tr>
-<tr><td>The plugin: from Claude Code, <code>/plugin install flows@dimakrest-context-engineering</code>, then <code>R=${CLAUDE_PLUGIN_ROOT}/router/router.py</code>; or a checkout of the repository</td><td>the pilot ran from a checkout: <code>R=plugins/flows/router/router.py</code></td></tr>
+<tr><td>The plugin: from Claude Code, <code>/plugin install flows@dimakrest-context-engineering</code> (the one command on this page not run in the pilot), then <code>R=${CLAUDE_PLUGIN_ROOT}/router/router.py</code>; or a checkout of the repository</td><td>the pilot ran from a checkout: <code>R=plugins/flows/router/router.py</code></td></tr>
 </table></div>
 <div class="callout"><strong>Bind a Run of your own.</strong> The mailbox daemon becomes the only consumer of the Run it is
 bound to. Never <code>init</code> in a terminal whose Run another coordinator reads.</div>
@@ -164,7 +164,7 @@ bound to. Never <code>init</code> in a terminal whose Run another coordinator re
 <h3>The state directory and the Run</h3>
 <pre><code>export SCRATCH=$HOME/.cache/flows-pilot ROUTER_STATE=$HOME/.cache/flows-pilot/state
 mkdir -p $SCRATCH/out
-orca orchestration run-create --objective "flows smoke pilot" --json
+orca orchestration run-create --objective "flows M5 smoke pilot" --json
 python3 $R init
 <span class="c3">OK run run_1700985b87e4 · mailbox daemon pid 41608 · state $ROUTER_STATE</span></code></pre>
 </div></div>
@@ -197,7 +197,7 @@ the workers run in the throwaway worktree instead of the coordinator's.</p>
 <span class="c3">OK flow v0 -> v1, dry run, nothing written: 2 changes
   - flow created: 1 PRs · slots 1 · start auto
   - smoke1 added</span>
-python3 $R flow apply $SCRATCH/flow.json --by me --note "the smoke pilot"
+python3 $R flow apply $SCRATCH/flow.json --by m5-worker --note "the M5 smoke pilot"
 <span class="c3">OK flow v1: 2 changes
   - flow created: 1 PRs · slots 1 · start auto
   - smoke1 added
@@ -214,7 +214,7 @@ OK opened in an Orca browser tab</span>
 python3 $R flow show
 <span class="c3">flow v1 · slots 1/1 · start auto · M5 smoke pilot on real Orca
   smoke1 · Pilot · The smoke chain in the throwaway worktree · after - · running alpha ∥ beta</span>
-python3 $R wait          <span class="cf"># the coordinator runs it in the background, as the last action of every turn</span></code></pre>
+python3 $R wait --timeout-min 8   <span class="cf"># the coordinator runs it in the background, as the last action of every turn</span></code></pre>
 </div></div>
 
 <div class="step"><div class="num">6</div><div>
@@ -306,7 +306,7 @@ python3 $R collect --dry-run
 <span class="c3">dry run: 5 settled dispatches · unique 5 · ambiguous 0 · none 0 · not settled 0 · failed 0 · nothing copied</span>
 python3 $R report --metrics $ROUTER_STATE/metrics.json
 <span class="c3">OK report $ROUTER_STATE/report.html · 1 PRs · 5 dispatches (0 ad hoc) · 5 collected sessions</span>
-orca tab create --url file://$ROUTER_STATE/report.html</code></pre>
+orca tab create --url file://$ROUTER_STATE/report.html --json</code></pre>
 <p>The daemon had already collected each worker as it was released, so <code>collect --all</code> after the run only
 skips (it printed <code>skipped 5</code> then); the line above is <code>--force</code>, which collected them again after a fix of the session matcher. Five workers in one worktree within three minutes had made four matches ambiguous; each session's
 first message names its own dispatch, and that now decides.</p>
@@ -355,8 +355,8 @@ again from it at any time.</p>
 <tr><td>see the PRs</td><td><code>python3 $R flow show</code> · <code>python3 $R flow history</code></td></tr>
 <tr><td>the page</td><td><code>python3 $R page --open</code></td></tr>
 <tr><td>one screen</td><td><code>python3 $R status</code></td></tr>
-<tr><td>wait for a ring</td><td><code>python3 $R wait</code></td></tr>
-<tr><td>answer</td><td><code>python3 $R reply &lt;id&gt; "&lt;answer&gt;"</code> · <code>python3 $R retry &lt;pr&gt; --note "…"</code> · <code>python3 $R resume &lt;pr&gt;</code></td></tr>
+<tr><td>wait for a ring</td><td><code>python3 $R wait --timeout-min &lt;n&gt;</code></td></tr>
+<tr><td>answer</td><td><code>python3 $R reply &lt;id&gt; "&lt;answer&gt;"</code> · <code>python3 $R retry &lt;pr&gt; --note "&lt;why&gt;"</code> · <code>python3 $R resume &lt;pr&gt;</code></td></tr>
 <tr><td>logs and report</td><td><code>python3 $R collect --all</code> · <code>python3 $R report</code></td></tr>
 <tr><td>stop</td><td><code>python3 $R stop --all</code></td></tr>
 </table></div>

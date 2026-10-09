@@ -827,6 +827,8 @@ The entries below predate the move: `chain-inner-pr.json` and `chain-smoke.json`
   above, and its `source_changed` restart is taken from `worker-read --help`. Codex reports no cache writes, and
   older Codex clients no token counts: those fields say "not recorded". No token prices ship with the plugin: the
   report prices tokens from a file the owner gives (`--prices`).
+- A collector that takes over an expired lock removes it first, unguarded: a second collector that removes it just
+  after the first one made it again collects the same dispatch, which at worst writes its index row twice.
 - The progress page has never shown a real Orca run. The live page has been opened in a real Orca tab only on a run
   of the stand-in (see Tested how).
 - The page has no login: whoever can reach 127.0.0.1 on this machine can read the run and apply a flow, as from a

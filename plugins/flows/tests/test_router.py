@@ -2436,6 +2436,28 @@ class Collector(RouterCase):
         self.assertTrue(lock.exists())                 # the third collector's lock is left to it
         self.assertFalse(self.logs("ctx_a").exists())
 
+    def test_a_lock_another_collector_takes_over_first_is_counted_locked(self):
+        self.seed("ctx_a")
+        lock = self.state / "logs" / ".locks" / "ctx_a"
+        lock.mkdir(parents=True)
+        old = time.time() - 3 * 3600                   # expired: this collector removes it, and another one's takeover
+        os.utime(lock, (old, old))                     # makes it again before this one's mkdir
+        code = (f"import sys\nsys.path.insert(0, {str(KIT)!r})\nimport collector\nmkdir, lock, fired = collector.Path.mkdir, "
+                f"collector.Path({str(lock)!r}), []\n"
+                "def raced(p, *a, **k):\n"
+                "    if p == lock and not fired and not p.exists():\n"
+                "        fired.append(p)\n        mkdir(p)\n"
+                "        raise FileExistsError(17, 'File exists', str(p))\n"
+                "    return mkdir(p, *a, **k)\n"
+                "collector.Path.mkdir = raced\nsys.exit(collector.main())\n")
+        rc, out = self.collect("--dispatch", "ctx_a", code=code)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("skip ctx_a: locked by another collector", out)
+        self.assertIn("OK collected 0 · skipped 0 · locked 1 · not settled 0 · failed 0", out)
+        self.assertEqual(self.journal().count("collector: ctx_a: locked by another collector since"), 1, self.journal())
+        self.assertTrue(lock.exists())                 # the other collector's lock is left to it
+        self.assertFalse(self.logs("ctx_a").exists())
+
     def test_a_failed_collection_leaves_no_temporary_directory(self):
         self.seed("ctx_a")
         ev = next((self.state / "events" / "ctx_a").iterdir())

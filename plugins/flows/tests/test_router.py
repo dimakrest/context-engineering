@@ -1069,14 +1069,19 @@ class Profiles(RouterCase):
         own = {k: self.RUN[k] for k in ("SCRATCH", "WT", "PR")}
         return {k: self.rt.render(v, own) for k, v in dict(profile(name)["vars"], **override).items()}
 
-    def rendered(self, template, name, **override):
-        """Every worker spec of the template, rendered as the runner would: {spec name: text}."""
-        defn = json.loads((TEMPLATES / template).read_text())
+    def variables(self, defn, name, **override):
+        """What a step of the template sees: the run's values, the template's defaults, the profile's vars."""
         variables = dict(self.RUN, **{k: str(v) for k, v in defn.get("vars", {}).items()})
         variables.update(self.vars_of(name, **override))
         for s in defn["steps"]:
             sid = self.rt.step_var(s["id"])
             variables.update({f"HEAD_BEFORE_{sid}": f"b-{s['id']}", f"HEAD_AFTER_{sid}": f"a-{s['id']}"})
+        return variables
+
+    def rendered(self, template, name, **override):
+        """Every worker spec of the template, rendered as the runner would: {spec name: text}."""
+        defn = json.loads((TEMPLATES / template).read_text())
+        variables = self.variables(defn, name, **override)
         self.assertTrue(set(self.rt.STEP_VARS_EARLY) <= set(variables))
         out = {}
         for s in defn["steps"]:
@@ -1139,6 +1144,30 @@ class Profiles(RouterCase):
             for m in re.finditer(r"`none`", text):
                 around = text[m.start() - 7:m.end() + 30]
                 self.assertRegex(around, r"`none`(?::|,) (?:when|unless) that is none", around)
+
+    # A profile may set these to none. A spec that names one must guard it where it stands ("`X`: when that is none,
+    # skip", "Rules file: X. When that is a path, read it"), or the worker is told to run, read or edit "none".
+    NONEABLE = ("RULES", "COPY_SETUP", "LINT_CMD", "FROZEN_PATHS", "EXTRA_SUITE")
+    GUARD = re.compile(r"`?[:,.;] (?:when|When|unless) that is (?:none|not none|a path)\b")
+
+    def test_no_spec_tells_the_worker_to_run_read_or_edit_a_variable_set_to_none(self):
+        mark = "\x00none\x00"                                       # where a none was put in, unlike a "none" of prose
+        cases = [(name, {}) for name in self.NAMES] + [("python", {k: "none" for k in self.NONEABLE})]
+        for name, override in cases:
+            v = self.vars_of(name, **override)
+            nones = {k: mark for k in self.NONEABLE if v[k] == "none"}
+            seen = 0
+            for template in ("inner-pr.json", "smoke.json"):
+                for spec, text in self.rendered(template, name, **dict(override, **nones)).items():
+                    for m in re.finditer(mark, text):
+                        seen += 1
+                        around = text[m.start() - 60:m.end() + 40].replace(mark, "none")
+                        self.assertRegex(text[m.end():m.end() + 40].replace(mark, "none"), "^" + self.GUARD.pattern,
+                                         f"{name}: {spec}: an unguarded none: ...{around}...")
+                    plain = text.replace(mark, "none")
+                    rules = f"Rules file: {v['RULES']}. When that is a path, read it before anything else"
+                    self.assertEqual(plain.count("Rules file:"), plain.count(rules), f"{name}: {spec}")
+            self.assertGreater(seen, 0, name)                             # each case puts at least one none in
 
     def test_rendered_validator_and_implementer_match_their_snapshots(self):
         update = os.environ.get("FLOWS_UPDATE_SNAPSHOTS") == "1"

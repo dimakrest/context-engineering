@@ -1138,7 +1138,7 @@ class Profiles(RouterCase):
         for text in (validator, implementer):                         # every `none` stands right before its guard
             for m in re.finditer(r"`none`", text):
                 around = text[m.start() - 7:m.end() + 30]
-                self.assertRegex(around, r"^unless `none` is none|`none`(?::|,) (?:when|unless) that is none", around)
+                self.assertRegex(around, r"`none`(?::|,) (?:when|unless) that is none", around)
 
     def test_rendered_validator_and_implementer_match_their_snapshots(self):
         update = os.environ.get("FLOWS_UPDATE_SNAPSHOTS") == "1"

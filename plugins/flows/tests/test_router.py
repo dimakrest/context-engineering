@@ -2416,6 +2416,26 @@ class Collector(RouterCase):
         self.assertFalse(lock.exists())
         self.assertNotIn("collector: ctx_a:", self.journal())
 
+    def test_a_lock_a_third_collector_takes_before_the_retry_is_counted_locked(self):
+        self.seed("ctx_a")
+        lock = self.state / "logs" / ".locks" / "ctx_a"
+        lock.mkdir(parents=True)                       # held when the mkdir fails; by the stat its owner has gone and a
+        code = (f"import shutil, sys\nsys.path.insert(0, {str(KIT)!r})\nimport collector\nstat, lock, fired = collector.Path.stat, "
+                f"collector.Path({str(lock)!r}), []\n"                            # third collector holds it: the retry fails
+                "def raced(p, *a, **k):\n"
+                "    if p == lock and not fired:\n"
+                "        fired.append(p)\n        shutil.rmtree(p)\n        p.mkdir()\n"
+                "        raise FileNotFoundError(2, 'No such file or directory', str(p))\n"
+                "    return stat(p, *a, **k)\n"
+                "collector.Path.stat = raced\nsys.exit(collector.main())\n")
+        rc, out = self.collect("--dispatch", "ctx_a", code=code)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("skip ctx_a: locked by another collector", out)
+        self.assertIn("OK collected 0 · skipped 0 · locked 1 · not settled 0 · failed 0", out)
+        self.assertEqual(self.journal().count("collector: ctx_a: locked by another collector since"), 1, self.journal())
+        self.assertTrue(lock.exists())                 # the third collector's lock is left to it
+        self.assertFalse(self.logs("ctx_a").exists())
+
     def test_a_failed_collection_leaves_no_temporary_directory(self):
         self.seed("ctx_a")
         ev = next((self.state / "events" / "ctx_a").iterdir())

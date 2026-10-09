@@ -1,0 +1,17 @@
+{
+  "name": "flows",
+  "version": "0.1.0",
+  "description": "Run a flow of inner pull requests through Orca workers without waking the coordinator for every message: a router reads the Run's mailbox, releases finished workers, runs each PR's chain of steps (contract, tests, implementation, validation, draft PR, reviews, fixers, CI) and its checks, and rings the coordinator only at a gate, a failure, a check that is not OK or a worker's question. /flows:flow-run drives the loop; /flows:flow-status says where a run is.",
+  "author": {
+    "name": "Dima Krest"
+  },
+  "keywords": [
+    "flows",
+    "orca",
+    "orchestration",
+    "router",
+    "agents",
+    "workflow"
+  ],
+  "skills": "./skills/"
+}

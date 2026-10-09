@@ -28,6 +28,16 @@
       },
       "source": "./plugins/missions",
       "category": "development"
+    },
+    {
+      "name": "flows",
+      "description": "Run a flow of inner pull requests through Orca workers: a router handles the mailbox and each PR's chain of steps and checks, and rings the coordinator only at a gate, a failure or a worker's question.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Dima Krest"
+      },
+      "source": "./plugins/flows",
+      "category": "development"
     }
   ]
 }

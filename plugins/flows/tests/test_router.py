@@ -988,6 +988,27 @@ class Templates(RouterCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("t2: the definition's kit '../nowhere' is not a directory", out)
 
+    def test_a_definition_that_names_a_kit_runs_its_commands_from_the_kit(self):
+        kit2 = self.tmp / "kit2"
+        (kit2 / "checks").mkdir(parents=True)
+        (kit2 / "templates").mkdir()
+        (kit2 / "checks" / "x.sh").write_text('#!/usr/bin/env bash\necho "OK $1 ran in $(pwd -P)"\n')
+        (kit2 / "checks" / "x.sh").chmod(0o755)
+        shutil.copytree(self.kit / "specs", kit2 / "specs")
+        path = kit2 / "templates" / "c.json"
+        path.write_text(json.dumps({"name": "t1", "kit": "..", "steps": [
+            self.worker("a", when="test -x checks/x.sh", checks=["checks/x.sh check"]),
+            {"id": "s", "type": "script", "when": "test -x checks/x.sh", "run": "checks/x.sh script"},
+            {"id": "g", "type": "gate", "title": "hold", "show": ["checks/x.sh show"]}]}))
+        self.scenario({"match": "t1 a$", "events": [self.done(0.1)]})
+        self.R("init", ok=True)
+        self.assertEqual(self.R("chain", "t1", "--def", str(path), f"OUT={self.out}")[0], 0)
+        text = self.bell()
+        where = kit2.resolve()
+        self.assertIn(f"OK show ran in {where}", text)                 # the gate's show line
+        self.assertIn(f"check: OK check ran in {where}", self.journal())   # the worker's check, after its when
+        self.assertIn(f"script exit 0: OK script ran in {where}", self.journal())
+
 
 class Sweep(unittest.TestCase):
     """The specs and templates serve any repository: nothing of the run they were written for may come back."""

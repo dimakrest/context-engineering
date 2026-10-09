@@ -629,6 +629,12 @@ def run_line(cmd: str, cwd: str, timeout: float, env: "dict[str, str]") -> "tupl
     return rc, oneline(plain[-1] if plain else f"exit {rc}, no output: {oneline(cmd, 120)}"), exports
 
 
+def cwd_of(st: dict) -> str:
+    """Where a step's commands run (run, when, checks, show): the kit, so `checks/x.sh` means the kit's checks. Without
+    a kit that is the definition's own directory, as kit_of resolves it."""
+    return st.get("kit_dir") or st["def_dir"]
+
+
 def step_vars(st: dict, step: dict) -> "dict[str, str]":
     v = dict(st["vars"])
     att = step["attempts"][-1] if step["attempts"] else {}
@@ -642,7 +648,7 @@ def condition(S: State, st: dict, step: dict) -> bool:
     when = step["def"].get("when")
     if not when:
         return True
-    rc, _line, _ = run_line(render(when, step_vars(st, step), shell=True), st["def_dir"], 60, orca_env(S))
+    rc, _line, _ = run_line(render(when, step_vars(st, step), shell=True), cwd_of(st), 60, orca_env(S))
     return rc == 0
 
 
@@ -728,7 +734,7 @@ def run_checks(S: State, st: dict, step: dict) -> "list[tuple[bool, str]]":
         else:
             results.append((True, f"OK read-only: HEAD {head[:9]} and the working tree are unchanged"))
     for c in d.get("checks") or []:
-        rc, line, _ = run_line(render(c, v, shell=True), st["def_dir"], float(d.get("check_timeout", 300)), orca_env(S))
+        rc, line, _ = run_line(render(c, v, shell=True), cwd_of(st), float(d.get("check_timeout", 300)), orca_env(S))
         ok = rc == 0 and not line.startswith("NOT OK")
         results.append((ok, line if line.startswith(("OK", "NOT OK")) else f"{'OK' if ok else 'NOT OK'} {line}"))
     return results
@@ -865,7 +871,7 @@ def cmd_run(S: State, a: argparse.Namespace) -> int:
                     step["status"] = "script"   # saved, so status and progress show it: a CI wait can take an hour
                     save_chain(S, st)
                     flush_progress(S)
-                    rc, line, exports = run_line(cmd, st["def_dir"], float(step["def"].get("timeout", 600)), orca_env(S))
+                    rc, line, exports = run_line(cmd, cwd_of(st), float(step["def"].get("timeout", 600)), orca_env(S))
                     for kv in exports:
                         k, val = kv.split("=", 1)
                         st["vars"][k.strip()] = val.strip()
@@ -907,7 +913,7 @@ def cmd_run(S: State, a: argparse.Namespace) -> int:
                 if gate is not None:
                     lines = [f"WAKE gate · {a.pr} · {gate['id']}: " + render(gate["def"].get("title", "the coordinator decides"), step_vars(st, gate))]
                     for c in gate["def"].get("show") or []:
-                        lines.append(run_line(render(c, step_vars(st, gate), shell=True), st["def_dir"], 120, orca_env(S))[1])
+                        lines.append(run_line(render(c, step_vars(st, gate), shell=True), cwd_of(st), 120, orca_env(S))[1])
                     lines.append(f"next: router.py resume {a.pr}   (after you have decided; to send it back: "
                                  f'router.py resume {a.pr} --from <step> --note "<what to change>")')
                     pause(S, st, "gate", lines, gate=gate)

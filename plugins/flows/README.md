@@ -178,7 +178,8 @@ between two waits can still produce a nudge; it needs no action.
 A JSON object with `steps`, run in order. An optional `kit` is a directory, relative to the definition file, that
 holds the `specs/` and `checks/` the steps use (default: the definition's own directory). Both templates set
 `"kit": ".."`, so they find `router/specs/` and `router/checks/`. A `kit` that is not a directory is refused when the
-chain is created. Text fields are templates: `{NAME}` is replaced, and a name with no value
+chain is created. A step's commands (`run`, `when`, `checks`, `show`) run in the kit directory, so `checks/x.sh` is
+the kit's. Text fields are templates: `{NAME}` is replaced, and a name with no value
 stops `router.py chain` before anything starts. In a command (`run`, `when`, `checks`, `show`) the value is
 shell-quoted for you, so write `{TITLE}`, not `"{TITLE}"`. `${NAME}` is left to the shell.
 

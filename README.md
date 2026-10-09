@@ -54,8 +54,10 @@ the `context-engineering` plugin below uses Claude Code.
 
 The marketplace also ships **`flows`**: a router for Orca runs that carries a flow of inner PRs through
 its chain of workers, scripts and gates, and wakes the coordinator only when a decision is needed
-(`/flows:flow-run`, `/flows:flow-status`). Install it with `/plugin install flows@dimakrest-context-engineering`;
-[`plugins/flows/README.md`](plugins/flows/README.md) is its guide.
+(`/flows:flow-plan`, `/flows:flow-run`, `/flows:flow-status`, `/flows:flow-report`). Install it with
+`/plugin install flows@dimakrest-context-engineering`. Start with
+[`plugins/flows/docs/FLOWS_GETTING_STARTED.html`](plugins/flows/docs/FLOWS_GETTING_STARTED.html), the first run on
+real Orca; [`plugins/flows/docs/FLOWS.md`](plugins/flows/docs/FLOWS.md) is the reference.
 
 ### Installation Scopes
 

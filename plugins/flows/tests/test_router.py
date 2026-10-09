@@ -3616,18 +3616,33 @@ class Skills(unittest.TestCase):
     NOT_RUN = "  # not run in the pilot"
 
     def page_commands(self):
-        """The commands on the getting-started page: each line of a <pre> block and each <code> in a table cell that
-        starts with a program (python3, orca, mkdir, /plugin), and each /flows: skill the page names, with the outputs
-        and comments (the <span>s) left out. A variable assignment (export, R=) runs nothing, so it is not one."""
+        """The commands on the getting-started page: every line of every <pre> and every <code> outside one, read
+        as a command unless it is plainly not one. Left out: what is marked as printed or recorded, <pre class="out">
+        or <code class="out"> and, inside a <pre>, the <span>s (outputs and comments); an assignment (export, R=),
+        which runs nothing; JSON; a name or path alone (one word, not a /command); a placeholder alone; and an
+        inline fragment of a listed command (`flow apply`, `collect --all`, `router.py wait`, router.py being $R)."""
         page = self.texts["docs/FLOWS_GETTING_STARTED.html"]
-        lines = []
-        for block in re.findall(r"<pre><code>(.*?)</code></pre>", page, re.S):
-            lines += re.sub(r"<span[^>]*>.*?</span>", "", block, flags=re.S).replace("\\\n", " ").splitlines()
-        for cell in re.findall(r"<td>(.*?)</td>", page, re.S):
-            lines += re.findall(r"<code>(.*?)</code>", cell)
-        lines += re.findall(r"<code>(/flows:[^<]*)</code>", page)   # a skill, wherever the page names it
-        cmds = [re.sub(r"\s+", " ", html.unescape(ln)).strip() for ln in lines]
-        return [c for c in cmds if re.match(r"(python3|orca|mkdir|/plugin) |/flows:", c)]
+        lines, inline = [], []
+        for attrs, block in re.findall(r"<pre([^>]*)><code>(.*?)</code></pre>", page, re.S):
+            if 'class="out"' not in attrs:
+                lines += re.sub(r"<span[^>]*>.*?</span>", "", block, flags=re.S).replace("\\\n", " ").splitlines()
+        for attrs, code in re.findall(r"<code([^>]*)>(.*?)</code>", re.sub(r"<pre.*?</pre>", "", page, flags=re.S)):
+            if 'class="out"' not in attrs:
+                inline.append(code)
+        listed = [c.replace(self.NOT_RUN, "").split() for c in self.listed_page_commands()]
+
+        def fragment(words):
+            words = ["$R" if w == "router.py" else w for w in words]
+            return words not in listed and any(c[i:i + len(words)] == words for c in listed for i in range(len(c)))
+
+        cmds = []
+        for ln, is_inline in [(ln, False) for ln in lines] + [(c, True) for c in inline]:
+            c = re.sub(r"\s+", " ", html.unescape(ln)).strip()
+            if (not c or re.match(r"(export )?[A-Za-z_]+=", c) or c[0] in '{"' or re.fullmatch(r"<[^<>]*>", c)
+                    or (" " not in c and not c.startswith("/")) or (is_inline and fragment(c.split()))):
+                continue
+            cmds.append(c)
+        return cmds
 
     def listed_page_commands(self):
         """tests/fixtures/page-commands.txt: the page's commands as the pilot ran them; a line that ends in
@@ -3636,8 +3651,11 @@ class Skills(unittest.TestCase):
 
     def test_the_getting_started_page_shows_the_listed_commands_only(self):
         listed = self.listed_page_commands()
-        self.assertEqual(sorted(set(self.page_commands())), sorted(c.replace(self.NOT_RUN, "") for c in listed),
-                         "a command on the page that is not in tests/fixtures/page-commands.txt, or the other way")
+        shown, wanted = set(self.page_commands()), {c.replace(self.NOT_RUN, "") for c in listed}
+        wrong = [f"on the page, not in tests/fixtures/page-commands.txt: {c}" for c in sorted(shown - wanted)]
+        wrong += [f"in tests/fixtures/page-commands.txt, not on the page: {c}" for c in sorted(wanted - shown)]
+        if wrong:
+            self.fail("\n".join(wrong))
         page = self.texts["docs/FLOWS_GETTING_STARTED.html"]
         for c in listed:
             if c.endswith(self.NOT_RUN):   # the page says so next to each <code> of it

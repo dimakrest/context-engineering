@@ -1,0 +1,46 @@
+{
+ "dispatch": "ctx_a2_review",
+ "task": "task_a2_review",
+ "pr": "A2",
+ "step": "review",
+ "title": "A2 review",
+ "adhoc": false,
+ "n": 1,
+ "agent": "claude",
+ "model": "claude-opus-5-5",
+ "effort": null,
+ "effective": null,
+ "started": "2026-01-12T12:35:35Z",
+ "ended": "2026-01-12T12:45:35Z",
+ "outcome": "succeeded",
+ "flow_version": null,
+ "cause": null,
+ "worktree": "/work/wt",
+ "worktree_source": "attempt: path:/work/wt",
+ "head_before": null,
+ "head_after": null,
+ "checks": [],
+ "release": "released",
+ "settled_in_chain": true,
+ "session": {
+  "provider": "claude",
+  "path": "/sessions/ctx_a2_review.jsonl",
+  "match": "unique",
+  "candidates": 1,
+  "why": ""
+ },
+ "orca": {
+  "status": "ok",
+  "provider": "claude",
+  "contentComplete": false,
+  "clipping": [
+   "older messages"
+  ]
+ },
+ "files": {
+  "session.jsonl": {
+   "source": "claude",
+   "match": "unique"
+  }
+ }
+}

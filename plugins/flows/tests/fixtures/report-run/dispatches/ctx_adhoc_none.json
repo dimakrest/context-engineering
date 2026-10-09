@@ -1,0 +1,16 @@
+{
+ "dispatch": "ctx_adhoc_none",
+ "task": "task_adhoc_none",
+ "pr": "",
+ "step": "",
+ "title": "triage of a failure",
+ "started": "2026-01-12T12:50:00Z",
+ "adhoc": true,
+ "who": "codex",
+ "agent": "codex",
+ "model": "",
+ "effort": "",
+ "worktree": "path:/work/coordinator",
+ "settled": "2026-01-12T12:55:00Z",
+ "outcome": "succeeded"
+}

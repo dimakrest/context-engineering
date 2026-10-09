@@ -1,0 +1,16 @@
+{
+ "dispatch": "ctx_b1_contract",
+ "status": "ok",
+ "pages": [
+  {
+   "transcript": {
+    "messages": [
+     {
+      "id": "m1",
+      "text": "orca text SENTINEL-c0ffee-not-for-the-report"
+     }
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,1510 @@
+{
+ "written": "2026-10-09T12:00:00Z",
+ "run": "run_000000demo01",
+ "objective": "the payments client moves to v3",
+ "title": "Move the payments client to v3",
+ "has_plan": true,
+ "state_dir": "/runs/payments-v3/router",
+ "flow": {
+  "version": 4,
+  "slots": 2,
+  "start": "auto",
+  "title": "Move the payments client to v3",
+  "prs": [
+   {
+    "id": "A1",
+    "part": "Part A · Client",
+    "title": "Pin the new client next to the old one",
+    "base": "payments-v3",
+    "after": [],
+    "template": "inner-pr",
+    "vars": {
+     "ISSUE": "11"
+    },
+    "steps": [
+     {
+      "id": "contract",
+      "agent": "claude",
+      "model": "claude-fable-5-1",
+      "effort": "xhigh",
+      "spec": "contract.md"
+     },
+     {
+      "id": "accept",
+      "type": "gate"
+     },
+     {
+      "id": "freeze",
+      "type": "script"
+     },
+     {
+      "id": "tests",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "tests.md"
+     },
+     {
+      "id": "ledger_r0",
+      "agent": "codex",
+      "spec": "ledger-r0.md"
+     },
+     {
+      "id": "implement",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "implement.md"
+     },
+     {
+      "id": "ledger_r1",
+      "agent": "codex",
+      "spec": "ledger-r1.md"
+     },
+     {
+      "id": "validator",
+      "agent": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "high",
+      "spec": "validator.md"
+     },
+     {
+      "id": "draft_pr",
+      "type": "script"
+     },
+     {
+      "id": "simplify",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "simplify.md"
+     },
+     {
+      "id": "review_codex",
+      "agent": "codex",
+      "spec": "review-codex.md",
+      "group": "review"
+     },
+     {
+      "id": "review_claude",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "spec": "review-claude.md",
+      "group": "review"
+     },
+     {
+      "id": "triage",
+      "agent": "claude",
+      "model": "claude-fable-5-1",
+      "effort": "high",
+      "spec": "triage.md"
+     },
+     {
+      "id": "fix_tests",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "fix-tests.md"
+     },
+     {
+      "id": "fix_code",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "fix-code.md"
+     },
+     {
+      "id": "ci",
+      "type": "script"
+     },
+     {
+      "id": "merge",
+      "type": "gate"
+     }
+    ],
+    "own_steps": false,
+    "started": true,
+    "fixed": 17,
+    "claimed": []
+   },
+   {
+    "id": "A2",
+    "part": "Part A · Client",
+    "title": "Move the retries onto the new client",
+    "base": "payments-v3",
+    "after": [
+     "A1"
+    ],
+    "template": "inner-pr",
+    "vars": {
+     "ISSUE": "12"
+    },
+    "steps": [
+     {
+      "id": "contract",
+      "agent": "claude",
+      "model": "claude-fable-5-1",
+      "effort": "xhigh",
+      "spec": "contract.md"
+     },
+     {
+      "id": "accept",
+      "type": "gate"
+     },
+     {
+      "id": "freeze",
+      "type": "script"
+     },
+     {
+      "id": "tests",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "tests.md"
+     },
+     {
+      "id": "ledger_r0",
+      "agent": "codex",
+      "spec": "ledger-r0.md"
+     },
+     {
+      "id": "implement",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "implement.md"
+     },
+     {
+      "id": "ledger_r1",
+      "agent": "codex",
+      "spec": "ledger-r1.md"
+     },
+     {
+      "id": "validator",
+      "agent": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "high",
+      "spec": "validator.md"
+     },
+     {
+      "id": "draft_pr",
+      "type": "script"
+     },
+     {
+      "id": "simplify",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "simplify.md"
+     },
+     {
+      "id": "review_codex",
+      "agent": "codex",
+      "spec": "review-codex.md",
+      "group": "review"
+     },
+     {
+      "id": "review_claude",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "spec": "review-claude.md",
+      "group": "review"
+     },
+     {
+      "id": "triage",
+      "agent": "claude",
+      "model": "claude-fable-5-1",
+      "effort": "high",
+      "spec": "triage.md"
+     },
+     {
+      "id": "fix_tests",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "fix-tests.md"
+     },
+     {
+      "id": "fix_code",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "fix-code.md"
+     },
+     {
+      "id": "ci",
+      "type": "script"
+     },
+     {
+      "id": "merge",
+      "type": "gate"
+     }
+    ],
+    "own_steps": false,
+    "started": true,
+    "fixed": 6,
+    "claimed": []
+   },
+   {
+    "id": "B1",
+    "part": "Part B · Callers",
+    "title": "Switch the checkout flow",
+    "base": "payments-v3",
+    "after": [
+     "A1"
+    ],
+    "template": "inner-pr",
+    "vars": {
+     "ISSUE": "13"
+    },
+    "steps": [
+     {
+      "id": "contract",
+      "agent": "claude",
+      "model": "claude-fable-5-1",
+      "effort": "xhigh",
+      "spec": "contract.md"
+     },
+     {
+      "id": "accept",
+      "type": "gate"
+     },
+     {
+      "id": "freeze",
+      "type": "script"
+     },
+     {
+      "id": "tests",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "tests.md"
+     },
+     {
+      "id": "ledger_r0",
+      "agent": "codex",
+      "spec": "ledger-r0.md"
+     },
+     {
+      "id": "implement",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "implement.md"
+     },
+     {
+      "id": "ledger_r1",
+      "agent": "codex",
+      "spec": "ledger-r1.md"
+     },
+     {
+      "id": "validator",
+      "agent": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "high",
+      "spec": "validator.md"
+     },
+     {
+      "id": "draft_pr",
+      "type": "script"
+     },
+     {
+      "id": "simplify",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "simplify.md"
+     },
+     {
+      "id": "review_codex",
+      "agent": "codex",
+      "spec": "review-codex.md",
+      "group": "review"
+     },
+     {
+      "id": "review_claude",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "spec": "review-claude.md",
+      "group": "review"
+     },
+     {
+      "id": "triage",
+      "agent": "claude",
+      "model": "claude-fable-5-1",
+      "effort": "high",
+      "spec": "triage.md"
+     },
+     {
+      "id": "fix_tests",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "fix-tests.md"
+     },
+     {
+      "id": "fix_code",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "fix-code.md"
+     },
+     {
+      "id": "ci",
+      "type": "script"
+     },
+     {
+      "id": "merge",
+      "type": "gate"
+     }
+    ],
+    "own_steps": false,
+    "started": true,
+    "fixed": 17,
+    "claimed": []
+   },
+   {
+    "id": "B2",
+    "part": "Part B · Callers",
+    "title": "Switch the refunds flow",
+    "base": "payments-v3",
+    "after": [
+     "A2",
+     "B1"
+    ],
+    "template": "inner-pr",
+    "vars": {
+     "ISSUE": "14"
+    },
+    "steps": [
+     {
+      "id": "contract",
+      "agent": "claude",
+      "model": "claude-fable-5-1",
+      "effort": "xhigh",
+      "spec": "contract.md"
+     },
+     {
+      "id": "accept",
+      "type": "gate"
+     },
+     {
+      "id": "freeze",
+      "type": "script"
+     },
+     {
+      "id": "tests",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "tests.md"
+     },
+     {
+      "id": "ledger_r0",
+      "agent": "codex",
+      "spec": "ledger-r0.md"
+     },
+     {
+      "id": "implement",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "implement.md"
+     },
+     {
+      "id": "ledger_r1",
+      "agent": "codex",
+      "spec": "ledger-r1.md"
+     },
+     {
+      "id": "validator",
+      "agent": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "high",
+      "spec": "validator.md"
+     },
+     {
+      "id": "draft_pr",
+      "type": "script"
+     },
+     {
+      "id": "simplify",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "simplify.md"
+     },
+     {
+      "id": "review_codex",
+      "agent": "codex",
+      "spec": "review-codex.md",
+      "group": "review"
+     },
+     {
+      "id": "review_claude",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "spec": "review-claude.md",
+      "group": "review"
+     },
+     {
+      "id": "triage",
+      "agent": "claude",
+      "model": "claude-fable-5-1",
+      "effort": "high",
+      "spec": "triage.md"
+     },
+     {
+      "id": "fix_tests",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "fix-tests.md"
+     },
+     {
+      "id": "fix_code",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "fix-code.md"
+     },
+     {
+      "id": "ci",
+      "type": "script"
+     },
+     {
+      "id": "merge",
+      "type": "gate"
+     }
+    ],
+    "own_steps": false,
+    "started": false,
+    "fixed": 0,
+    "claimed": []
+   },
+   {
+    "id": "C1",
+    "part": "Part C · Cleanup",
+    "title": "Remove the old client",
+    "base": "payments-v3",
+    "after": [
+     "B1"
+    ],
+    "template": "inner-pr",
+    "vars": {
+     "ISSUE": "15"
+    },
+    "steps": [
+     {
+      "id": "contract",
+      "agent": "claude",
+      "model": "claude-fable-5-1",
+      "effort": "xhigh",
+      "spec": "contract.md"
+     },
+     {
+      "id": "accept",
+      "type": "gate"
+     },
+     {
+      "id": "freeze",
+      "type": "script"
+     },
+     {
+      "id": "tests",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "tests.md"
+     },
+     {
+      "id": "ledger_r0",
+      "agent": "codex",
+      "spec": "ledger-r0.md"
+     },
+     {
+      "id": "implement",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "implement.md"
+     },
+     {
+      "id": "ledger_r1",
+      "agent": "codex",
+      "spec": "ledger-r1.md"
+     },
+     {
+      "id": "validator",
+      "agent": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "high",
+      "spec": "validator.md"
+     },
+     {
+      "id": "draft_pr",
+      "type": "script"
+     },
+     {
+      "id": "simplify",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "simplify.md"
+     },
+     {
+      "id": "review_codex",
+      "agent": "codex",
+      "spec": "review-codex.md",
+      "group": "review"
+     },
+     {
+      "id": "review_claude",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "spec": "review-claude.md",
+      "group": "review"
+     },
+     {
+      "id": "triage",
+      "agent": "claude",
+      "model": "claude-fable-5-1",
+      "effort": "high",
+      "spec": "triage.md"
+     },
+     {
+      "id": "fix_tests",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "fix-tests.md"
+     },
+     {
+      "id": "fix_code",
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "spec": "fix-code.md"
+     },
+     {
+      "id": "ci",
+      "type": "script"
+     },
+     {
+      "id": "merge",
+      "type": "gate"
+     }
+    ],
+    "own_steps": false,
+    "started": false,
+    "fixed": 0,
+    "claimed": []
+   }
+  ],
+  "removed": [],
+  "templates": [
+   "inner-pr"
+  ],
+  "palette": [
+   {
+    "role": "review-claude",
+    "step": {
+     "id": "review_claude",
+     "agent": "claude",
+     "spec": "review-claude.md"
+    }
+   },
+   {
+    "role": "gate",
+    "step": {
+     "id": "gate",
+     "type": "gate",
+     "title": "the coordinator decides"
+    }
+   },
+   {
+    "role": "script",
+    "step": {
+     "id": "script",
+     "type": "script",
+     "run": "true"
+    }
+   }
+  ],
+  "history": [
+   {
+    "v": 3,
+    "at": "2026-10-09T09:00:00Z",
+    "by": "coordinator",
+    "note": "C1 waits for its worktree",
+    "changes": [
+     "C1 added after B1"
+    ]
+   },
+   {
+    "v": 4,
+    "at": "2026-10-09T11:10:00Z",
+    "by": "page",
+    "note": "the hardest PR",
+    "changes": [
+     "A2: implement effort high -> xhigh"
+    ]
+   }
+  ]
+ },
+ "page": "/runs/payments-v3/router/progress.html",
+ "refresh_s": 120.0,
+ "mailbox": {
+  "alive": 4242,
+  "last": "2026-10-09T11:59:00Z"
+ },
+ "rows": [
+  {
+   "id": "A1",
+   "title": "Pin the new client next to the old one",
+   "part": "Part A · Client",
+   "state": "done",
+   "created": "2026-10-09T05:20:00Z",
+   "ended": "2026-10-09T11:00:00Z",
+   "done": 17,
+   "total": 17,
+   "at": [],
+   "why": "",
+   "since": "",
+   "picked_up": true,
+   "url": "https://example.invalid/pull/101",
+   "steps": [
+    {
+     "id": "contract",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T05:20:00Z",
+     "ended": "2026-10-09T05:40:00Z",
+     "who": "claude claude-fable-5-1 xhigh",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "accept",
+     "type": "gate",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T05:40:00Z",
+     "ended": "2026-10-09T06:00:00Z",
+     "who": "",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "freeze",
+     "type": "script",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T06:00:00Z",
+     "ended": "2026-10-09T06:20:00Z",
+     "who": "",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "tests",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T06:20:00Z",
+     "ended": "2026-10-09T06:40:00Z",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "ledger_r0",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T06:40:00Z",
+     "ended": "2026-10-09T07:00:00Z",
+     "who": "codex",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "implement",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T07:00:00Z",
+     "ended": "2026-10-09T07:20:00Z",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "ledger_r1",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T07:20:00Z",
+     "ended": "2026-10-09T07:40:00Z",
+     "who": "codex",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "validator",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T07:40:00Z",
+     "ended": "2026-10-09T08:00:00Z",
+     "who": "claude claude-sonnet-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "draft_pr",
+     "type": "script",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T08:00:00Z",
+     "ended": "2026-10-09T08:20:00Z",
+     "who": "",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "simplify",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T08:20:00Z",
+     "ended": "2026-10-09T08:40:00Z",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "review_codex",
+     "type": "worker",
+     "status": "done",
+     "group": "review",
+     "n": 1,
+     "started": "2026-10-09T08:40:00Z",
+     "ended": "2026-10-09T09:00:00Z",
+     "who": "codex",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "review_claude",
+     "type": "worker",
+     "status": "done",
+     "group": "review",
+     "n": 1,
+     "started": "2026-10-09T09:00:00Z",
+     "ended": "2026-10-09T09:20:00Z",
+     "who": "claude claude-opus-5-5 xhigh",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "triage",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T09:20:00Z",
+     "ended": "2026-10-09T09:40:00Z",
+     "who": "claude claude-fable-5-1 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "fix_tests",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T09:40:00Z",
+     "ended": "2026-10-09T10:00:00Z",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "fix_code",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 2,
+     "started": "2026-10-09T10:00:00Z",
+     "ended": "2026-10-09T10:20:00Z",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "ci",
+     "type": "script",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T10:20:00Z",
+     "ended": "2026-10-09T10:40:00Z",
+     "who": "",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "merge",
+     "type": "gate",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T10:40:00Z",
+     "ended": "2026-10-09T11:00:00Z",
+     "who": "",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    }
+   ],
+   "waits": ""
+  },
+  {
+   "id": "A2",
+   "title": "Move the retries onto the new client",
+   "part": "Part A · Client",
+   "state": "running",
+   "created": "2026-10-09T10:50:00Z",
+   "ended": "",
+   "done": 5,
+   "total": 17,
+   "at": [
+    "implement"
+   ],
+   "why": "",
+   "since": "",
+   "picked_up": true,
+   "url": "https://example.invalid/pull/102",
+   "steps": [
+    {
+     "id": "contract",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T10:50:00Z",
+     "ended": "2026-10-09T11:02:00Z",
+     "who": "claude claude-fable-5-1 xhigh",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "accept",
+     "type": "gate",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T11:02:00Z",
+     "ended": "2026-10-09T11:14:00Z",
+     "who": "",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "freeze",
+     "type": "script",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T11:14:00Z",
+     "ended": "2026-10-09T11:26:00Z",
+     "who": "",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "tests",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T11:26:00Z",
+     "ended": "2026-10-09T11:38:00Z",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "ledger_r0",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T11:38:00Z",
+     "ended": "2026-10-09T11:50:00Z",
+     "who": "codex",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "implement",
+     "type": "worker",
+     "status": "running",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T11:50:00Z",
+     "ended": "",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "ledger_r1",
+     "type": "worker",
+     "status": "pending",
+     "group": "",
+     "n": 1,
+     "started": "",
+     "ended": "",
+     "who": "codex",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "validator",
+     "type": "worker",
+     "status": "pending",
+     "group": "",
+     "n": 1,
+     "started": "",
+     "ended": "",
+     "who": "claude claude-sonnet-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "draft_pr",
+     "type": "script",
+     "status": "pending",
+     "group": "",
+     "n": 1,
+     "started": "",
+     "ended": "",
+     "who": "",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "simplify",
+     "type": "worker",
+     "status": "pending",
+     "group": "",
+     "n": 1,
+     "started": "",
+     "ended": "",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "review_codex",
+     "type": "worker",
+     "status": "pending",
+     "group": "review",
+     "n": 1,
+     "started": "",
+     "ended": "",
+     "who": "codex",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "review_claude",
+     "type": "worker",
+     "status": "pending",
+     "group": "review",
+     "n": 1,
+     "started": "",
+     "ended": "",
+     "who": "claude claude-opus-5-5 xhigh",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "triage",
+     "type": "worker",
+     "status": "pending",
+     "group": "",
+     "n": 1,
+     "started": "",
+     "ended": "",
+     "who": "claude claude-fable-5-1 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "fix_tests",
+     "type": "worker",
+     "status": "pending",
+     "group": "",
+     "n": 1,
+     "started": "",
+     "ended": "",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "fix_code",
+     "type": "worker",
+     "status": "pending",
+     "group": "",
+     "n": 1,
+     "started": "",
+     "ended": "",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "ci",
+     "type": "script",
+     "status": "pending",
+     "group": "",
+     "n": 1,
+     "started": "",
+     "ended": "",
+     "who": "",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "merge",
+     "type": "gate",
+     "status": "pending",
+     "group": "",
+     "n": 1,
+     "started": "",
+     "ended": "",
+     "who": "",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    }
+   ],
+   "waits": ""
+  },
+  {
+   "id": "B1",
+   "title": "Switch the checkout flow",
+   "part": "Part B · Callers",
+   "state": "at a gate",
+   "created": "2026-10-09T07:40:00Z",
+   "ended": "",
+   "done": 16,
+   "total": 17,
+   "at": [
+    "merge"
+   ],
+   "why": "merge: merge gate: CI is green and the reviews are in",
+   "since": "2026-10-09T11:53:00Z",
+   "picked_up": false,
+   "url": "https://example.invalid/pull/103",
+   "steps": [
+    {
+     "id": "contract",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T07:40:00Z",
+     "ended": "2026-10-09T07:55:00Z",
+     "who": "claude claude-fable-5-1 xhigh",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "accept",
+     "type": "gate",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T07:55:00Z",
+     "ended": "2026-10-09T08:10:00Z",
+     "who": "",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "freeze",
+     "type": "script",
+     "status": "skipped",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T08:10:00Z",
+     "ended": "2026-10-09T08:25:00Z",
+     "who": "",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "tests",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T08:25:00Z",
+     "ended": "2026-10-09T08:40:00Z",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "ledger_r0",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T08:40:00Z",
+     "ended": "2026-10-09T08:55:00Z",
+     "who": "codex",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "implement",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T08:55:00Z",
+     "ended": "2026-10-09T09:10:00Z",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "ledger_r1",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T09:10:00Z",
+     "ended": "2026-10-09T09:25:00Z",
+     "who": "codex",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "validator",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T09:25:00Z",
+     "ended": "2026-10-09T09:40:00Z",
+     "who": "claude claude-sonnet-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "draft_pr",
+     "type": "script",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T09:40:00Z",
+     "ended": "2026-10-09T09:55:00Z",
+     "who": "",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "simplify",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T09:55:00Z",
+     "ended": "2026-10-09T10:10:00Z",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "review_codex",
+     "type": "worker",
+     "status": "done",
+     "group": "review",
+     "n": 1,
+     "started": "2026-10-09T10:10:00Z",
+     "ended": "2026-10-09T10:25:00Z",
+     "who": "codex",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "review_claude",
+     "type": "worker",
+     "status": "done",
+     "group": "review",
+     "n": 1,
+     "started": "2026-10-09T10:25:00Z",
+     "ended": "2026-10-09T10:40:00Z",
+     "who": "claude claude-opus-5-5 xhigh",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "triage",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T10:40:00Z",
+     "ended": "2026-10-09T10:55:00Z",
+     "who": "claude claude-fable-5-1 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "fix_tests",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T10:55:00Z",
+     "ended": "2026-10-09T11:10:00Z",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "fix_code",
+     "type": "worker",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T11:10:00Z",
+     "ended": "2026-10-09T11:25:00Z",
+     "who": "claude claude-opus-5-5 high",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "ci",
+     "type": "script",
+     "status": "done",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T11:25:00Z",
+     "ended": "2026-10-09T11:40:00Z",
+     "who": "",
+     "note": "",
+     "title": "",
+     "dispatch": ""
+    },
+    {
+     "id": "merge",
+     "type": "gate",
+     "status": "blocked",
+     "group": "",
+     "n": 1,
+     "started": "2026-10-09T11:40:00Z",
+     "ended": "",
+     "who": "",
+     "note": "merge gate: CI is green and the reviews are in",
+     "title": "",
+     "dispatch": ""
+    }
+   ],
+   "waits": ""
+  },
+  {
+   "id": "B2",
+   "title": "Switch the refunds flow",
+   "part": "Part B · Callers",
+   "state": "not started",
+   "created": "",
+   "ended": "",
+   "done": 0,
+   "total": 0,
+   "at": [],
+   "why": "",
+   "since": "",
+   "picked_up": true,
+   "url": "",
+   "steps": [],
+   "waits": "after A2, B1"
+  },
+  {
+   "id": "C1",
+   "title": "Remove the old client",
+   "part": "Part C · Cleanup",
+   "state": "not started",
+   "created": "",
+   "ended": "",
+   "done": 0,
+   "total": 0,
+   "at": [],
+   "why": "",
+   "since": "",
+   "picked_up": true,
+   "url": "",
+   "steps": [],
+   "waits": "waiting for: WT · after B1"
+  }
+ ],
+ "workers": [
+  {
+   "kind": "worker",
+   "pr": "A2",
+   "step": "implement",
+   "title": "A2 implement",
+   "who": "claude claude-opus-5-5 xhigh",
+   "n": 1,
+   "started": "2026-10-09T11:50:00Z",
+   "dispatch": "ctx_00000000demo",
+   "heartbeat": "2026-10-09T11:58:00Z",
+   "phase": "making the retry tests pass"
+  },
+  {
+   "kind": "ad hoc",
+   "pr": "B1",
+   "step": "",
+   "title": "B1 arbiter",
+   "who": "claude claude-fable-5-1 high",
+   "n": 1,
+   "started": "2026-10-09T11:48:00Z",
+   "dispatch": "ctx_00000000arb1",
+   "heartbeat": "2026-10-09T11:49:00Z",
+   "phase": "reading the dispute"
+  }
+ ],
+ "questions": [
+  {
+   "id": "msg_00000000q001",
+   "pr": "A2",
+   "step": "implement",
+   "asked": "2026-10-09T11:56:00Z",
+   "text": "The old client retries 3 times and the new one 5. Keep 3?"
+  }
+ ],
+ "rings": [
+  {
+   "rang": "2026-10-09T11:53:00Z",
+   "pr": "B1",
+   "kind": "gate",
+   "line": "WAKE gate · B1 · merge: merge gate: CI is green and the reviews are in"
+  }
+ ],
+ "events": [
+  {
+   "t": "2026-10-09T11:00:00Z",
+   "pr": "A1",
+   "step": "merge",
+   "text": "resume: the gate passed"
+  },
+  {
+   "t": "2026-10-09T11:02:00Z",
+   "pr": "-",
+   "step": "-",
+   "text": "flow: started A2 (v3)"
+  },
+  {
+   "t": "2026-10-09T11:10:00Z",
+   "pr": "-",
+   "step": "-",
+   "text": "flow v4 by page: 1 changes; the hardest PR · A2: implement effort high -> xhigh"
+  },
+  {
+   "t": "2026-10-09T11:48:00Z",
+   "pr": "B1",
+   "step": "adhoc",
+   "text": "started ad hoc worker B1 arbiter (claude claude-fable-5-1)"
+  },
+  {
+   "t": "2026-10-09T11:50:00Z",
+   "pr": "A2",
+   "step": "implement",
+   "text": "started claude claude-opus-5-5 xhigh"
+  },
+  {
+   "t": "2026-10-09T11:53:00Z",
+   "pr": "B1",
+   "step": "merge",
+   "text": "gate: merge gate: CI is green and the reviews are in"
+  },
+  {
+   "t": "2026-10-09T11:56:00Z",
+   "pr": "A2",
+   "step": "implement",
+   "text": "question: Keep 3 retries?"
+  }
+ ]
+}

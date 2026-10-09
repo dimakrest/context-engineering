@@ -21,10 +21,13 @@ What it reads (it writes only the files named on its command line, and never cal
 The questions, and the record behind each answer:
   a. time per PR      wall clock: state.json created..ended (a chain not done: "not recorded"); worker time: the sum
                       of started..ended over the attempts that have a dispatch, and the time at least one of them
-                      ran ("covered": a group's workers run at once, so the sum can pass the wall clock); at gates: a journal "paused: blocked"
-                      line to the PR's next "coordinator:" line; paused: any other "paused:" line to the PR's next
-                      "coordinator:" line (a wait that another pause or "chain complete" ends first has no recorded
-                      end and is counted as open); the rest: wall - covered - gates - paused (starts, checks, scripts).
+                      ran ("covered": a group's workers run at once, so the sum can pass the wall clock). Gate waits:
+                      a journal "paused: blocked" line to the PR's next "coordinator:" line; pauses: any other
+                      "paused:" line to the PR's next "coordinator:" line (a wait that another pause or "chain
+                      complete" ends first has no recorded end and is counted as open). The split is a partition of
+                      the wall clock, each second in one part, by priority: covered, then at gates (gate waits less
+                      covered), then paused (pauses less both), then the rest (starts, checks, scripts). So no part
+                      is negative and the four add up to the wall clock.
                       Ad hoc workers: dispatches/<dispatch>.json started..settled, shown apart.
   b. steps            per step id across PRs: the duration of a PR's step is the sum of its attempts' started..ended;
                       median and max; attempts by state.json's cause (an attempt without one: "first" when n is 1,
@@ -267,7 +270,46 @@ def waits(run: Run, pr: str) -> "list[dict]":
     return out
 
 
+Spans = "list[tuple[float, float]]"
+
+
+def union(spans: Spans) -> Spans:
+    """The time at least one of the spans covers, as sorted spans that do not overlap."""
+    out: Spans = []
+    for a, b in sorted(x for x in spans if x[1] > x[0]):
+        if out and a <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
+        else:
+            out.append((a, b))
+    return out
+
+
+def minus(spans: Spans, cut: Spans) -> Spans:
+    """The parts of spans (a union) that cut (a union) does not cover."""
+    out: Spans = []
+    for a, b in spans:
+        for c, d in cut:
+            if d <= a:
+                continue
+            if c >= b:
+                break
+            if c > a:
+                out.append((a, c))
+            a = d
+            if a >= b:
+                break
+        if a < b:
+            out.append((a, b))
+    return out
+
+
+def seconds(spans: Spans) -> int:
+    return int(sum(b - a for a, b in spans))
+
+
 def time_split(run: Run, pr: str) -> dict:
+    """A partition of the PR's wall clock: each second goes to one part only, in this order: a worker ran, a gate
+    waited, the chain was paused, the rest. So no part is negative and the four add up to the wall clock."""
     st = run.chains[pr]
     done = st.get("ended") if st.get("status") == "done" else None
     wall = span(st.get("created"), done)
@@ -278,20 +320,21 @@ def time_split(run: Run, pr: str) -> dict:
             if att.get("dispatch") and s is not None:
                 worker += s
                 spans.append((ts_epoch(att["started"]), ts_epoch(att["ended"])))
-    covered, end = 0, None   # the time at least one worker ran: a group's workers run at once
-    for a, b in sorted(spans):
-        if end is None or a > end:
-            covered, end = covered + int(b - a), b
-        elif b > end:
-            covered, end = covered + int(b - end), b
     ws = waits(run, pr)
-    gate = sum(w["s"] for w in ws if w["kind"] == "gate" and w["s"] is not None)
-    paused = sum(w["s"] for w in ws if w["kind"] == "paused" and w["s"] is not None)
+    lo, hi = ts_epoch(st.get("created")), ts_epoch(done)
+
+    def within(kind: str) -> Spans:
+        sp = [(ts_epoch(w["from"]), ts_epoch(w["to"])) for w in ws if w["kind"] == kind and w["s"] is not None]
+        return union([(max(a, lo), min(b, hi)) for a, b in sp] if wall is not None else sp)
+
+    covered = union([(max(a, lo), min(b, hi)) for a, b in spans] if wall is not None else spans)
+    gates = minus(within("gate"), covered)
+    pauses = minus(minus(within("paused"), covered), gates)
+    split = {"worker_covered_s": seconds(covered), "gate_s": seconds(gates), "paused_s": seconds(pauses)}
+    split["rest_s"] = NR if wall is None else wall - sum(split.values())
     adhoc = [r["duration_s"] for r in run.dispatches if r["adhoc"] and r["pr"] == pr and r["duration_s"] is not None]
     return {"created": st.get("created") or NR, "done": done or NR, "wall_s": NR if wall is None else wall,
-            "worker_s": worker, "worker_covered_s": covered, "gate_s": gate, "paused_s": paused,
-            "rest_s": NR if wall is None else wall - covered - gate - paused,
-            "open_waits": sum(1 for w in ws if w["s"] is None), "adhoc_s": sum(adhoc)}
+            "worker_s": worker, **split, "open_waits": sum(1 for w in ws if w["s"] is None), "adhoc_s": sum(adhoc)}
 
 
 def step_instances(run: Run, prs: "list[str]") -> "list[dict]":

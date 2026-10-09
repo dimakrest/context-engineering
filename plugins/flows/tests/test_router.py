@@ -2910,6 +2910,63 @@ class Report(unittest.TestCase):
         self.assertEqual((t["worker_s"], t["worker_covered_s"]), (1200 + 1200 + 600, 1200 + 1200))
         self.assertEqual(t["rest_s"], 4500 - 2400 - 840 - 300)
 
+    def test_a_pause_while_a_sibling_worker_runs_is_worker_time_and_the_rest_stays_positive(self):
+        state = self.copy()                                                     # B1's review runs through its check pause
+        st = json.loads((state / "chains/B1/state.json").read_text())
+        st["steps"][4]["attempts"][0]["started"] = "2026-01-12T09:50:00Z"
+        (state / "chains/B1/state.json").write_text(json.dumps(st))
+        page, m, _ = self.report(state)
+        t = m["time"]["B1"]
+        # wall 09:05:00 .. 10:20:00 (4500). Workers: contract 09:05:10 .. 09:25:10 (1200), implement 09:35:20 .. 09:55:20
+        # and review 09:50:00 .. 10:15:40 (1200 + 1540 summed, 2420 covered). Gates: accept 09:25:15 .. 09:35:15 (600),
+        # merge 10:15:45 .. 10:19:45 (240), outside any worker. The check pause 09:55:30 .. 10:00:30 is inside the review:
+        # worker time, so 0. The rest: 09:05:00 .. :10, 09:25:10 .. :15, 09:35:15 .. :20, 10:15:40 .. :45, 10:19:45 .. 10:20:00.
+        self.assertEqual((t["wall_s"], t["worker_s"], t["worker_covered_s"], t["gate_s"], t["paused_s"], t["rest_s"]),
+                         (4500, 1200 + 1200 + 1540, 1200 + 2420, 600 + 240, 0, 10 + 5 + 5 + 5 + 15))
+        self.assertEqual(t["worker_covered_s"] + t["gate_s"] + t["paused_s"] + t["rest_s"], t["wall_s"])
+        b1 = page.split('id="pr-B1"')[1].split("</section>")[0]
+        self.assertIn("<td>40 s", b1)
+        self.assertNotRegex(b1, r"[>(]-\d")                                   # no minus sign in the split
+
+    def test_the_time_split_is_a_partition_of_the_wall_clock(self):
+        """Generated runs: workers, gates and pauses that overlap, some outside the wall clock. Each part is >= 0, the
+        four add up to the wall clock, and each equals a count of the seconds it was given, by the fixed priority."""
+        import random
+        from types import SimpleNamespace
+        spec = spec_from_file_location("report_under_test", self.REPORT)
+        report = module_from_spec(spec)
+        spec.loader.exec_module(report)
+        base, rnd = 1768208400, random.Random(20261009)
+        at = lambda s: report.iso(base + s)
+        for case in range(300):
+            lo, hi = rnd.randint(0, 100), rnd.randint(200, 600)
+            atts = []
+            for _ in range(rnd.randint(0, 6)):
+                a = rnd.randint(-50, 650)
+                atts.append({"n": 1, "dispatch": f"d{len(atts)}", "started": at(a), "ended": at(a + rnd.randint(0, 200))})
+            lines, t = [], rnd.randint(-50, 100)
+            while t < 650:                                                      # paused / coordinator / complete, in order
+                kind = rnd.choice(["blocked", "failed", "check_failed", "coordinator", "coordinator", "complete"])
+                k, d = ("coordinator", "") if kind == "coordinator" else ("complete", "") if kind == "complete" else ("paused", kind)
+                lines.append({"t": at(t), "e": base + t, "pr": "P", "step": "s", "kind": k, "detail": d})
+                t += rnd.randint(1, 120)
+            run = SimpleNamespace(chains={"P": {"created": at(lo), "ended": at(hi), "status": "done",
+                                                "steps": [{"id": "s", "attempts": atts}]}},
+                                  journal=lines, dispatches=[], has_journal=True)
+            got = report.time_split(run, "P")
+            parts = [got[k] for k in ("worker_covered_s", "gate_s", "paused_s", "rest_s")]
+            self.assertTrue(all(p >= 0 for p in parts), (case, got))
+            self.assertEqual(sum(parts), hi - lo, (case, got))
+            ws = report.waits(run, "P")
+            inside = lambda sp, x: any(report.ts_epoch(a) - base <= x < report.ts_epoch(b) - base for a, b in sp)
+            work = [(a["started"], a["ended"]) for a in atts]
+            gate = [(w["from"], w["to"]) for w in ws if w["kind"] == "gate" and w["to"]]
+            pause = [(w["from"], w["to"]) for w in ws if w["kind"] == "paused" and w["to"]]
+            count = [0, 0, 0, 0]
+            for x in range(lo, hi):
+                count[0 if inside(work, x) else 1 if inside(gate, x) else 2 if inside(pause, x) else 3] += 1
+            self.assertEqual(parts, count, (case, got))
+
     def test_a_gate_wait_and_a_pause_never_include_each_other(self):
         state = self.copy()                                                     # a pause the coordinator never ended
         lines = (state / "journal.md").read_text().splitlines()

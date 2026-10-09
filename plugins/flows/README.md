@@ -424,9 +424,9 @@ from a worker's summary it takes only the number after `FINDINGS:` and the word 
 |---|---|---|
 | a. Wall clock per PR | `chains/<pr>/state.json` | `created` .. `ended` (a chain not done: not recorded) |
 | a. Worker time | `chains/<pr>/state.json` | `attempts[].started` .. `ended`, attempts with a dispatch |
-| a. Waiting at gates | `journal.md` | `paused: blocked` to the PR's next `coordinator:` line |
-| a. Paused | `journal.md` | any other `paused:` line to the PR's next `coordinator:` line; a pause another pause or `chain complete` ends first is counted as open, not as time |
 | a. Workers covered | `chains/<pr>/state.json` | the time at least one worker ran: a group's workers run at once, so their sum can pass the wall clock |
+| a. Waiting at gates | `journal.md` | `paused: blocked` to the PR's next `coordinator:` line, less the time a worker ran |
+| a. Paused | `journal.md` | any other `paused:` line to the PR's next `coordinator:` line, less the time a worker ran or a gate waited; a pause another pause or `chain complete` ends first is counted as open, not as time |
 | a. The rest | the above | wall − covered − gates − paused: starts, checks, scripts |
 | a. Ad hoc workers | `dispatches/<dispatch>.json` | `started` .. `settled`, shown apart from the chain's time |
 | b. Step durations | `chains/<pr>/state.json` | a PR's step: the sum of its attempts; median and max per step id |
@@ -448,6 +448,11 @@ A run whose collector never ran (no `logs/`) still gets its page: time, steps an
 `state.json` and `journal.md`, and the token section says not recorded. A prices file:
 `{"claude-opus-5-5": {"input": 15, "output": 75, "cache_creation": 18.75, "cache_read": 1.5}}`; none ships with the
 plugin, because prices change and belong to the owner.
+
+The four parts of a PR's time split its wall clock: each second goes to one part only, in a fixed order. A second
+some worker ran is worker time; of the others, one a gate waited is gate time, then one the chain was paused is
+paused time, and what is left is the rest. A pause while a sibling worker of the same group runs on (a start that
+failed rings at once) is worker time, so no part is negative and the four add up to the wall clock.
 
 ## What rings
 

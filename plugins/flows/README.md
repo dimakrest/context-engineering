@@ -32,7 +32,7 @@ Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-
 | `router/templates/smoke.json`, `router/specs/smoke-*.md` | A harmless chain that proves the router against real Orca: two workers at once, a question, a failure with a retry, a script step, a gate. |
 | `router/checks/*` | Checks that print one line, `OK …` or `NOT OK …`, and exit 0 or 1. |
 | `router/draft-pr.sh` | Opens the inner PR as a draft, so that step needs no model. Refuses `main` as the base. |
-| `tests/` | `test_router.py` (121 tests) and `fake-orca`, a stand-in for the Orca CLI. |
+| `tests/` | `test_router.py` (127 tests) and `fake-orca`, a stand-in for the Orca CLI. |
 | `skills/flow-run`, `skills/flow-status` | The two skills. |
 
 State lives in `$ROUTER_STATE` (default `$SCRATCH/router`, where `SCRATCH` is the run directory). `router.py --help`
@@ -145,8 +145,14 @@ Variables, lowest first: the profile's, the template's `vars`, the flow's, the P
 `STATE`, `DEF_DIR` (the template's directory), `KIT`, `CHECKS`, and `BASE_BRANCH` from `base`. Below them all,
 `SCRATCH` from the environment of `flow apply` fills in when nobody sets it. None of the router's own can be given in `vars`. A value may name another variable:
 `"WT": "{SCRATCH}/wt/{PR}"` is filled in. A name that no layer gives and the template's `"variables"` does not declare
-is refused as a typo. A declared name that nobody gives (`WT` most often) makes the PR wait: `flow show` says
-`waiting for: WT`, and the PR does not start until an apply gives it.
+is refused as a typo, and the line names the layer the value came from: `vars.X` for the flow's, `A1: vars.X`,
+`template inner-pr: vars.X`, `profile bell: vars.X`. A declared name that nobody gives (`WT` most often) makes the PR
+wait, also when only a value names it: `flow show` says `waiting for: WT`, and the PR does not start until an apply
+gives it.
+
+The order of `prs` is part of the version: the scheduler starts ready PRs in it, and `flow show` and the progress
+view list them in it. An apply that only reorders them is a new version, with `PRs reordered: B1, A1` in its history.
+A started PR may move too; the order only decides which ready PR takes the next free slot.
 
 The router's copy is `$ROUTER_STATE/flow.json`: the file as applied, plus keys only the router writes. A file given to
 `apply` may carry them; they are ignored.
@@ -173,7 +179,8 @@ Each problem is one line, and a refusal changes nothing: no version, no history 
   - a settled step (one that is not pending, or that its runner is about to start) edited, removed or moved, or a
     step put before it;
   - a changed value of a variable a settled step used: the `{NAME}`s of its definition and of its spec, `WT` and
-    `KIT` for a worker step, `KIT` for a step with a command;
+    `KIT` for a worker step, `KIT` for a step with a command. The spec's names are read from the spec as it is on
+    disk at the apply, not as the step ran: the copy's snapshot holds the templates and the profile, not the specs;
   - a changed `after`, or the PR removed.
 
   A pending step may be edited, added, removed or reordered freely. A chain started with `router.py chain` cannot be
@@ -429,6 +436,19 @@ Every script prints its header with `--help` and exits 2 on bad usage.
   rings.
 
 ## Tested how
+
+2026-10-09, the flow file (M1a), review round 1.
+
+- `cd plugins/flows && python3 tests/test_router.py`: 127 tests, green (121 before). The 6 new ones:
+  `FlowVersions.test_a_reorder_of_the_prs_is_a_new_version`; `FlowScheduler`: a value that names a declared `{WT}`
+  nobody gives waits for it, and a runner whose chain completes starts the next PR itself (the daemon's long-poll
+  set to 30 s); `FlowReread`: the worktree and the kit of a settled worker step cannot change, and the runner waits
+  for `flow.lock` at a step boundary; `FlowCompat`: a profile's `{SCRATCH}`, `{WT}` and `{PR}` are filled by the flow
+  (`bell.json`, the rendered `TEST_CMD` and `RULES` in the chain's variables). `test_a_value_that_names_an_unknown_variable`
+  also checks that a profile's and a template's bad value name their layer.
+- 8 mutations, each caught by the test written for it: values left unfilled, no scheduler pass from a finishing
+  runner, no `WT`/`KIT` for a worker step, no wait for a declared name inside a value, a runner boundary without
+  `flow.lock`, no order comparison, and two that drop the layer from a problem line.
 
 2026-10-09, the flow file (M1a).
 

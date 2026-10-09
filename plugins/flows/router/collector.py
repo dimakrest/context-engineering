@@ -18,7 +18,8 @@ What it writes, under <state>/logs/ only (never into a repository):
                      start receipt differed), started, ended, outcome, flow_version, cause, worktree, head_before,
                      head_after, the check lines, the release result, and where every file below came from
     orca-read.json   every `orca orchestration worker-read` page, cursor followed until none or a page repeats,
-                     contentComplete and clipping kept; {"status": "not available"} when the archive never answered
+                     contentComplete and clipping kept; {"status": "not available", "tries": <calls made>} when the
+                     archive never answered; read afresh once when Orca answers source_changed ("restarted")
     events/          the dispatch's events/*.json and its liveness file, copied
     session.jsonl    the matched agent session file (Claude Code or Codex), copied byte for byte; absent when no
                      single file matches, and meta.json says why: "no candidate", "ambiguous: <n> candidates",
@@ -32,8 +33,10 @@ What it writes, under <state>/logs/ only (never into a repository):
                      wrote no token_count line). Codex counts cached input inside input.
   index.jsonl      one row per dispatch: {dispatch, task, pr, step, n, agent, model, effort, started, ended,
                    outcome, cause, flow_version, duration_s, tokens, session {provider, path, match, candidates},
-                   head_before, head_after, checks_ok, orca {contentComplete, clipping}}
-  A dispatch already collected (its meta.json exists) is skipped unless --force, so collecting is idempotent.
+                   head_before, head_after, checks_ok, orca {contentComplete, clipping}}; tokens are the totals
+  A dispatch already collected (its meta.json exists) is skipped unless --force, so collecting is idempotent. A
+  dispatch another collector is collecting is skipped and counted "locked"; the first collector to meet that lock
+  journals it; a lock older than 2 hours was left by a collector that died and is taken over.
 
 Session matching. Candidates are session files whose cwd is the dispatch's worktree:
   Claude Code  <claude-projects>/<cwd with "/" replaced by "-">/<session>.jsonl, and the cwd inside the file agrees.
@@ -47,8 +50,9 @@ Session matching. Candidates are session files whose cwd is the dispatch's workt
 Privacy: the copies stay in the state directory. index.jsonl and meta.json hold ids, paths, timestamps, token counts
 and the router's own check lines, never transcript text (nor a worker_done's subject or body).
 
-Errors: a dispatch that cannot be collected prints "collector: <dispatch>: <why>" on stderr, journals that line in
-<state>/journal.md, and the exit code is 1; the other dispatches are still collected.
+Errors: a dispatch that cannot be collected, for any reason, prints "collector: <dispatch>: <why>" on stderr, journals
+that line in <state>/journal.md (not in a dry run), leaves no temporary directory, and the exit code is 1; the other
+dispatches are still collected.
 
 Env (the flags win): FLOWS_CLAUDE_PROJECTS (default ~/.claude/projects), FLOWS_CODEX_SESSIONS (default
 ~/.codex/sessions), ORCA_CLI_COMMAND (default orca), FLOWS_ORCA_RETRY_S (the pause between two worker-read tries when
@@ -57,6 +61,7 @@ the archive answers archive_not_ready; default 2).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import fcntl
 import json
@@ -71,10 +76,13 @@ from pathlib import Path
 SLACK_S = 120          # the window around a dispatch a session file must overlap
 NEAR_START_S = 180     # several candidates: the one that began this soon after the start
 NOT_READY = "archive_not_ready"
+SOURCE_CHANGED = "source_changed"   # the real CLI's code: "start a fresh read" (worker-read --help)
 READ_TRIES = 4         # the first worker-read page, and 3 retries while the archive is not ready
 RETRY_S = float(os.environ.get("FLOWS_ORCA_RETRY_S", "2"))
 MAX_PAGES = 500
 NR = "not recorded"
+LOCK_EXPIRY_S = 7200   # a dispatch's lock this old was left by a collector that died
+LOCKED = "locked by another collector"
 VAR_RE = re.compile(r"(?<!\$)\{([A-Z][A-Z0-9_]*)\}")
 
 
@@ -228,10 +236,12 @@ def all_dispatches(state: Path) -> "list[str]":
         d = (read_json(p) or {}).get("dispatch")
         if d:
             seen[d] = None
-    for p in sorted((state / "chains").glob("*/state.json")):
-        for step in (read_json(p) or {}).get("steps") or []:
-            for att in step.get("attempts") or []:
-                if att.get("dispatch"):
+    for p in sorted((state / "chains").glob("*/state.json")):   # a malformed chain lists none; its dispatches fail alone
+        steps = (read_json(p) or {}).get("steps")
+        for step in steps if isinstance(steps, list) else []:
+            atts = step.get("attempts") if isinstance(step, dict) else None
+            for att in atts if isinstance(atts, list) else []:
+                if isinstance(att, dict) and att.get("dispatch"):
                     seen[att["dispatch"]] = None
     return list(seen)
 
@@ -530,39 +540,49 @@ def orca_code(d: "dict | None", why: str) -> str:
 
 def orca_read(orca: str, env: "dict[str, str]", dispatch: str) -> dict:
     """Every page of the bounded archive, in order. A first page that says archive_not_ready (or cannot be read) is
-    asked again up to 3 times; then the archive is recorded as not available, never as an empty transcript."""
+    asked again up to 3 times; then the archive is recorded as not available, never as an empty transcript. A page
+    that answers source_changed (the transcript moved under the cursor) starts the read afresh, once; a second one
+    is recorded as that page's error, and the pages read so far are kept."""
     base = ["orchestration", "worker-read", "--dispatch", dispatch, "--source", "transcript", "--limit", "50"]
-    out: dict = {"dispatch": dispatch, "status": "ok", "pages": []}
-    cursor, seen_cursors, seen_ids = None, set(), set()
-    for page_no in range(MAX_PAGES):
-        tries = READ_TRIES if page_no == 0 else 1
-        for t in range(tries):
-            d, why = orca_call(orca, base + (["--cursor", cursor] if cursor else []), env)
-            code = orca_code(d, why)
-            if not code or code not in (NOT_READY, "unreadable", "timed out") or t == tries - 1:
+    out: dict = {}
+    for fresh in range(2):
+        out = {"dispatch": dispatch, "status": "ok", "pages": []}
+        if fresh:
+            out["restarted"] = SOURCE_CHANGED
+        cursor, seen_cursors, seen_ids, code = None, set(), set(), ""
+        for page_no in range(MAX_PAGES):
+            tries = READ_TRIES if page_no == 0 else 1
+            for t in range(tries):
+                d, why = orca_call(orca, base + (["--cursor", cursor] if cursor else []), env)
+                code = orca_code(d, why)
+                if not code or code not in (NOT_READY, "unreadable", "timed out") or t == tries - 1:
+                    break
+                time.sleep(RETRY_S)
+            if code:
+                if code == SOURCE_CHANGED and not fresh:
+                    break
+                if page_no == 0:
+                    out.update(status="not available", error=code, tries=t + 1)
+                else:
+                    out.update(error=f"page {page_no + 1}: {code}")
                 break
-            time.sleep(RETRY_S)
-        if code:
-            if page_no == 0:
-                out.update(status="not available", error=code, tries=tries)
-            else:
-                out.update(error=f"page {page_no + 1}: {code}")
+            res = (d or {}).get("result") or {}
+            ids = tuple(m.get("id") for m in ((res.get("transcript") or {}).get("messages") or []) if isinstance(m, dict))
+            if page_no and ids and ids in seen_ids:
+                out["stopped"] = "a page repeated"
+                break
+            seen_ids.add(ids)
+            out["pages"].append(res)
+            nxt = res.get("cursor")
+            if not nxt:
+                break
+            if nxt in seen_cursors or nxt == cursor:
+                out["stopped"] = "a cursor repeated"
+                break
+            seen_cursors.add(nxt)
+            cursor = nxt
+        if code != SOURCE_CHANGED or fresh:
             break
-        res = (d or {}).get("result") or {}
-        ids = tuple(m.get("id") for m in ((res.get("transcript") or {}).get("messages") or []) if isinstance(m, dict))
-        if page_no and ids and ids in seen_ids:
-            out["stopped"] = "a page repeated"
-            break
-        seen_ids.add(ids)
-        out["pages"].append(res)
-        nxt = res.get("cursor")
-        if not nxt:
-            break
-        if nxt in seen_cursors or nxt == cursor:
-            out["stopped"] = "a cursor repeated"
-            break
-        seen_cursors.add(nxt)
-        cursor = nxt
     pages = out["pages"]
     if pages:
         out.update(provider=pages[0].get("provider"), messages=sum(len((p.get("transcript") or {}).get("messages") or []) for p in pages),
@@ -627,9 +647,19 @@ class Collector:
         try:
             lockdir.mkdir()
         except FileExistsError:
-            if time.time() - lockdir.stat().st_mtime < 7200:
-                return "being collected by another collector"
-            lockdir.rmdir()   # left by a collector that died
+            since = lockdir.stat().st_mtime
+            if time.time() - since < LOCK_EXPIRY_S:
+                seen = lockdir / "reported"   # journaled once per lock, not on every collect that meets it
+                if not seen.exists():
+                    with contextlib.suppress(OSError):
+                        seen.write_text(now() + "\n")
+                        os.utime(lockdir, (since, since))   # the marker must not make the lock look younger
+                        journal(self.state, info["pr"], info["step"], info["task"], d,
+                                f"collector: {d}: locked by another collector since "
+                                f"{datetime.datetime.fromtimestamp(since, datetime.timezone.utc):%Y-%m-%dT%H:%M:%SZ}; "
+                                f"skipped (a lock older than {LOCK_EXPIRY_S // 3600} h is taken over)")
+                return LOCKED
+            shutil.rmtree(lockdir, ignore_errors=True)   # left by a collector that died
             lockdir.mkdir()
         try:
             if (final / "meta.json").exists() and not self.force:
@@ -637,12 +667,18 @@ class Collector:
                 return "already collected"
             return self._collect(info, final)
         finally:
-            lockdir.rmdir()
+            shutil.rmtree(lockdir, ignore_errors=True)
 
     def _collect(self, info: dict, final: Path) -> str:
-        d = info["dispatch"]
         tmp = final.with_name(f".{final.name}.{os.getpid()}.tmp")
         shutil.rmtree(tmp, ignore_errors=True)
+        try:
+            return self._gather(info, final, tmp)
+        finally:   # gone once renamed into place; a failed collection leaves nothing behind
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def _gather(self, info: dict, final: Path, tmp: Path) -> str:
+        d = info["dispatch"]
         (tmp / "events").mkdir(parents=True)
         files: dict = {}
 
@@ -761,51 +797,49 @@ def main(argv: "list[str] | None" = None) -> int:
         targets = [a.dispatch]
     else:
         targets = all_dispatches(state)
-    counts = {"collected": 0, "skipped": 0, "failed": 0, "not settled": 0}
+    counts = {"collected": 0, "skipped": 0, "locked": 0, "failed": 0, "not settled": 0}
     verdicts = {"unique": 0, "ambiguous": 0, "none": 0}
-    for d in targets:
-        info = c.wait_settled(d, a.wait_settled) if a.dispatch and a.wait_settled and not a.dry_run else describe(state, d)
+
+    def one(d: str, info: dict) -> None:
+        info.update(describe(state, d) if not (a.dispatch and a.wait_settled and not a.dry_run) else c.wait_settled(d, a.wait_settled))
         if a.pr and info["pr"] != a.pr:
-            continue
+            return
         if not info["known"]:
-            print(f"collector: {d}: the router has no record of this dispatch", file=sys.stderr)
-            counts["failed"] += 1
-            continue
+            raise CollectError("the router has no record of this dispatch")
         if not info["settled"]:
             print(f"skip {d}: not settled")
             counts["not settled"] += 1
-            continue
+            return
         if a.dry_run:
-            try:
-                v = c.dry(info)
-            except CollectError as e:
-                print(f"collector: {d}: {e}", file=sys.stderr)
-                counts["failed"] += 1
-                continue
+            v = c.dry(info)
             verdicts[v["match"]] += 1
             print(f"{d} · {info['pr'] or '-'} {info['step'] or ('adhoc' if info['adhoc'] else '-')} · {v['provider'] or '-'} · "
                   f"{v['match']}" + (f" ({v['why']})" if v["why"] else ""))
-            continue
-        try:
-            what = c.collect(info)
-        except (CollectError, OSError, ValueError) as e:
-            why = f"collector: {d}: {oneline(e, 300)}"
-            print(why, file=sys.stderr)
-            journal(state, info["pr"], info["step"], info["task"], d, why)
-            counts["failed"] += 1
-            continue
-        if what in ("already collected", "being collected by another collector"):
-            counts["skipped"] += 1
+            return
+        what = c.collect(info)
+        if what in ("already collected", LOCKED):
+            counts["locked" if what == LOCKED else "skipped"] += 1
             print(f"skip {d}: {what}")
         else:
             counts["collected"] += 1
             print(f"collected {d} · {info['pr'] or '-'} {info['step'] or '-'} · {what}")
+
+    for d in targets:
+        info: dict = {}
+        try:
+            one(d, info)
+        except Exception as e:   # whatever one dispatch raises is its own failure: said, journaled, and the rest go on
+            why = f"collector: {d}: " + oneline(e if isinstance(e, (CollectError, OSError)) else f"{type(e).__name__}: {e}", 300)
+            print(why, file=sys.stderr)
+            if not a.dry_run and info.get("known", True):
+                journal(state, info.get("pr", ""), info.get("step", ""), info.get("task", ""), d, why)
+            counts["failed"] += 1
     if a.dry_run:
         print(f"dry run: {sum(verdicts.values())} settled dispatches · unique {verdicts['unique']} · ambiguous {verdicts['ambiguous']}"
               f" · none {verdicts['none']} · not settled {counts['not settled']} · failed {counts['failed']} · nothing copied")
     else:
         print(f"{'OK' if not counts['failed'] else 'NOT OK'} collected {counts['collected']} · skipped {counts['skipped']} · "
-              f"not settled {counts['not settled']} · failed {counts['failed']}")
+              f"locked {counts['locked']} · not settled {counts['not settled']} · failed {counts['failed']}")
     return 1 if counts["failed"] else 0
 
 

@@ -2037,6 +2037,97 @@ class Collector(RouterCase):
         self.assertFalse((self.state / "logs").exists())
         self.assertFalse((self.fake / "reads.log").exists())
 
+    def test_a_page_that_repeats_under_a_new_cursor_ends_the_read(self):
+        msgs = lambda *ids: [{"id": i, "role": "assistant", "blocks": []} for i in ids]
+        (self.fake / "scenario.json").write_text(json.dumps({"rules": [], "reads": [
+            {"match": "ctx_rep", "pages": [{"messages": msgs("m1", "m2")}, {"messages": msgs("m3")}, {"messages": msgs("m3")},
+                                           {"messages": msgs("m3")}, {"messages": msgs("m4")}]}]}))
+        self.seed("ctx_rep")
+        rc, out = self.collect("--dispatch", "ctx_rep")
+        self.assertEqual(rc, 0, out)
+        read = json.loads((self.logs("ctx_rep") / "orca-read.json").read_text())
+        self.assertEqual([[m["id"] for m in p["transcript"]["messages"]] for p in read["pages"]], [["m1", "m2"], ["m3"]])
+        self.assertEqual((read["stopped"], read["messages"]), ("a page repeated", 3))
+        self.assertEqual(self.reads(), ["ctx_rep -", "ctx_rep cur1", "ctx_rep cur2"])     # each cursor new, the third page not kept
+
+    def test_source_changed_starts_the_read_afresh_once(self):
+        msgs = lambda *ids: [{"id": i, "role": "assistant", "blocks": []} for i in ids]
+        pages = [{"messages": msgs("m1")}, {"messages": msgs("m2")}, {"messages": msgs("m3")}]
+        (self.fake / "scenario.json").write_text(json.dumps({"rules": [], "reads": [
+            {"match": "ctx_once", "source_changed": 1, "pages": pages}, {"match": "ctx_twice", "source_changed": 2, "pages": pages}]}))
+        self.seed("ctx_once")
+        self.seed("ctx_twice", step="validator")
+        rc, out = self.collect("--all")
+        self.assertEqual(rc, 0, out)
+        once = json.loads((self.logs("ctx_once") / "orca-read.json").read_text())
+        self.assertEqual([[m["id"] for m in p["transcript"]["messages"]] for p in once["pages"]], [["m1"], ["m2"], ["m3"]])
+        self.assertEqual((once["status"], once["restarted"], once.get("error")), ("ok", "source_changed", None))
+        self.assertEqual([l for l in self.reads() if l.startswith("ctx_once")],
+                         ["ctx_once -", "ctx_once cur1", "ctx_once -", "ctx_once cur1", "ctx_once cur2"])
+        twice = json.loads((self.logs("ctx_twice", step="validator") / "orca-read.json").read_text())   # a second one is recorded
+        self.assertEqual([[m["id"] for m in p["transcript"]["messages"]] for p in twice["pages"]], [["m1"]])
+        self.assertEqual((twice["restarted"], twice["error"]), ("source_changed", "page 2: source_changed"))
+
+    def test_tries_counts_the_calls_made(self):
+        (self.fake / "scenario.json").write_text(json.dumps({"rules": [], "reads": [
+            {"match": "ctx_gone", "error": "dispatch_not_found"}, {"match": "ctx_never", "not_ready": 99}]}))
+        self.seed("ctx_gone")
+        self.seed("ctx_never", step="validator")
+        self.assertEqual(self.collect("--all")[0], 0)
+        gone = json.loads((self.logs("ctx_gone") / "orca-read.json").read_text())
+        self.assertEqual((gone["status"], gone["error"], gone["tries"]), ("not available", "dispatch_not_found", 1))   # not retryable
+        never = json.loads((self.logs("ctx_never", step="validator") / "orca-read.json").read_text())
+        self.assertEqual((never["error"], never["tries"]), ("archive_not_ready", 4))
+        self.assertEqual([l.split()[0] for l in self.reads()].count("ctx_gone"), 1)
+
+    def test_a_dispatch_that_fails_in_any_way_is_journaled_and_the_rest_are_collected(self):
+        self.seed("ctx_ok")
+        bad = self.state / "chains" / "p0" / "state.json"           # a step that is not an object: describe() raises AttributeError
+        bad.parent.mkdir(parents=True)
+        bad.write_text(json.dumps({"pr": "p0", "steps": ["not a step"]}))
+        (self.state / "dispatches" / "ctx_bad.json").write_text(json.dumps(
+            {"dispatch": "ctx_bad", "pr": "p0", "step": "implement", "started": "2026-01-10T10:00:00Z", "settled": "2026-01-10T10:30:00Z"}))
+        rc, out = self.collect("--all")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("collected ctx_ok", out)
+        self.assertIn("NOT OK collected 1 · skipped 0 · locked 0 · not settled 0 · failed 1", out)
+        line = "collector: ctx_bad: AttributeError: 'str' object has no attribute 'get'"
+        self.assertEqual(self.journal().count(line), 1, self.journal())
+        rc, out = self.collect("--dispatch", "ctx_bad", "--wait-settled", "0.2")   # the daemon's hook: describe() inside the wait
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(self.journal().count(line), 2, self.journal())
+
+    def test_a_held_lock_is_reported_and_journaled_once(self):
+        self.seed("ctx_a")
+        lock = self.state / "logs" / ".locks" / "ctx_a"
+        lock.mkdir(parents=True)
+        for _ in range(2):
+            rc, out = self.collect("--dispatch", "ctx_a")
+            self.assertEqual(rc, 0, out)
+            self.assertIn("skip ctx_a: locked by another collector", out)
+            self.assertIn("OK collected 0 · skipped 0 · locked 1 · not settled 0 · failed 0", out)
+        self.assertEqual(self.journal().count("collector: ctx_a: locked by another collector since"), 1, self.journal())
+        self.assertFalse(self.logs("ctx_a").exists())
+        old = time.time() - 3 * 3600                                     # a lock older than 2 hours is a dead collector's
+        os.utime(lock, (old, old))
+        rc, out = self.collect("--dispatch", "ctx_a")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("OK collected 1 · skipped 0 · locked 0", out)
+        self.assertFalse(lock.exists())
+
+    def test_a_failed_collection_leaves_no_temporary_directory(self):
+        self.seed("ctx_a")
+        ev = next((self.state / "events" / "ctx_a").iterdir())
+        ev.chmod(0)                                                      # the events copy fails after orca-read.json is written
+        rc, out = self.collect("--dispatch", "ctx_a")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("collector: ctx_a: [Errno 13] Permission denied", out)
+        self.assertEqual(list((self.state / "logs" / "p1" / "implement").iterdir()), [])   # no .ctx_a.<pid>.tmp
+        ev.chmod(0o644)
+        rc, out = self.collect("--dispatch", "ctx_a")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual([p.name for p in (self.state / "logs" / "p1" / "implement").iterdir()], ["ctx_a"])
+
     # -- the daemon's hook
     def session_for(self, wt, sid="99999999-aaaa-4aaa-8aaa-000000000009", base=None, at=(1, 2)):
         """A Claude session that ran in wt, its two lines at base + at seconds (base: now), with the sentinel in it."""

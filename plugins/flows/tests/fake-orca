@@ -18,12 +18,13 @@ State lives in $FAKE_ORCA_DIR:
   starts.jsonl, releases.log, replies.jsonl      what the router asked for
   callers.log     the terminal handle each run-use and run-current call came from
   workers.json    the rows worker-list answers with (default: none)
-  scenario.json "reads": [{"match": "<regex on the dispatch>", "not_ready": <n>, "loop": false,
+  scenario.json "reads": [{"match": "<regex on the dispatch>", "not_ready": <n>, "source_changed": <n>, "loop": false,
                            "pages": [{"messages": [{"id", "role", "blocks"}], "clipping": [...]}, ...]}]
                   worker-read --source transcript answers page 1, then follows --cursor. The last page has no cursor
                   (with "loop", its cursor names itself); contentComplete is false unless a page says otherwise.
-                  The first n calls without a cursor answer the error archive_not_ready. No rule: one empty,
-                  complete page.
+                  The first n calls without a cursor answer the error archive_not_ready; the first n calls with
+                  a cursor answer source_changed (the real CLI's code: "start a fresh read"); "error": "<code>" answers
+                  every call with that code. No rule: one empty, complete page.
   reads.log       one line per worker-read: the dispatch and the cursor asked for
   fail_checks     a number: that many checks answer runtime_unavailable
   lost_checks     a number: that many checks answer ok with connectionLost true and no message
@@ -185,10 +186,17 @@ def worker_read(args):
             f.write(f"{dispatch} {cursor or '-'}\n")
         sc = json.loads((D / "scenario.json").read_text()) if (D / "scenario.json").exists() else {}
         rule = next((r for r in sc.get("reads") or [] if re.search(r["match"], dispatch or "")), None)
+        if rule and rule.get("error"):
+            out(error={"code": rule["error"], "message": f"fake: {rule['error']}", "data": {"dispatchId": dispatch}}, code=1)
         if rule and not cursor and rule.get("not_ready", 0) > 0:
             rule["not_ready"] -= 1
             (D / "scenario.json").write_text(json.dumps(sc))
             out(error={"code": "archive_not_ready", "message": "fake: the transcript archive is not written yet",
+                       "data": {"dispatchId": dispatch}}, code=1)
+        if rule and cursor and rule.get("source_changed", 0) > 0:
+            rule["source_changed"] -= 1
+            (D / "scenario.json").write_text(json.dumps(sc))
+            out(error={"code": "source_changed", "message": "fake: the transcript changed under the cursor",
                        "data": {"dispatchId": dispatch}}, code=1)
     pages = (rule or {}).get("pages") or [{"messages": []}]
     i = int(cursor[3:]) if cursor and cursor.startswith("cur") else 0

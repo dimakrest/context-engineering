@@ -280,7 +280,7 @@ router/templates | sort -u`, plus the profile values):
 | `{SCRATCH}/intent/<ISSUE>.md` | the coordinator: the sub-issue's "For the agent" comment, one file per sub-issue | create it for every PR's `ISSUE` |
 | `{SCRATCH}/plan/` | the coordinator: the run's plan, which the intent overrides | optional |
 | `{SCRATCH}/contracts/`, `ledger/`, `reviews/`, `pr/`, `work/` | the chain's workers (contract, ledger, reviews, PR body, throwaway copies) | nothing: workers create them |
-| the `RULES` file (`bell`: `{SCRATCH}/briefs/rules-worker.md`, until M0 hardcoded in every spec) | the coordinator | create it when `RULES` is not `none` |
+| the `RULES` file (`bell`: `{SCRATCH}/briefs/rules-worker.md`, until M1b hardcoded in every spec) | the coordinator | create it when `RULES` is not `none` |
 | the scripts `LINT_CMD`, `TEST_CMD`, `EXTRA_SUITE` and `COMMIT_CMD` name (`bell`: `{SCRATCH}/bin/ci-lint-changed.sh`, `locked-commit.sh`, `pytest-limited.sh`, `bounded.sh`; the lint script was hardcoded in the validator spec) | the coordinator, copied from the repository's tooling | create each one the profile names |
 
 `router/templates/inner-pr.json`'s `"files"` lists what each step writes.

@@ -1,0 +1,19 @@
+{
+ "title": "Move the payments client to v3",
+ "slots": 2,
+ "start": "manual",
+ "templates": {"inner-pr": "../../router/templates/inner-pr.json"},
+ "profile": "../../router/profiles/python.json",
+ "vars": {"RUN_CONTEXT": "The payments client moves from v2 to v3 (issue 40).", "WT": "{SCRATCH}/wt/{PR}"},
+ "prs": [
+  {"id": "A1", "part": "Part 1 · Dependencies", "title": "Pin the v3 client next to v2", "base": "payments-v3",
+   "after": [], "template": "inner-pr",
+   "vars": {"ISSUE": "41", "TITLE": "A1: pin the v3 client next to v2", "TESTS": "", "LEDGER": ""}},
+  {"id": "B1", "part": "Part 2 · Callers", "title": "Switch the checkout flow to the v3 client", "base": "payments-v3",
+   "after": ["A1"], "template": "inner-pr",
+   "vars": {"ISSUE": "42", "TITLE": "B1: switch the checkout flow to the v3 client", "IMPL_EFFORT": "xhigh"}},
+  {"id": "C1", "part": "Part 3 · Cleanup", "title": "Remove the v2 client and its adapter", "base": "payments-v3",
+   "after": ["B1"], "template": "inner-pr",
+   "vars": {"ISSUE": "43", "TITLE": "C1: remove the v2 client and its adapter"}}
+ ]
+}

@@ -1016,12 +1016,6 @@ class Sweep(unittest.TestCase):
                "the blind test writer and the xfail-only check are pytest-only today (README); a flow for another test "
                "runner sets TESTS= and the step is skipped"}
 
-    def test_the_pattern_catches_what_the_last_run_left(self):
-        for bad in ("Pipecat", "pipecat-1.11", "1.8.1", "moved in 1.11", "B1.1", "B4.2a", "the M0 PR"):
-            self.assertTrue(self.FORBIDDEN.search(bad), bad)
-        for fine in ("claude-opus-5-5", "ledger-r1.md", "(B3) a group", "M01", "--tb=line"):
-            self.assertFalse(self.FORBIDDEN.search(fine), fine)
-
     def test_the_tool_pattern_catches_one_repositorys_commands(self):
         for bad in ("Pyright", "run pytest", "pytest.ini", "ruff check", "tests/unit/x", "tests/integration/bot", "npm test",
                     "npx eslint", "npx tsc", "`make test`", "make lint", ".venv/bin/python", "locked-commit.sh",

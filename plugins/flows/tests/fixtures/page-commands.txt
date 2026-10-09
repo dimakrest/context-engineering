@@ -1,0 +1,45 @@
+# The commands on docs/FLOWS_GETTING_STARTED.html, in the page's order, each once: the page shows these and no other
+# (Skills.test_the_getting_started_page_shows_the_listed_commands_only). Every one was run in the M5 pilot or with
+# it, as written here; a <placeholder> stands for one argument. FLOWS_PILOT_LOG=<the pilot's commands.log> checks
+# that against the log (Skills.test_every_listed_page_command_is_in_the_pilots_command_log), which stays outside
+# the repository. A line ending in "# not run in the pilot" is the exception (the install line and the two skills),
+# and the page says so next to each place it shows it.
+mkdir -p $SCRATCH/out
+orca orchestration run-create --objective "flows M5 smoke pilot" --json
+python3 $R init
+orca worktree create --name flows-pilot --repo path:<the repository's main checkout> --base-branch origin/orca-router --setup skip --no-parent --json
+python3 $R flow apply $SCRATCH/flow.json --dry-run
+python3 $R flow apply $SCRATCH/flow.json --by m5-worker --note "the M5 smoke pilot"
+python3 $R page --open
+python3 $R flow show
+python3 $R wait --timeout-min 8
+python3 $R reply msg_8dd7dea7db5e PASS
+python3 $R retry smoke1 --note "write the word OK into flaky.txt in the target directory"
+python3 $R resume smoke1
+python3 $R status
+orca snapshot --page <page id>
+orca click --page <page id> --element <Edit the flow>
+orca drag --page <page id> --from <flaky chip> --to <record chip>
+orca click --page <page id> --element <Apply…>
+orca fill --page <page id> --element <why> --value pilot-drag-1
+orca click --page <page id> --element <Apply as v2>
+python3 $R collect --all --force
+python3 $R collect --dry-run
+python3 $R report --metrics $ROUTER_STATE/metrics.json
+orca tab create --url file://$ROUTER_STATE/report.html --json
+/flows:flow-report  # not run in the pilot
+/flows:flow-plan  # not run in the pilot
+python3 $R stop --all
+orca worktree rm --worktree path:<the worktree's path> --json
+orca orchestration --help
+python3 --version
+/plugin install flows@dimakrest-context-engineering  # not run in the pilot
+python3 $R flow apply <file> --dry-run
+python3 $R flow apply <file> --by <you> --note "<why>"
+python3 $R flow history
+python3 $R wait --timeout-min <n>
+python3 $R reply <id> "<answer>"
+python3 $R retry <pr> --note "<why>"
+python3 $R resume <pr>
+python3 $R collect --all
+python3 $R report

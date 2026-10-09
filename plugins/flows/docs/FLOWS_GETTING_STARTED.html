@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flows — Getting Started</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#151b23; --panel2:#1c232d; --line:#2a3441;
+    --ink:#e6edf3; --dim:#9aa7b4; --faint:#6e7c8c;
+    --a1:#7aa2f7; --a2:#f7768e; --a3:#9ece6a; --a4:#e0af68; --a5:#bb9af7; --a6:#2ac3de;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f6f8fa; --panel:#fff; --panel2:#f0f3f6; --line:#d8dee4;
+           --ink:#1c2128; --dim:#57606a; --faint:#8b949e;
+           --a1:#3b5bdb; --a2:#c9184a; --a3:#2f7a34; --a4:#a86a00; --a5:#7048e8; --a6:#0b7285; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:48px 16px 96px}
+  header{border-bottom:1px solid var(--line);padding-bottom:28px;margin-bottom:20px}
+  .kicker{font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.18em;
+          text-transform:uppercase;color:var(--a1);margin-bottom:14px}
+  h1{font-size:clamp(28px,4.2vw,42px);line-height:1.12;margin:0 0 14px;letter-spacing:-.02em}
+  .sub{color:var(--dim);max-width:76ch;margin:0}
+  nav{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 48px}
+  nav a{font:600 12px/1 ui-monospace,Menlo,monospace;color:var(--dim);text-decoration:none;
+        border:1px solid var(--line);border-radius:20px;padding:8px 13px;background:var(--panel)}
+  nav a:hover{color:var(--a1);border-color:var(--a1)}
+  h2{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);
+     font-weight:700;margin:0 0 20px;padding-top:10px;border-top:1px solid var(--line)}
+  section{margin-bottom:64px;scroll-margin-top:20px}
+  h3{font-size:19px;margin:28px 0 10px;letter-spacing:-.01em}
+  p{margin:0 0 14px;max-width:82ch}
+  figure{margin:0 0 24px;background:var(--panel);border:1px solid var(--line);
+         border-radius:12px;padding:20px;overflow-x:auto}
+  figcaption{font-size:13px;color:var(--faint);margin-top:14px;text-align:center}
+  svg{display:block;margin:0 auto;max-width:100%;height:auto}
+  .t{font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:var(--ink)}
+  .s{font:11.5px ui-monospace,Menlo,monospace;fill:var(--dim)}
+  .x{font:10px ui-monospace,Menlo,monospace;fill:var(--faint)}
+  .box{fill:var(--panel2);stroke:var(--line)}
+  .hot{fill:var(--panel2);stroke:var(--a4);stroke-width:1.5}
+  .arr{stroke:var(--dim);stroke-width:1.4;fill:none}
+  .arr2{stroke:var(--a4);stroke-width:1.4;fill:none;stroke-dasharray:4 3}
+  table{width:100%;border-collapse:collapse;font-size:14.5px}
+  .tbl{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:18px}
+  th{text-align:left;font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.1em;text-transform:uppercase;
+     color:var(--faint);padding:14px 16px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:12px 16px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--panel2);padding:2px 6px;
+       border-radius:4px;color:var(--a6)}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;overflow-x:auto;
+      font:13px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink);margin:0 0 18px}
+  pre code{background:none;padding:0;color:inherit}
+  .cf{color:var(--faint)} .c3{color:var(--a3)} .c2{color:var(--a2)} .c4{color:var(--a4)}
+  .step{display:grid;grid-template-columns:44px 1fr;gap:14px;margin-bottom:28px}
+  .num{width:36px;height:36px;border-radius:50%;border:1.5px solid var(--a1);color:var(--a1);
+       display:flex;align-items:center;justify-content:center;font:700 14px ui-monospace,Menlo,monospace}
+  .step > div{min-width:0}
+  .callout{border-left:3px solid var(--a4);background:var(--panel);border-radius:0 10px 10px 0;padding:14px 18px;margin:18px 0}
+  .callout.ok{border-color:var(--a3)}
+  @media (max-width:600px){ .step{grid-template-columns:1fr} .num{display:none} }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="kicker">flows · getting started</div>
+  <h1>Your first flow: the smoke chain on real Orca</h1>
+  <p class="sub">One PR, five Sonnet workers, a question, a failure and its retry, a script step and a gate, in about
+  three minutes. Every command below was run on real Orca (1.4.223) on 2026-10-09 but three, each marked "not run in
+  the pilot": the plugin install line and the skills /flows:flow-report and /flows:flow-plan. The outputs are what
+  it printed, with this machine's paths replaced by variables. <code>FLOWS.md</code> next to this page is the reference.</p>
+</header>
+
+<nav>
+  <a href="#loop">1 · The loop</a><a href="#state">2 · The state directory</a><a href="#before">3 · Before you start</a>
+  <a href="#walk">4 · The walkthrough</a><a href="#workers">5 · The five workers</a><a href="#page">6 · The page</a>
+  <a href="#report">7 · Collect and report</a><a href="#cleanup">8 · Clean up</a><a href="#cheat">9 · Cheat sheet</a>
+</nav>
+
+<section id="loop">
+<h2>1 · The loop, in one picture</h2>
+<figure>
+<svg viewBox="0 0 900 330" role="img" aria-label="The coordinator's loop: init, flow apply, page, wait, ring, rule, back to wait; the router's daemons do the rest">
+  <defs><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor" style="color:var(--dim)"/></marker></defs>
+  <text x="20" y="24" class="x">THE COORDINATOR (you, or /flows:flow-run)</text>
+  <rect x="20" y="40" width="110" height="48" rx="8" class="box"/><text x="75" y="62" text-anchor="middle" class="t">init</text><text x="75" y="78" text-anchor="middle" class="x">binds the Run</text>
+  <rect x="150" y="40" width="120" height="48" rx="8" class="box"/><text x="210" y="62" text-anchor="middle" class="t">flow apply</text><text x="210" y="78" text-anchor="middle" class="x">v1: the plan</text>
+  <rect x="290" y="40" width="120" height="48" rx="8" class="box"/><text x="350" y="62" text-anchor="middle" class="t">page --open</text><text x="350" y="78" text-anchor="middle" class="x">the live graph</text>
+  <rect x="430" y="40" width="100" height="48" rx="8" class="hot"/><text x="480" y="62" text-anchor="middle" class="t">wait</text><text x="480" y="78" text-anchor="middle" class="x">blocks</text>
+  <rect x="550" y="40" width="100" height="48" rx="8" class="box"/><text x="600" y="62" text-anchor="middle" class="t">a ring</text><text x="600" y="78" text-anchor="middle" class="x">one screen</text>
+  <rect x="670" y="40" width="210" height="48" rx="8" class="box"/><text x="775" y="62" text-anchor="middle" class="t">rule</text><text x="775" y="78" text-anchor="middle" class="x">reply · retry · resume</text>
+  <path d="M130 64 H146" class="arr" marker-end="url(#m)"/><path d="M270 64 H286" class="arr" marker-end="url(#m)"/>
+  <path d="M410 64 H426" class="arr" marker-end="url(#m)"/><path d="M530 64 H546" class="arr" marker-end="url(#m)"/>
+  <path d="M650 64 H666" class="arr" marker-end="url(#m)"/>
+  <path d="M775 88 V118 H490 V92" class="arr" marker-end="url(#m)"/><text x="640" y="134" text-anchor="middle" class="x">back to wait, every turn</text>
+  <line x1="20" y1="166" x2="880" y2="166" stroke="var(--line)" stroke-dasharray="3 4"/>
+  <text x="880" y="186" text-anchor="end" class="x">THE ROUTER (no model): state on disk, daemons outside your session</text>
+  <rect x="20" y="200" width="270" height="110" rx="8" class="box"/>
+  <text x="34" y="222" class="t">mailbox daemon</text>
+  <text x="34" y="242" class="s">the Run's only mailbox reader</text>
+  <text x="34" y="260" class="s">releases finished workers</text>
+  <text x="34" y="278" class="s">serves the page, starts ready PRs</text>
+  <text x="34" y="296" class="s">collects each worker's logs</text>
+  <rect x="315" y="200" width="270" height="110" rx="8" class="box"/>
+  <text x="329" y="222" class="t">one runner per PR</text>
+  <text x="329" y="242" class="s">starts each step's Orca worker</text>
+  <text x="329" y="260" class="s">runs its checks: OK / NOT OK</text>
+  <text x="329" y="278" class="s">re-reads the flow per step</text>
+  <text x="329" y="296" class="s">pauses and rings when it must</text>
+  <rect x="610" y="200" width="270" height="110" rx="8" class="box"/>
+  <text x="624" y="222" class="t">Orca workers</text>
+  <text x="624" y="242" class="s">a fresh agent per step</text>
+  <text x="624" y="260" class="s">heartbeat, question, worker_done</text>
+  <text x="624" y="278" class="s">into the Run's mailbox</text>
+  <path d="M610 255 H589" class="arr" marker-end="url(#m)"/><path d="M315 255 H294" class="arr" marker-end="url(#m)"/>
+  <path d="M155 200 V146 H470 V92" class="arr2" marker-end="url(#m)"/><text x="300" y="140" text-anchor="middle" class="x">only a gate, a failure, a NOT OK check or a question rings</text>
+</svg>
+<figcaption>Heartbeats and successful workers never reach you; the doorbell (<code>router.py wait</code>) does.</figcaption>
+</figure>
+</section>
+
+<section id="state">
+<h2>2 · The state directory</h2>
+<figure>
+<svg viewBox="0 0 900 300" role="img" aria-label="The state directory: run.json, flow.json, chains, journal, logs, page.json, report.html">
+  <rect x="20" y="20" width="220" height="40" rx="8" class="hot"/><text x="130" y="45" text-anchor="middle" class="t">$ROUTER_STATE/</text>
+  <path d="M130 60 V280" stroke="var(--line)" fill="none"/>
+  <g class="s">
+    <path d="M130 86 H160" stroke="var(--line)"/><text x="166" y="90">run.json</text><text x="420" y="90" class="x">the Run and the terminal the daemons act for · init</text>
+    <path d="M130 110 H160" stroke="var(--line)"/><text x="166" y="114">flow.json · flow.lock</text><text x="420" y="114" class="x">every version and its history · flow apply, the page</text>
+    <path d="M130 134 H160" stroke="var(--line)"/><text x="166" y="138">chains/&lt;pr&gt;/state.json</text><text x="420" y="138" class="x">steps, attempts, variables · the runner</text>
+    <path d="M130 158 H160" stroke="var(--line)"/><text x="166" y="162">events/ · liveness/ · dispatches/</text><text x="420" y="162" class="x">messages, heartbeats, who started what · the daemon</text>
+    <path d="M130 182 H160" stroke="var(--line)"/><text x="166" y="186">wake/ · journal.md</text><text x="420" y="186" class="x">rings to print · one line per settled event</text>
+    <path d="M130 206 H160" stroke="var(--line)"/><text x="166" y="210">logs/&lt;pr&gt;/&lt;step&gt;/&lt;dispatch&gt;/</text><text x="420" y="210" class="x">meta, Orca's archive, session, tokens · the collector</text>
+    <path d="M130 230 H160" stroke="var(--line)"/><text x="166" y="234">page.json · progress.html</text><text x="420" y="234" class="x">the page's URL · the static view</text>
+    <path d="M130 254 H160" stroke="var(--line)"/><text x="166" y="258">report.html · metrics.json</text><text x="420" y="258" class="x">router.py report only</text>
+  </g>
+</svg>
+<figcaption>Never inside a repository. A compaction, a cleared conversation or a new terminal loses nothing: it is all here.</figcaption>
+</figure>
+</section>
+
+<section id="before">
+<h2>3 · Before you start</h2>
+<div class="tbl"><table>
+<tr><th>Need</th><th>Check</th></tr>
+<tr><td>Orca, with its CLI on the PATH</td><td><code>orca orchestration --help</code></td></tr>
+<tr><td>A terminal Orca started (it carries <code>ORCA_TERMINAL_HANDLE</code>)</td><td>run everything below from it</td></tr>
+<tr><td>Python 3.9+; nothing to install</td><td><code>python3 --version</code></td></tr>
+<tr><td>The plugin: from Claude Code, <code>/plugin install flows@dimakrest-context-engineering</code> (not run in the pilot, like the two skills named at the end of this page), then <code>R=${CLAUDE_PLUGIN_ROOT}/router/router.py</code>; or a checkout of the repository</td><td>the pilot ran from a checkout: <code>R=plugins/flows/router/router.py</code></td></tr>
+</table></div>
+<div class="callout"><strong>Bind a Run of your own.</strong> The mailbox daemon becomes the only consumer of the Run it is
+bound to. Never <code>init</code> in a terminal whose Run another coordinator reads.</div>
+</section>
+
+<section id="walk">
+<h2>4 · The walkthrough</h2>
+
+<div class="step"><div class="num">1</div><div>
+<h3>The state directory and the Run</h3>
+<pre><code>export SCRATCH=$HOME/.cache/flows-pilot ROUTER_STATE=$HOME/.cache/flows-pilot/state
+mkdir -p $SCRATCH/out
+orca orchestration run-create --objective "flows M5 smoke pilot" --json
+python3 $R init
+<span class="c3">OK run run_1700985b87e4 · mailbox daemon pid 41608 · state $ROUTER_STATE</span></code></pre>
+</div></div>
+
+<div class="step"><div class="num">2</div><div>
+<h3>A throwaway worktree for the workers</h3>
+<pre><code>orca worktree create --name flows-pilot --repo path:&lt;the repository's main checkout&gt; \
+  --base-branch origin/orca-router --setup skip --no-parent --json
+<span class="cf"># result.worktree.path is the PR's WT. --repo path:&lt;a linked worktree&gt; answered repo_not_found</span></code></pre>
+</div></div>
+
+<div class="step"><div class="num">3</div><div>
+<h3>The flow file</h3>
+<p>One PR on <code>router/templates/smoke.json</code> with the <code>python</code> profile, one slot, start auto.
+The PR carries the template's steps with one addition, <code>"worktree": "path:{WT}"</code> on each worker step, so
+the workers run in the throwaway worktree instead of the coordinator's.</p>
+<pre><code>{"title": "M5 smoke pilot on real Orca", "slots": 1, "start": "auto",
+ "templates": {"smoke": "&lt;FLOWS&gt;/router/templates/smoke.json"},
+ "profile": "&lt;FLOWS&gt;/router/profiles/python.json",
+ "vars": {"OUT": "&lt;SCRATCH&gt;/out"},
+ "prs": [{"id": "smoke1", "part": "Pilot", "title": "The smoke chain in the throwaway worktree",
+          "base": "orca-router", "after": [], "template": "smoke", "vars": {"WT": "&lt;the worktree's path&gt;"},
+          "steps": [<span class="cf">the six steps of smoke.json; alpha, beta, ask and flaky with</span> "worktree": "path:{WT}"]}]}</code></pre>
+<p class="cf">&lt;FLOWS&gt; and the others stand for absolute paths, written out in the file.</p>
+</div></div>
+
+<div class="step"><div class="num">4</div><div>
+<h3>Dry-run, then apply</h3>
+<pre><code>python3 $R flow apply $SCRATCH/flow.json --dry-run
+<span class="c3">OK flow v0 -> v1, dry run, nothing written: 2 changes
+  - flow created: 1 PRs · slots 1 · start auto
+  - smoke1 added</span>
+python3 $R flow apply $SCRATCH/flow.json --by m5-worker --note "the M5 smoke pilot"
+<span class="c3">OK flow v1: 2 changes
+  - flow created: 1 PRs · slots 1 · start auto
+  - smoke1 added
+  started smoke1 (v1), runner pid 44003</span></code></pre>
+<p>Under <code>"start": "auto"</code> the apply starts every ready PR. A refused file prints
+<code class="out">NOT OK flow: &lt;n&gt; problem(s), nothing changed</code> and one line per problem.</p>
+</div></div>
+
+<div class="step"><div class="num">5</div><div>
+<h3>Open the page, then wait</h3>
+<pre><code>python3 $R page --open
+<span class="c3">http://127.0.0.1:63056/
+OK opened in an Orca browser tab</span>
+python3 $R flow show
+<span class="c3">flow v1 · slots 1/1 · start auto · M5 smoke pilot on real Orca
+  smoke1 · Pilot · The smoke chain in the throwaway worktree · after - · running alpha ∥ beta</span>
+python3 $R wait --timeout-min 8   <span class="cf"># the coordinator runs it in the background, as the last action of every turn</span></code></pre>
+</div></div>
+
+<div class="step"><div class="num">6</div><div>
+<h3>Answer the three rings</h3>
+<pre><code><span class="c4">WAKE question · smoke1 · ask · task task_bcd309132583 · dispatch ctx_409328483c78 · message msg_8dd7dea7db5e
+question: Which word goes into ask.txt: PASS or FAIL?</span>
+python3 $R reply msg_8dd7dea7db5e PASS
+
+<span class="c2">WAKE failed · smoke1 · flaky (attempt 1)
+worker_done failed: failed: no note attached</span>
+python3 $R retry smoke1 --note "write the word OK into flaky.txt in the target directory"
+
+<span class="c4">WAKE gate · smoke1 · accept: smoke gate: the lines below are what the coordinator would read
+OK alpha.txt: 1 lines
+OK beta.txt: 1 lines
+OK ask.txt: VERDICT: PASS
+OK the answer recorded by the script step: PASS</span>
+python3 $R resume smoke1
+
+python3 $R status
+<span class="c3">smoke1  done · 6/6 steps
+logs    5/5 settled dispatches collected</span></code></pre>
+</div></div>
+</section>
+
+<section id="workers">
+<h2>5 · The five workers, as they ran</h2>
+<figure>
+<svg viewBox="0 0 900 250" role="img" aria-label="Timeline of the smoke chain: alpha and beta at once, ask waiting on the answer, record, flaky failing then retried, the gate">
+  <g class="x"><text x="110" y="20">10:32:30</text><text x="300" y="20">10:33:00</text><text x="490" y="20">10:33:30</text><text x="680" y="20">10:34:00</text><text x="840" y="20">10:34:30 … 10:35:12</text></g>
+  <g class="s"><text x="20" y="50">alpha</text><text x="20" y="78">beta</text><text x="20" y="106">ask</text><text x="20" y="134">record</text><text x="20" y="162">flaky #1</text><text x="20" y="190">flaky #2</text><text x="20" y="218">accept</text></g>
+  <rect x="167" y="38" width="63" height="16" rx="3" fill="var(--a3)"/>
+  <rect x="192" y="66" width="57" height="16" rx="3" fill="var(--a3)"/>
+  <rect x="268" y="94" width="572" height="16" rx="3" fill="var(--a1)" opacity=".75"/>
+  <rect x="293" y="94" width="475" height="16" rx="3" fill="var(--a4)" opacity=".55"/>
+  <text x="310" y="106" class="x" style="fill:var(--ink)">question asked · the owner held it while dragging on the page</text>
+  <rect x="840" y="122" width="6" height="16" rx="2" fill="var(--a5)"/>
+  <rect x="846" y="150" width="14" height="16" rx="3" fill="var(--a2)"/>
+  <rect x="866" y="178" width="14" height="16" rx="3" fill="var(--a3)"/>
+  <rect x="882" y="206" width="10" height="16" rx="3" fill="var(--a4)"/>
+  <text x="560" y="164" class="x">fails on purpose (no note) → retry with a note</text>
+  <text x="560" y="220" class="x">gate: 7 s until resume → chain complete</text>
+</svg>
+<figcaption>From <code>journal.md</code>: the whole chain took 2 min 37 s. Most of it is the question waiting for an answer.</figcaption>
+</figure>
+<p>The chain's journal, the record every number below comes from (it holds no transcript text):</p>
+<pre class="out"><code><span class="cf">10:32:35Z</span> smoke1 · flow: started smoke1 (v1)
+<span class="cf">10:32:39Z</span> smoke1 alpha · started claude claude-sonnet-5-5
+<span class="cf">10:32:49Z</span> smoke1 alpha · worker_done succeeded; released (closed_agent_terminal); alpha.txt created
+<span class="cf">10:32:51Z</span> smoke1 beta · check: OK beta.txt: 1 lines
+<span class="cf">10:32:59Z</span> smoke1 ask · question: Question
+<span class="cf">10:33:38Z</span> flow v2 by page: 1 changes; pilot-drag-1 · smoke1: steps reordered: alpha, beta, ask, flaky, record, accept
+<span class="cf">10:34:04Z</span> flow v3 by page: 1 changes; pilot-drag-2 · smoke1: steps reordered: alpha, beta, ask, record, flaky, accept
+<span class="cf">10:34:14Z</span> coordinator: replied to msg_8dd7dea7db5e: PASS
+<span class="cf">10:34:28Z</span> smoke1 record · script exit 0: OK recorded the answer
+<span class="cf">10:34:41Z</span> smoke1 flaky · worker_done failed; released (closed_agent_terminal); failed: no note attached
+<span class="cf">10:34:49Z</span> smoke1 flaky · coordinator: retry; note: write the word OK into flaky.txt in the target directory
+<span class="cf">10:35:04Z</span> smoke1 flaky · check: OK flaky.txt: 1 lines
+<span class="cf">10:35:04Z</span> smoke1 accept · paused: blocked
+<span class="cf">10:35:11Z</span> smoke1 accept · coordinator: gate passed
+<span class="cf">10:35:12Z</span> smoke1 · chain complete</code></pre>
+</section>
+
+<section id="page">
+<h2>6 · The page, and an edit on it</h2>
+<p>While <code>ask</code> waited for its answer, the steps after it were pending, so they could move. In the Orca tab,
+with Orca's browser commands (the refs come from <code>orca snapshot</code>):</p>
+<pre><code>orca snapshot --page &lt;page id&gt;                       <span class="cf"># refs: "Edit the flow", each step chip</span>
+orca click --page &lt;page id&gt; --element &lt;Edit the flow&gt;
+orca drag --page &lt;page id&gt; --from &lt;flaky chip&gt; --to &lt;record chip&gt;
+orca click --page &lt;page id&gt; --element &lt;Apply…&gt;        <span class="cf"># "Apply to v1: the router will make v2 with 1 change"</span>
+orca fill --page &lt;page id&gt; --element &lt;why&gt; --value pilot-drag-1
+orca click --page &lt;page id&gt; --element &lt;Apply as v2&gt;   <span class="cf"># the header now says flow v2</span></code></pre>
+<p>A second drag on the same page, with no reload, put <code>record</code> back before <code>flaky</code> and applied as
+v3. Both reached the daemon: <code>router.py flow history</code> lists v2 and v3 <code class="out">by page</code>, and the page's header
+showed the new version after each. A drop on a locked chip (🔒: done or running) is refused on the canvas.</p>
+<div class="tbl"><table>
+<tr><th>Mode</th><th>Shows</th></tr>
+<tr><td>View</td><td>header (title, flow version, slots, the daemon, the state), four counters, the PR graph with step chips, workers, rings, questions, flow versions, last events</td></tr>
+<tr><td>Edit the flow</td><td>the same canvas on a local copy: drag a pending step, drop a role from the palette, change a step, add or drop a PR; Apply = <code>flow apply</code> with a dry run first</td></tr>
+</table></div>
+</section>
+
+<section id="report">
+<h2>7 · Collect and report</h2>
+<pre><code>python3 $R collect --all --force
+<span class="c3">OK collected 5 · skipped 0 · locked 0 · not settled 0 · failed 0</span>
+python3 $R collect --dry-run
+<span class="c3">dry run: 5 settled dispatches · unique 5 · ambiguous 0 · none 0 · not settled 0 · failed 0 · nothing copied</span>
+python3 $R report --metrics $ROUTER_STATE/metrics.json
+<span class="c3">OK report $ROUTER_STATE/report.html · 1 PRs · 5 dispatches (0 ad hoc) · 5 collected sessions</span>
+orca tab create --url file://$ROUTER_STATE/report.html --json</code></pre>
+<p>The daemon had already collected each worker as it was released, so <code>collect --all</code> after the run only
+skips (it printed <code class="out">skipped 5</code> then); the line above is <code>--force</code>, which collected them again after a fix of the session matcher. Five workers in one worktree within three minutes had made four matches ambiguous; each session's
+first message names its own dispatch, and that now decides.</p>
+<figure>
+<svg viewBox="0 0 900 120" role="img" aria-label="smoke1's wall clock of 157 seconds: workers 143, at gates 7, paused 6, the rest 1">
+  <text x="20" y="22" class="s">smoke1 · wall clock 157 s · four parts that add up to it</text>
+  <rect x="20" y="36" width="738" height="30" fill="var(--a1)" opacity=".8"/>
+  <rect x="758" y="36" width="36" height="30" fill="var(--a4)"/>
+  <rect x="794" y="36" width="31" height="30" fill="var(--a2)" opacity=".8"/>
+  <rect x="825" y="36" width="6" height="30" fill="var(--faint)"/>
+  <text x="30" y="56" class="t" style="fill:#fff">workers 143 s</text>
+  <text x="20" y="92" class="x">worker time first (some worker ran), then at gates 7 s, then paused 6 s (the failed flaky until the retry), then the rest 1 s</text>
+</svg>
+<figcaption>Section a of the report. Each second sits in one part only, so no part is negative.</figcaption>
+</figure>
+<div class="tbl"><table>
+<tr><th>Lesson (section g)</th><th>Value</th><th>Where</th><th>Record</th></tr>
+<tr><td>slowest step</td><td>97 s</td><td>smoke1 · ask · ctx_409328483c78</td><td><code class="out">chains/smoke1/state.json steps[ask].attempts</code></td></tr>
+<tr><td>most-retried step</td><td>2 attempts</td><td>smoke1 · flaky</td><td><code class="out">chains/smoke1/state.json steps[flaky].attempts</code></td></tr>
+<tr><td>role that asked the most questions</td><td>1</td><td>smoke-ask.md · smoke1 · ask</td><td><code class="out">journal.md question lines</code></td></tr>
+<tr><td>longest wait at a gate (raw)</td><td>7 s</td><td>smoke1 · accept</td><td><code class="out">journal.md paused: blocked .. coordinator</code></td></tr>
+</table></div>
+<p>The gate lesson is the raw wait, how long the owner took to answer. The split's "at gates" takes off any second a
+worker ran, so on a bigger run the two can differ. <code>/flows:flow-report</code> (not run in the pilot) reads this
+table back; <code>/flows:flow-plan</code> (not run in the pilot) uses it to plan the next run.</p>
+</section>
+
+<section id="cleanup">
+<h2>8 · Clean up</h2>
+<pre><code>python3 $R stop --all
+<span class="c3">OK stopped: mailbox · workers are untouched; a stopped chain goes on with router.py resume &lt;pr&gt;</span>
+orca worktree rm --worktree path:&lt;the worktree's path&gt; --json</code></pre>
+<p>The smoke chain opens no PR. The state directory stays: it is the run's record, and the report can be built
+again from it at any time.</p>
+<div class="callout ok"><strong>Next:</strong> <code>/flows:flow-plan</code> (not run in the pilot) writes a real flow
+file from an issue, on <code>router/templates/inner-pr.json</code> and the profile that fits the repository.</div>
+</section>
+
+<section id="cheat">
+<h2>9 · Cheat sheet</h2>
+<div class="tbl"><table>
+<tr><th>Want</th><th>Command</th></tr>
+<tr><td>bind and start the daemon</td><td><code>python3 $R init</code></td></tr>
+<tr><td>check a flow file</td><td><code>python3 $R flow apply &lt;file&gt; --dry-run</code></td></tr>
+<tr><td>apply it</td><td><code>python3 $R flow apply &lt;file&gt; --by &lt;you&gt; --note "&lt;why&gt;"</code></td></tr>
+<tr><td>see the PRs</td><td><code>python3 $R flow show</code> · <code>python3 $R flow history</code></td></tr>
+<tr><td>the page</td><td><code>python3 $R page --open</code></td></tr>
+<tr><td>one screen</td><td><code>python3 $R status</code></td></tr>
+<tr><td>wait for a ring</td><td><code>python3 $R wait --timeout-min &lt;n&gt;</code></td></tr>
+<tr><td>answer</td><td><code>python3 $R reply &lt;id&gt; "&lt;answer&gt;"</code> · <code>python3 $R retry &lt;pr&gt; --note "&lt;why&gt;"</code> · <code>python3 $R resume &lt;pr&gt;</code></td></tr>
+<tr><td>logs and report</td><td><code>python3 $R collect --all</code> · <code>python3 $R report</code></td></tr>
+<tr><td>stop</td><td><code>python3 $R stop --all</code></td></tr>
+</table></div>
+</section>
+</div>
+</body>
+</html>

@@ -1169,6 +1169,26 @@ class Profiles(RouterCase):
                     self.assertEqual(plain.count("Rules file:"), plain.count(rules), f"{name}: {spec}")
             self.assertGreater(seen, 0, name)                             # each case puts at least one none in
 
+    def test_the_template_checks_guard_the_profiles_test_files(self):
+        defn = json.loads((TEMPLATES / "inner-pr.json").read_text())
+        steps = {s["id"]: s for s in defn["steps"]}
+        before = {"simplify": "{CHECKS}/files-untouched.sh {WT} {HEAD_BEFORE} {HEAD_AFTER} tests/ pytest.ini",
+                  "fix_code": "{CHECKS}/files-untouched.sh {WT} {HEAD_BEFORE} {HEAD_AFTER} tests/ pytest.ini",
+                  "implement": "{CHECKS}/files-untouched.sh {WT} {HEAD_BEFORE} {HEAD_AFTER} pytest.ini"}
+        typescript = {"simplify": " hb ha ':(glob)**/*.test.ts' vitest.config.ts",
+                      "fix_code": " hb ha ':(glob)**/*.test.ts' vitest.config.ts", "implement": " hb ha vitest.config.ts"}
+        for name in self.NAMES:
+            variables = dict(self.variables(defn, name), HEAD_AFTER="ha")
+            for sid in before:
+                missing = set()
+                untouched = [self.rt.render(c, variables, missing, shell=True) for c in steps[sid]["checks"]
+                             if "files-untouched.sh" in c]
+                self.assertEqual((len(untouched), missing), (1, set()), f"{name}: {sid}")
+                if name == "typescript":
+                    self.assertTrue(untouched[0].endswith(typescript[sid]), f"{name}: {sid}: {untouched[0]}")
+                else:                                                 # byte for byte the check before profiles
+                    self.assertEqual(untouched[0], self.rt.render(before[sid], variables, shell=True), f"{name}: {sid}")
+
     def test_rendered_validator_and_implementer_match_their_snapshots(self):
         update = os.environ.get("FLOWS_UPDATE_SNAPSHOTS") == "1"
         for name in self.NAMES:

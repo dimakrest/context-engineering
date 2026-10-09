@@ -3505,6 +3505,26 @@ class Skills(unittest.TestCase):
             self.assertIn("B1: base main: inner PRs go into the integration branch, never main or master", p.stdout)
             self.assertFalse((Path(tmp) / "state" / "flow.json").exists())
 
+    def test_the_in_order_grader_holds_the_reference_flow_and_refuses_a_swap(self):
+        grader = (self.ROOT / "evals" / "flow-plan" / "graders" / "three-prs-in-order.md").read_text()
+        self.assertIn("path: dryrun.txt", grader)
+        pattern = re.compile(re.search(r"^pattern: '(.*)'$", grader, re.M).group(1), re.M)   # a JS RegExp; Python reads it alike
+        ref = json.loads((self.ROOT / "evals" / "flow-plan" / "reference-flow.json").read_text())
+        ref["templates"]["inner-pr"] = str(TEMPLATES / "inner-pr.json")
+        ref["profile"] = str(PROFILES / "python.json")
+        swapped = json.loads(json.dumps(ref))
+        swapped["prs"][1]["after"], swapped["prs"][2]["after"] = ["C1"], ["A1"]   # A1, C1, B1: B1 and C1 swapped
+        listed = json.loads(json.dumps(ref))
+        listed["prs"][1], listed["prs"][2] = listed["prs"][2], listed["prs"][1]   # C1 written before B1
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, flow, holds in (("reference", ref, True), ("swapped", swapped, False), ("listed", listed, False)):
+                f = Path(tmp) / f"{name}.json"
+                f.write_text(json.dumps(flow))
+                p = subprocess.run([sys.executable, ROUTER, "flow", "apply", str(f), "--dry-run"], capture_output=True,
+                                   text=True, env=dict(os.environ, ROUTER_STATE=str(Path(tmp) / name)))
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                self.assertEqual(bool(pattern.search(p.stdout)), holds, f"{name}:\n{p.stdout}")
+
     def test_flow_report_says_when_it_collected_first(self):
         text = self.skill("flow-report")
         section = text[text.index("## 1. Are the logs collected?"):text.index("## 2.")]

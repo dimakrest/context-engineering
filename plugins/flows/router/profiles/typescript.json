@@ -8,7 +8,7 @@
   "TEST_PATHS": ":(glob)**/*.test.ts",
   "TEST_CONFIG": "vitest.config.ts",
   "COPY_SETUP": "ln -s {WT}/node_modules node_modules",
-  "LINT_CMD": "npx tsc --noEmit && git diff --name-only --diff-filter=d \"$BASE\" -- '*.ts' '*.tsx' | xargs -r npx eslint",
+  "LINT_CMD": "set -o pipefail; npx tsc --noEmit && git diff --name-only --diff-filter=d \"$BASE\" -- '*.ts' '*.tsx' | xargs -r npx eslint",
   "FROZEN_PATHS": "none",
   "EXTRA_SUITE": "none",
   "COMMIT_CMD": "git commit"

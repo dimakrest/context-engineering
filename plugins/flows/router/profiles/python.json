@@ -8,7 +8,7 @@
   "TEST_PATHS": "tests/",
   "TEST_CONFIG": "pytest.ini",
   "COPY_SETUP": "none",
-  "LINT_CMD": "git diff --name-only --diff-filter=d \"$BASE\" -- '*.py' | xargs -r ruff check",
+  "LINT_CMD": "set -o pipefail; git diff --name-only --diff-filter=d \"$BASE\" -- '*.py' | xargs -r ruff check",
   "FROZEN_PATHS": "none",
   "EXTRA_SUITE": "none",
   "COMMIT_CMD": "git commit"

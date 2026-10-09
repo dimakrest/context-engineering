@@ -2421,6 +2421,7 @@ class Report(unittest.TestCase):
         # Paused: implement failed 10:10:25 .. coordinator retry 10:15:25 (300).
         self.assertEqual((t["A1"]["wall_s"], t["A1"]["worker_s"], t["A1"]["gate_s"], t["A1"]["paused_s"]),
                          (7200, 1200 + 1200 + 1200 + 600, 1800 + 240, 300))
+        self.assertEqual(t["A1"]["worker_covered_s"], 4200)                    # no two of A1's workers ran at once
         self.assertEqual(t["A1"]["rest_s"], 7200 - 4200 - 2040 - 300)          # 660: ci 600 and 60 s of starts and checks
         self.assertEqual(t["A1"]["adhoc_s"], 120)                               # the arbiter, 10:12:00 .. 10:14:00
         # B1: 09:05:00 .. 10:20:00. Workers 1200 + 1200 + 600; gates accept 09:25:15 .. 09:35:15 (600), merge 10:15:45 ..
@@ -2597,6 +2598,17 @@ class Report(unittest.TestCase):
                                ("most-retried step", 2, "A1", "implement", "ctx_a1_impl1, ctx_a1_impl2"),
                                ("role that asked the most questions", 2, "A1", "implement", "ctx_a1_impl2"),
                                ("longest wait at a gate", 2400, "A2", "accept", "-")])
+
+    def test_workers_that_run_at_once_are_covered_once_in_the_rest(self):
+        state = self.copy()                                                     # B1's review in a group with its implement
+        st = json.loads((state / "chains/B1/state.json").read_text())
+        st["steps"][4]["attempts"][0].update(started="2026-01-12T09:45:20Z", ended="2026-01-12T09:55:20Z")
+        (state / "chains/B1/state.json").write_text(json.dumps(st))
+        _page, m, _ = self.report(state)
+        t = m["time"]["B1"]
+        # implement 09:35:20 .. 09:55:20 (1200) and review 09:45:20 .. 09:55:20 (600): summed 3000, covered 1200 + 1200
+        self.assertEqual((t["worker_s"], t["worker_covered_s"]), (1200 + 1200 + 600, 1200 + 1200))
+        self.assertEqual(t["rest_s"], 4500 - 2400 - 840 - 300)
 
     def test_a_gate_wait_and_a_pause_never_include_each_other(self):
         state = self.copy()                                                     # a pause the coordinator never ended

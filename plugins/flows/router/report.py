@@ -20,10 +20,11 @@ What it reads (it writes only the files named on its command line, and never cal
 
 The questions, and the record behind each answer:
   a. time per PR      wall clock: state.json created..ended (a chain not done: "not recorded"); worker time: the sum
-                      of started..ended over the attempts that have a dispatch; at gates: a journal "paused: blocked"
+                      of started..ended over the attempts that have a dispatch, and the time at least one of them
+                      ran ("covered": a group's workers run at once, so the sum can pass the wall clock); at gates: a journal "paused: blocked"
                       line to the PR's next "coordinator:" line; paused: any other "paused:" line to the PR's next
                       "coordinator:" line (a wait that another pause or "chain complete" ends first has no recorded
-                      end and is counted as open); the rest: wall - worker - gates - paused (starts, checks, scripts).
+                      end and is counted as open); the rest: wall - covered - gates - paused (starts, checks, scripts).
                       Ad hoc workers: dispatches/<dispatch>.json started..settled, shown apart.
   b. steps            per step id across PRs: the duration of a PR's step is the sum of its attempts' started..ended;
                       median and max; attempts by state.json's cause (an attempt without one: "first" when n is 1,
@@ -270,19 +271,26 @@ def time_split(run: Run, pr: str) -> dict:
     st = run.chains[pr]
     done = st.get("ended") if st.get("status") == "done" else None
     wall = span(st.get("created"), done)
-    worker = 0
+    worker, spans = 0, []
     for step in st["steps"]:
         for att in step.get("attempts") or []:
             s = span(att.get("started"), att.get("ended"))
             if att.get("dispatch") and s is not None:
                 worker += s
+                spans.append((ts_epoch(att["started"]), ts_epoch(att["ended"])))
+    covered, end = 0, None   # the time at least one worker ran: a group's workers run at once
+    for a, b in sorted(spans):
+        if end is None or a > end:
+            covered, end = covered + int(b - a), b
+        elif b > end:
+            covered, end = covered + int(b - end), b
     ws = waits(run, pr)
     gate = sum(w["s"] for w in ws if w["kind"] == "gate" and w["s"] is not None)
     paused = sum(w["s"] for w in ws if w["kind"] == "paused" and w["s"] is not None)
     adhoc = [r["duration_s"] for r in run.dispatches if r["adhoc"] and r["pr"] == pr and r["duration_s"] is not None]
     return {"created": st.get("created") or NR, "done": done or NR, "wall_s": NR if wall is None else wall,
-            "worker_s": worker, "gate_s": gate, "paused_s": paused,
-            "rest_s": NR if wall is None else wall - worker - gate - paused,
+            "worker_s": worker, "worker_covered_s": covered, "gate_s": gate, "paused_s": paused,
+            "rest_s": NR if wall is None else wall - covered - gate - paused,
             "open_waits": sum(1 for w in ws if w["s"] is None), "adhoc_s": sum(adhoc)}
 
 
@@ -549,7 +557,7 @@ def metrics(run: Run, prices: "dict | None" = None) -> dict:
     steps = steps_metrics(run)
     times = {pr: time_split(run, pr) for pr in run.prs}
     total: dict = {}
-    for k in ("wall_s", "worker_s", "gate_s", "paused_s", "rest_s", "adhoc_s", "open_waits"):
+    for k in ("wall_s", "worker_s", "worker_covered_s", "gate_s", "paused_s", "rest_s", "adhoc_s", "open_waits"):
         vals = [t[k] for t in times.values()]
         total[k] = sum(vals) if vals and all(isinstance(v, int) for v in vals) else NR
     times["total"] = total
@@ -695,12 +703,12 @@ def timeline(run: Run, pr: str) -> str:
 
 
 def time_rows(times: dict, prs: "list[str]") -> "list[list[str]]":
-    return [[esc(pr), esc(t.get("created", "")), esc(t.get("done", "")), dur(t["wall_s"]), dur(t["worker_s"]), dur(t["gate_s"]),
+    return [[esc(pr), esc(t.get("created", "")), esc(t.get("done", "")), dur(t["wall_s"]), dur(t["worker_s"]), dur(t["worker_covered_s"]), dur(t["gate_s"]),
              dur(t["paused_s"]), dur(t["rest_s"]), num(t["open_waits"]), dur(t["adhoc_s"])]
             for pr, t in ((p, times[p]) for p in prs)]
 
 
-TIME_HEAD = ["PR", "chain created", "done", "wall clock", "workers", "at gates", "paused", "the rest", "open waits", "ad hoc workers"]
+TIME_HEAD = ["PR", "chain created", "done", "wall clock", "workers (sum)", "workers (covered)", "at gates", "paused", "the rest", "open waits", "ad hoc workers"]
 TIME_SRC = "chains/<pr>/state.json (created, ended, attempts started..ended), journal.md (paused / coordinator lines), dispatches/*.json (ad hoc)"
 
 
@@ -709,8 +717,8 @@ def bars_of_time(times: dict, prs: "list[str]") -> str:
     for pr in prs:
         t = times[pr]
         rest = t["rest_s"] if isinstance(t["rest_s"], int) else 0
-        rows.append((pr, [t["worker_s"], t["gate_s"], t["paused_s"], max(0, rest)]))
-    return hbars(rows, ["workers", "at gates", "paused", "the rest"], " s")
+        rows.append((pr, [t["worker_covered_s"], t["gate_s"], t["paused_s"], max(0, rest)]))
+    return hbars(rows, ["workers (covered)", "at gates", "paused", "the rest"], " s")
 
 
 def rings_table(ring_table: dict, cols: "list[str]") -> str:

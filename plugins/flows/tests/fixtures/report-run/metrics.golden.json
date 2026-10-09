@@ -375,6 +375,7 @@
    "paused_s": 300,
    "rest_s": 660,
    "wall_s": 7200,
+   "worker_covered_s": 4200,
    "worker_s": 4200
   },
   "A2": {
@@ -386,6 +387,7 @@
    "paused_s": 0,
    "rest_s": "not recorded",
    "wall_s": "not recorded",
+   "worker_covered_s": 3300,
    "worker_s": 3300
   },
   "B1": {
@@ -397,6 +399,7 @@
    "paused_s": 300,
    "rest_s": 360,
    "wall_s": 4500,
+   "worker_covered_s": 3000,
    "worker_s": 3000
   },
   "total": {
@@ -406,6 +409,7 @@
    "paused_s": 600,
    "rest_s": "not recorded",
    "wall_s": "not recorded",
+   "worker_covered_s": 10500,
    "worker_s": 10500
   }
  },

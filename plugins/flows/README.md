@@ -345,7 +345,8 @@ from a worker's summary it takes only the number after `FINDINGS:` and the word 
 | a. Worker time | `chains/<pr>/state.json` | `attempts[].started` .. `ended`, attempts with a dispatch |
 | a. Waiting at gates | `journal.md` | `paused: blocked` to the PR's next `coordinator:` line |
 | a. Paused | `journal.md` | any other `paused:` line to the PR's next `coordinator:` line; a pause another pause or `chain complete` ends first is counted as open, not as time |
-| a. The rest | the four above | wall − workers − gates − paused: starts, checks, scripts |
+| a. Workers covered | `chains/<pr>/state.json` | the time at least one worker ran: a group's workers run at once, so their sum can pass the wall clock |
+| a. The rest | the above | wall − covered − gates − paused: starts, checks, scripts |
 | a. Ad hoc workers | `dispatches/<dispatch>.json` | `started` .. `settled`, shown apart from the chain's time |
 | b. Step durations | `chains/<pr>/state.json` | a PR's step: the sum of its attempts; median and max per step id |
 | b. Attempts by cause | `chains/<pr>/state.json` | `attempts[].cause` (`first`, `retry`, `resume_from`); none recorded: `first` for n = 1, else not recorded |

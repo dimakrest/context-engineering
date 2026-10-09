@@ -16,7 +16,8 @@ something needs a decision.
 
 Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-coordinators-loop) ·
 [The flow file](#the-flow-file) · [Seeing progress](#seeing-progress) · [What rings](#what-rings) ·
-[A chain definition](#a-chain-definition) · [Checks](#checks) · [After a restart](#after-a-restart) ·
+[A chain definition](#a-chain-definition) · [Repository profiles](#repository-profiles) ·
+[What the run provides](#what-the-run-provides) · [Checks](#checks) · [After a restart](#after-a-restart) ·
 [Tested how](#tested-how) · [Not tested, and limits](#not-tested-and-limits)
 
 ## Parts
@@ -27,10 +28,11 @@ Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-
 | `router/progress.py` | Renders the owner's view: the text of `router.py progress` and `progress.html`. It reads nothing itself. |
 | `router/templates/inner-pr.json` | One inner PR of a larger change as a chain: 17 steps, two gates (contract acceptance, merge). `--dry-run` lists the steps and names anything missing. |
 | `router/specs/*.md`, `router/contract-template.md` | The 12 role specs the chain names, one per worker step, in Orca's shape (target, change, constraints, ownership, observable acceptance); `arbiter.md`, a template the coordinator fills for a test dispute; and the template every contract follows. |
+| `router/profiles/*.json` | What differs between repositories (test, lint and commit commands, guarded paths, the rules file): `python`, `typescript`, `bell`. See [Repository profiles](#repository-profiles). |
 | `router/templates/smoke.json`, `router/specs/smoke-*.md` | A harmless chain that proves the router against real Orca: two workers at once, a question, a failure with a retry, a script step, a gate. |
 | `router/checks/*` | Checks that print one line, `OK …` or `NOT OK …`, and exit 0 or 1. |
 | `router/draft-pr.sh` | Opens the inner PR as a draft, so that step needs no model. Refuses `main` as the base. |
-| `tests/` | `test_router.py` (109 tests) and `fake-orca`, a stand-in for the Orca CLI. |
+| `tests/` | `test_router.py` (120 tests) and `fake-orca`, a stand-in for the Orca CLI. |
 | `skills/flow-run`, `skills/flow-status` | The two skills. |
 
 State lives in `$ROUTER_STATE` (default `$SCRATCH/router`, where `SCRATCH` is the run directory). `router.py --help`
@@ -111,8 +113,8 @@ per PR work as above.
   "title": "Move the payments client to v3",
   "slots": 2,
   "start": "auto",
-  "templates": {"inner-pr": "templates/inner-pr.json"},
-  "profile": "profiles/python.json",
+  "templates": {"inner-pr": "<FLOWS>/router/templates/inner-pr.json"},
+  "profile": "<FLOWS>/router/profiles/python.json",
   "vars": {"RUN_CONTEXT": "The payments client moves from v2 to v3."},
   "prs": [
     {"id": "p1", "part": "Part 1 · Dependencies", "title": "Pin the new client", "base": "payments-v3", "after": [],
@@ -128,8 +130,8 @@ per PR work as above.
 | `title` | Shown by `flow show` and the progress view. |
 | `slots` | Chains open at once (default `ROUTER_MAX_CHAINS`). With a flow it also caps chains started by hand. |
 | `start` | `auto`: the router starts a PR as soon as it is ready. `manual`: only `router.py flow start <pr>` does. Default `auto`. |
-| `templates` | Name → chain definition file, relative to the flow file (absolute allowed). |
-| `profile` | Optional: a JSON file `{"name", "vars"}`, relative to the flow file. Its `vars` are the lowest layer. |
+| `templates` | Name → chain definition file, relative to the flow file or absolute. `<FLOWS>` above stands for the plugin's directory, written out. |
+| `profile` | Optional: a [repository profile](#repository-profiles), `router/profiles/<name>.json` or a repository's own, relative to the flow file or absolute. Its `vars` are the lowest layer, and the `{SCRATCH}`, `{WT}` and `{PR}` in them are filled in. `inner-pr.json` defaults none of them, so a flow of inner PRs names one. |
 | `vars` | Variables for every PR. |
 | `prs[].id` | The `<pr>` of the chain: letters, digits, `.`, `_` and `-`, starting with a letter or digit. Upper and lower case are the same. |
 | `prs[].part`, `title` | The progress view's group and line. |
@@ -139,9 +141,9 @@ per PR work as above.
 | `prs[].vars` | The PR's own variables. |
 | `prs[].steps` | Optional: the PR's full step list, in a template's `steps` shape. It replaces the template's steps; the template still gives the kit and its `vars`. The chain gets it as `chains/<pr>/def.json`. |
 
-Variables, lowest first: `SCRATCH` from the environment of `flow apply`, the profile's, the template's `vars`, the
-flow's, the PR's, then the router's own: `PR`, `STATE`, `DEF_DIR` (the template's directory), `KIT`, `CHECKS`, and
-`BASE_BRANCH` from `base`. None of the router's own can be given in `vars`. A value may name another variable:
+Variables, lowest first: the profile's, the template's `vars`, the flow's, the PR's, then the router's own: `PR`,
+`STATE`, `DEF_DIR` (the template's directory), `KIT`, `CHECKS`, and `BASE_BRANCH` from `base`. Below them all,
+`SCRATCH` from the environment of `flow apply` fills in when nobody sets it. None of the router's own can be given in `vars`. A value may name another variable:
 `"WT": "{SCRATCH}/wt/{PR}"` is filled in. A name that no layer gives and the template's `"variables"` does not declare
 is refused as a typo. A declared name that nobody gives (`WT` most often) makes the PR wait: `flow show` says
 `waiting for: WT`, and the PR does not start until an apply gives it.
@@ -255,7 +257,7 @@ A plan is one JSON file:
 `id` is the `<pr>` given to `router.py chain`; upper and lower case are the same. Rows with the same `part` are drawn
 as one group, in the plan's order. Without a plan the view lists only the PRs whose chain was started. A chain the
 plan does not name is listed last, as "not in the plan". A chain is "done" when its last step has passed; in
-`templates/inner-pr.json` that is the merge gate. The router does not check that the merge happened.
+`router/templates/inner-pr.json` that is the merge gate. The router does not check that the merge happened.
 
 `progress.py` only renders, and `router.py` catches whatever it raises: a mistake in the view does not stop a
 daemon. The daemon's log then says `progress.html was not rewritten`.
@@ -315,7 +317,8 @@ Values a template can use:
   checks with `HEAD_AFTER` at the tree as it is then;
 - from earlier steps: `HEAD_BEFORE_<ID>` and `HEAD_AFTER_<ID>` (the id in upper case), and every exported `VAR`.
 
-`templates/inner-pr.json` declares these (its `"variables"` says the same):
+`router/templates/inner-pr.json` declares these (its `"variables"` says the same), and every variable of a
+[profile](#repository-profiles):
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -328,11 +331,74 @@ Values a template can use:
 | `LEDGER` | `1` | The PR has code to mutate. Empty for a PR with none. |
 | `GREEN_PINNED` | empty | `1` when the PR's tests pin behaviour the old code already has, so the ledger runs a round 0 on the old code. |
 | `IMPL_EFFORT` | `high` | The implementer's effort; `xhigh` for the hardest PR of a run. |
-| `EXTRA_SUITE` | empty | One extra test suite the validator runs as its own run (a contract or ABI suite). Empty: the gate is skipped and reported as skipped. |
-| `GOLDENS` | empty | The golden files the PR must not change unless its contract says so. Empty: the gate is skipped and reported as skipped. |
 
 A retry is a new Orca task with the same spec plus the coordinator's note; it does not use `--retry-of`, because
 the spec of an existing task cannot carry a note.
+
+## Repository profiles
+
+The specs name no test runner, linter, script or path of one repository. A profile carries those, as variables the
+specs read: `router/profiles/<name>.json`, `{"name": …, "about": …, "vars": {…}}`. Every profile sets every
+variable below, and `inner-pr.json` gives none of them a default, so a chain without a profile is refused before it
+starts (`router.py chain … --dry-run` names `{TEST_CMD}` and the others). Where a gate does not apply, the profile
+writes the literal `none` and the spec skips the gate and says so: skipping is a choice you can read in a file. A
+value may contain `{SCRATCH}`, `{WT}` and `{PR}`, and no other placeholder.
+
+| Variable | Meaning | `none` allowed | `python` | `typescript` | `bell` |
+|---|---|---|---|---|---|
+| `RULES` | A rules file every worker reads before anything else (standing rules, test limits). | yes: no rules file | `none` | `none` | `{SCRATCH}/briefs/rules-worker.md` |
+| `TEST_CMD` | Starts a targeted test run; a spec appends paths or ids. Also used inside throwaway copies. | no | `python -m pytest -q` | `npm test --` | the limited pytest wrapper under a wall-clock bound, `PYTEST_PY={WT}/.venv/bin/python` |
+| `UNIT_DIRS` | Where the fast tests live: the full unit suite (`{TEST_CMD} {UNIT_DIRS}`) and the validator's unit folders. | no | `tests` | `src` | `tests/unit` |
+| `TEST_PATHS` | One git pathspec for every test file: what the implementer may only un-mark and what `/simplify` and the code fixer may not touch. A script step checks it. | no | `tests/` | `:(glob)**/*.test.ts` | `tests/` |
+| `TEST_CONFIG` | One path: the test runner's settings, which no worker after the contract changes. A script step checks it. | no | `pytest.ini` | `vitest.config.ts` | `pytest.ini` |
+| `COPY_SETUP` | Run inside a throwaway copy of the worktree (ledgers, test fixer, validator replay) before its first test run, so the tests there find the installed dependencies. | yes: the copy needs nothing | `none` | `ln -s {WT}/node_modules node_modules` | `none` |
+| `LINT_CMD` | The lint and type-check gate, run from the worktree root with the shell variable `BASE` set to the PR's base commit, so it can pick the changed files. A pipeline starts with `set -o pipefail;`, so a failing `git diff` fails the gate. | yes: the validator reports "skipped: no lint command" | ruff on the changed `*.py` | `tsc --noEmit`, then eslint on the changed `*.ts`/`*.tsx` | `{SCRATCH}/bin/ci-lint-changed.sh "$BASE"` |
+| `FROZEN_PATHS` | Paths whose diff must be empty unless the contract says otherwise (goldens, snapshots, lockfiles); several, separated by spaces. | yes: "skipped: no frozen paths" | `none` | `none` | `tests/integration/bot/snapshots/` |
+| `EXTRA_SUITE` | The command of one extra suite the validator runs as its own run (a contract or ABI suite). | yes: "skipped: no extra suite" | `none` | `none` | the ABI suite through the same wrapper, `-n 0 -q -rfE --tb=line -p no:cacheprovider` |
+| `COMMIT_CMD` | How a worker commits; it takes `git commit`'s arguments. Hooks always run. | no | `git commit` | `git commit` | `{SCRATCH}/bin/locked-commit.sh` |
+
+`UNIT_DIRS` and `TEST_PATHS` differ on purpose: `UNIT_DIRS` is where the fast tests are run from, `TEST_PATHS` is
+what is guarded. In a Python repository with slow tests under `tests/integration`, `UNIT_DIRS` is `tests/unit` and
+`TEST_PATHS` is still `tests/`. `TEST_PATHS` and `TEST_CONFIG` are each one word, because the router quotes a value
+as one shell word in a check.
+
+Pytest-only today: the blind test writer marks a red-first test `@pytest.mark.xfail(strict=True, …)`, and
+`checks/xfail-only.py` (the implementer's check after a test writer, on the `tests/` prefix) accepts only the
+removal of those markers. A chain for another test runner sets `TESTS=` (empty): the test writer is skipped, the
+xfail check says `OK xfail-only: no test writer on this PR`, and the contract names every test the implementer
+writes. The `typescript` profile is meant to be run that way.
+
+A [flow file](#the-flow-file) names the profile in its `profile` field and merges its `vars` into every PR's
+variables. A chain started by hand, without a flow, gets them as `K=V`. Each pair is read into an array,
+NUL-separated, so a value with spaces or quotes stays one argument (bash and zsh):
+
+```sh
+P=$FLOWS/router/profiles/python.json
+args=(); while IFS= read -r -d '' kv; do args+=("$kv"); done < <(python3 -c 'import json,sys; sys.stdout.write("".join(f"{k}={v}\0" for k, v in json.load(open(sys.argv[1]))["vars"].items()))' "$P")
+$R chain <pr> --def $FLOWS/router/templates/inner-pr.json WT=… ISSUE=… BASE_BRANCH=… TITLE=… "${args[@]}"
+```
+
+On the command line a value is taken as it is: a `{SCRATCH}` or `{WT}` inside it reaches the worker unfilled. The
+`python` profile has none; for `typescript` and `bell` write the paths out, or use a flow file, which fills a profile
+value's `{SCRATCH}`, `{WT}` and `{PR}` before the specs are rendered.
+
+A new repository gets its own profile: copy the closest one, set every variable, and run
+`python3 tests/test_router.py -k Profiles` (it checks that each profile sets every variable and renders every spec).
+
+## What the run provides
+
+The specs read these paths under the run directory (`grep -rhoE '\{SCRATCH\}/[A-Za-z0-9_./-]+' router/specs
+router/templates | sort -u`, plus the profile values):
+
+| Path | Who writes it | Before the first chain |
+|---|---|---|
+| `{SCRATCH}/intent/<ISSUE>.md` | the coordinator: the sub-issue's "For the agent" comment, one file per sub-issue | create it for every PR's `ISSUE` |
+| `{SCRATCH}/plan/` | the coordinator: the run's plan, which the intent overrides | optional |
+| `{SCRATCH}/contracts/`, `ledger/`, `reviews/`, `pr/`, `work/` | the chain's workers (contract, ledger, reviews, PR body, throwaway copies) | nothing: workers create them |
+| the `RULES` file (`bell`: `{SCRATCH}/briefs/rules-worker.md`, until M1b hardcoded in every spec) | the coordinator | create it when `RULES` is not `none` |
+| the scripts `LINT_CMD`, `TEST_CMD`, `EXTRA_SUITE` and `COMMIT_CMD` name (`bell`: `{SCRATCH}/bin/ci-lint-changed.sh`, `locked-commit.sh`, `pytest-limited.sh`, `bounded.sh`; the lint script was hardcoded in the validator spec) | the coordinator, copied from the repository's tooling | create each one the profile names |
+
+`router/templates/inner-pr.json`'s `"files"` lists what each step writes.
 
 ## Checks
 
@@ -366,21 +432,34 @@ Every script prints its header with `--help` and exits 2 on bad usage.
 
 2026-10-09, the flow file (M1a).
 
-- `cd plugins/flows && python3 tests/test_router.py`: 109 tests, green (76 before). The new ones are in the classes
-  `FlowValidation` (each refusal of the file, with its reason line; a PR missing a variable is accepted and waits),
-  `FlowVersions` (v1, a no-op apply, a stale `--base` that leaves the copy byte for byte, history and journal, the
-  change lines), `FlowScheduler` (after, slots, manual, a PR that waits for `WT`, three scheduler passes that race
-  start one PR once, a flow the daemon cannot read), `FlowReread` (an edited, an added and a removed pending step;
-  a running, a done and an about-to-start step refused with `state.json` and the copy unchanged byte for byte;
-  variables a settled step used; exports kept; the cause of each attempt; a flow the runner cannot read),
-  `FlowRemoval`, `FlowCompat` (`chain`, `plan` and `progress` with and without a flow), and one in `Templates`: a
-  definition that names a kit runs its `run`, `when`, `checks` and `show` lines from the kit.
+- `cd plugins/flows && python3 tests/test_router.py`: 109 tests on the M1a branch, green (76 before); 120 once
+  merged with the profiles' 11. The new ones are in the classes `FlowValidation` (each refusal of the file, with its reason line; a PR missing a
+  variable is accepted and waits), `FlowVersions` (v1, a no-op apply, a stale `--base` that leaves the copy byte for
+  byte, history and journal, the change lines), `FlowScheduler` (after, slots, manual, a PR that waits for `WT`,
+  three scheduler passes that race start one PR once, a flow the daemon cannot read), `FlowReread` (an edited, an
+  added and a removed pending step; a running, a done and an about-to-start step refused with `state.json` and the
+  copy unchanged byte for byte; variables a settled step used; exports kept; the cause of each attempt; a flow the
+  runner cannot read), `FlowRemoval`, `FlowCompat` (`chain`, `plan` and `progress` with and without a flow), and one
+  in `Templates`: a definition that names a kit runs its `run`, `when`, `checks` and `show` lines from the kit.
 - 47 hand-made mutations of the new code, one at a time, each against the test written to catch it: 47 caught. One
   survived the first pass, and it showed dead code: `retry` marked its step's cause `retry`, which a later attempt
   already defaults to. The mark is gone; the mutation of the default is caught. A test written for the pass found one
   bug, now fixed: when the flow also set a variable that a step exported, the re-read gave the flow's value back.
 - Not tested: a flow on real Orca, and two applies from two terminals at the same instant (they take turns under
   `flow.lock`, which the race test covers for scheduler passes).
+
+2026-10-09, repository profiles.
+
+- `cd plugins/flows && python3 tests/test_router.py`: 87 tests, green (76 before). The 11 new ones: the class
+  `Profiles` (9: each profile sets every variable with no placeholder but `{SCRATCH}`, `{WT}`, `{PR}`; the template
+  defaults none of them; every spec of both templates renders with each profile and leaves no placeholder; the
+  validator and the implementer carry the profile's commands; a gate set to `none` is skipped, never run, and no
+  spec tells a worker to run, read or edit a variable set to `none`; the template's checks guard the profile's test
+  files; the rendered validator and implementer match `tests/fixtures/profiles/<profile>/`; a chain without a
+  profile is refused naming `{TEST_CMD}`, and passes with the `python` profile's vars), and two `Sweep` tests that
+  keep test runners, linters, a repository's scripts and paths out of `router/specs/` and `router/templates/`. A
+  wording change in the validator or implementer is a diff in those snapshots: `FLOWS_UPDATE_SNAPSHOTS=1 python3
+  tests/test_router.py -k snapshots` rewrites them.
 
 2026-10-09, the move into this plugin.
 
@@ -392,7 +471,7 @@ Every script prints its header with `--help` and exits 2 on bad usage.
   `{BASE_BRANCH}`; with it, `OK … 17 steps`.
 
 The entries below predate the move: `chain-inner-pr.json` and `chain-smoke.json` are today's
-`templates/inner-pr.json` and `templates/smoke.json`.
+`router/templates/inner-pr.json` and `router/templates/smoke.json`.
 
 2026-10-04, on Orca 1.4.219.
 
@@ -433,18 +512,20 @@ The entries below predate the move: `chain-inner-pr.json` and `chain-smoke.json`
 
 ## Not tested, and limits
 
-- No flow has run on real Orca. A profile's content (M1b), the page that edits a flow (M2), creating the worktrees a
-  flow names, and the collector are not part of the flow file yet.
-- The progress page has never shown a real Orca run. The pilot PR is its first.
+- No flow has run on real Orca. The page that edits a flow (M2), creating the worktrees a flow names, and the
+  collector are not part of the flow file yet.
+- The progress page has never shown a real Orca run.
 - The view is local: a file and a command. Nothing is posted on the epic and nobody is notified.
 - `stop <pr>` does not end a script step: the runner finishes the script first (a CI wait can take 90 minutes),
   and `stop` says `STILL RUNNING` after 15 s. The page shows the script as running until then.
 
-- `draft-pr.sh` has never opened a real PR, and `templates/inner-pr.json` has never run. Its role specs were written on 2026-10-05 and no worker has run one: the pilot PR is their first run.
+- `draft-pr.sh` has never opened a real PR, and `router/templates/inner-pr.json` has never run. Its role specs were
+  written on 2026-10-05 and no worker has run one. No profile has driven a real chain.
 - Codex as a worker under the router, a worker in another worktree (`path:` or `new-child`), and a run longer
-  than a few minutes are untested. The pilot PR is where they get their first run.
+  than a few minutes are untested.
 - A reboot is untested; the recovery above is by construction (state on disk) and by the killed-process tests.
 - The router does not cap Claude workers. Two chains at once (`ROUTER_MAX_CHAINS`) give at most two Claude
-  workers plus ad hoc ones. A chain holds its slot until it is done, also while it waits at a gate. Running tests are capped by the test lock, as before.
+  workers plus ad hoc ones. A chain holds its slot until it is done, also while it waits at a gate. The router does not cap test runs
+  either: a profile's `TEST_CMD` and `COMMIT_CMD` can (the `bell` profile's wrapper lets one test run at a time across all workers).
 - Bounded loops (a second review round, a survivor going back to a test writer) are not steps. They are the
   coordinator's decisions: an ad hoc worker, then `resume`.

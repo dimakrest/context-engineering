@@ -1188,6 +1188,19 @@ class FlowVersions(FlowCase):
         self.assertIn("  - profile prof/p.json -> prof/q.json\n", out)
         self.assertIn("  - B1: after A1, C1 -> C1\n", out)
 
+    def test_a_dry_run_lists_the_changes_and_writes_nothing(self):
+        self.apply(self.pr("A1"))
+        before, journal = (self.state / "flow.json").read_bytes(), self.journal()
+        rc, out = self.apply(self.pr("A1"), self.pr("B1", after=["A1"]), args=("--dry-run",))
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(out, "OK flow v1 -> v2, dry run, nothing written: 1 changes\n  - B1 added after A1\n")
+        self.assertEqual((self.state / "flow.json").read_bytes(), before)
+        self.assertEqual(self.journal(), journal)
+        rc, out = self.apply(self.pr("A1", base="main"), args=("--dry-run",))
+        self.assertEqual(rc, 1, out)                                   # refused as an apply is
+        self.assertIn("A1: base main: inner PRs go into the integration branch, never main or master", out)
+        self.assertIn("OK flow v1: no change", self.apply(self.pr("A1"), args=("--dry-run",))[1])
+
     def test_scratch_from_the_environment_fills_in_and_stays(self):
         self.template("one", [self.worker("a", worktree="path:{SCRATCH}")])
         self.env["SCRATCH"] = str(self.out)

@@ -44,11 +44,12 @@ Usage (the coordinator's whole interface; every command but progress prints a fe
   router.py stop [<pr> | --all]                   stop a chain's runner, or every daemon
 
 The flow (one versioned file that is the run's plan: its PR graph, each PR's steps, the variables):
-  router.py flow apply <file> [--base <version>] [--by <who>] [--note "<text>"]
+  router.py flow apply <file> [--base <version>] [--by <who>] [--note "<text>"] [--dry-run]
                                                   the only way a flow enters or changes a run: v1, then v+1 with one
                                                   history row. Refused, nothing changed, when --base is not the
                                                   current version, or a change touches a settled step, a started PR's
-                                                  after, or a variable a settled step used
+                                                  after, or a variable a settled step used. --dry-run: the same
+                                                  checks and change lines, nothing written
   router.py flow show                             the graph: one line per PR, with its state or what it waits for
   router.py flow start <pr>                       start a PR now (under "start": "manual"); refused unless it is ready
   router.py flow history [<n>]                    the last n versions: who, when, why, what changed (default 10)
@@ -97,6 +98,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -164,7 +166,7 @@ class State:
 
 def atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")   # the page server writes from a thread
     tmp.write_text(text)
     os.replace(tmp, path)
 
@@ -1536,7 +1538,7 @@ def refresh_progress(S: State, mailbox_stopped: bool = False) -> None:
     try:
         import progress
         page = S / "progress.html"
-        tmp = page.with_name(f".{page.name}.{os.getpid()}.tmp")
+        tmp = page.with_name(f".{page.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(progress.html_page(progress_data(S, mailbox_stopped)))   # no mkdir: a removed state directory stays removed
         os.replace(tmp, page)
     except Exception as e:
@@ -1616,26 +1618,25 @@ def pr_id_problem(pr: str) -> str:
     return f"{pr!r}: a PR id is letters, digits, '.', '_' and '-', and starts with a letter or digit"
 
 
-_lock_fd = None
-_lock_depth = 0
+_lock = threading.local()   # per thread: the daemon's page server applies from its own thread
 
 
 @contextlib.contextmanager
 def flow_lock(S: State):
     """flow apply, a scheduler pass and a runner's re-read take turns: none sees another half done, and two passes
-    that race (the daemon's tick, a runner that just finished) cannot start one PR twice or overfill the slots."""
-    global _lock_fd, _lock_depth
-    if not _lock_depth:
-        _lock_fd = open(S / "flow.lock", "a")
-        fcntl.flock(_lock_fd, fcntl.LOCK_EX)
-    _lock_depth += 1
+    that race (the daemon's tick, a runner that just finished, an apply from the page) cannot start one PR twice or
+    overfill the slots. Each thread opens the file itself, so two threads of one daemon also take turns."""
+    if not getattr(_lock, "depth", 0):
+        _lock.fd = open(S / "flow.lock", "a")
+        fcntl.flock(_lock.fd, fcntl.LOCK_EX)
+    _lock.depth = getattr(_lock, "depth", 0) + 1
     try:
         yield
     finally:
-        _lock_depth -= 1
-        if not _lock_depth:
-            _lock_fd.close()   # closing it releases the lock
-            _lock_fd = None
+        _lock.depth -= 1
+        if not _lock.depth:
+            _lock.fd.close()   # closing it releases the lock
+            _lock.fd = None
 
 
 def load_flow(S: State) -> "dict | None":
@@ -2084,10 +2085,12 @@ def flow_chain_problems(S: State, old: "dict | None", new: dict) -> "list[str]":
     return out
 
 
-def flow_apply(S: State, raw: object, base_dir: Path, base: "int | None" = None, by: str = "coordinator", note: str = "") -> dict:
+def flow_apply(S: State, raw: object, base_dir: Path, base: "int | None" = None, by: str = "coordinator", note: str = "",
+               dry_run: bool = False) -> dict:
     """The only way a flow enters or changes a run. Accepted: v+1, one history row, one journal line, the page, and a
-    scheduler pass. Refused: one line per problem, and nothing changed. A file the same as the current version: no-op."""
-    result = {"ok": False, "version": 0, "changes": [], "problems": [], "started": []}
+    scheduler pass. Refused: one line per problem, and nothing changed. A file the same as the current version: no-op.
+    dry_run: every check and the change lines of an accepted apply, and nothing written (the page shows them first)."""
+    result = {"ok": False, "version": 0, "changes": [], "problems": [], "started": [], "stale": False, "dry_run": dry_run}
     with flow_lock(S):
         try:
             old = load_flow(S)
@@ -2096,7 +2099,7 @@ def flow_apply(S: State, raw: object, base_dir: Path, base: "int | None" = None,
         cur = old["version"] if old else 0
         result["version"] = cur
         if base is not None and base != cur:
-            return dict(result, problems=[f"stale: the run is at v{cur}"])
+            return dict(result, problems=[f"stale: the run is at v{cur}"], stale=True)
         new, problems = flow_build(S, raw, base_dir)
         if old and new and not new["resolved"]["env"]:   # applied from a terminal without SCRATCH: the run keeps its own
             new["resolved"]["env"] = dict(old["resolved"].get("env") or {})
@@ -2105,8 +2108,8 @@ def flow_apply(S: State, raw: object, base_dir: Path, base: "int | None" = None,
         if problems:
             return dict(result, problems=problems)
         changes = flow_changes(S, old, new)
-        if not changes:
-            return dict(result, ok=True)
+        if not changes or dry_run:
+            return dict(result, ok=True, changes=changes)
         v = cur + 1
         ids = {p["id"].lower() for p in new["prs"]}
         new.update(version=v, history=list((old or {}).get("history") or []) + [{"v": v, "at": now(), "by": by, "note": note, "changes": changes}],
@@ -2304,11 +2307,15 @@ def cmd_flow(S: State, a: argparse.Namespace) -> int:
         except (OSError, ValueError) as e:
             print(f"NOT OK flow: 1 problem(s), nothing changed\n  - {a.file} could not be read: {e}")
             return 1
-        r = flow_apply(S, raw, Path(a.file).resolve().parent, base=a.base, by=a.by, note=a.note)
+        r = flow_apply(S, raw, Path(a.file).resolve().parent, base=a.base, by=a.by, note=a.note, dry_run=a.dry_run)
         if not r["ok"]:
             print(f"NOT OK flow: {len(r['problems'])} problem(s), nothing changed")
             print("\n".join(f"  - {x}" for x in r["problems"]))
             return 1
+        if a.dry_run and r["changes"]:
+            print(f"OK flow v{r['version']} -> v{r['version'] + 1}, dry run, nothing written: {len(r['changes'])} changes")
+            print("\n".join(f"  - {x}" for x in r["changes"]))
+            return 0
         if not r["changes"]:
             print(f"OK flow v{r['version']}: no change; the file is v{r['version']} as it is, so the version stays")
             return 0
@@ -2368,6 +2375,7 @@ def main() -> int:
     fs = sub.add_parser("flow").add_subparsers(dest="flow_cmd")
     p = fs.add_parser("apply"); p.add_argument("file"); p.add_argument("--base", type=lambda x: int(x.lstrip("v")))
     p.add_argument("--by", default="coordinator"); p.add_argument("--note", default="")
+    p.add_argument("--dry-run", action="store_true")
     fs.add_parser("show")
     p = fs.add_parser("start"); p.add_argument("pr")
     p = fs.add_parser("history"); p.add_argument("n", nargs="?", type=int, default=10)

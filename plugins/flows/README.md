@@ -645,10 +645,12 @@ Every script prints its header with `--help` and exits 2 on bad usage.
   and this round adds 2: `Page` (a `Content-Length` that is not a number answers 400, and nothing is logged as
   raised) and `Collector` (a lock a third collector takes between the stat and the retry is counted `locked 1 ·
   failed 0`, journaled once, and left to it). The daemon serves the page and collects released workers at once.
-- `python3 tests/test_page.py` with Playwright 1.63: 11 tests, green. The 3 new ones: a PR, its chips and the edit
-  switch are the same elements across two polls that redraw, and a ref taken before them still clicks through; a drag
-  started before a poll that reloads the flow still drops and applies; a step dropped on the right half of the
-  running step, and a role dropped there once no pending step is left, are taken, and the router applies them.
+- `python3 tests/test_page.py` with Playwright 1.63: 11 tests, green. The 3 new ones: the in-place draw, whose evidence
+  is `test_a_redraw_keeps_the_elements_it_does_not_change` (a PR, its chips and the edit switch are the same elements
+  across two polls that redraw, and a ref taken before them still clicks through); a guard for a flow reloaded during
+  a drag, `test_a_drag_started_before_a_poll_still_completes` (the drop lands on the reloaded flow and applies; it
+  passes on a full-replace draw too, so it is no evidence of the in-place one); a step dropped on the right half of
+  the running step, and a role dropped there once no pending step is left, are taken, and the router applies them.
 - Mutants, each in a scratch copy: the page emptied and rebuilt at each draw, a drop on a locked chip refused
   whatever its side, `Content-Length` read without its guard, and the retry's `FileExistsError` left to fail. Each
   one fails a named test.

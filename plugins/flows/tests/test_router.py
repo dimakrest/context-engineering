@@ -18,7 +18,8 @@ import time
 import unittest
 from pathlib import Path
 
-KIT = Path(__file__).resolve().parent.parent
+TESTS = Path(__file__).resolve().parent
+KIT = TESTS.parent / "router"
 ROUTER = str(KIT / "router.py")
 CHECKS = KIT / "checks"
 
@@ -34,7 +35,7 @@ class RouterCase(unittest.TestCase):
         (self.kit / "checks").symlink_to(CHECKS)
         (self.kit / "specs" / "w.md").write_text("Target: {OUT}\nChange: write {OUT}/{STEP}.txt (attempt {ATTEMPT})\n")
         self.env = dict(os.environ, ROUTER_STATE=str(self.state), FAKE_ORCA_DIR=str(self.fake),
-                        ORCA_CLI_COMMAND=str(KIT / "tests" / "fake-orca"), ROUTER_WAIT_MS="300", ROUTER_POLL_S="0.05",
+                        ORCA_CLI_COMMAND=str(TESTS / "fake-orca"), ROUTER_WAIT_MS="300", ROUTER_POLL_S="0.05",
                         ROUTER_SILENT_MIN=self.silent_min, ROUTER_REGISTRY_WAIT_S="0.3",
                         ORCA_TERMINAL_HANDLE="term_fake", ORCA_PANE_KEY="pane_fake")
         self.env.pop("SCRATCH", None)
@@ -400,7 +401,7 @@ class Daemons(RouterCase):
     def test_a_stranger_and_an_ad_hoc_worker(self):
         self.scenario({"match": "arbiter", "events": [self.done(0.1, subject="row 4 is wrong", body="The test asks more than the row.")]})
         self.R("init", ok=True)
-        subprocess.run([str(KIT / "tests" / "fake-orca"), "orchestration", "inject", "--event",
+        subprocess.run([str(TESTS / "fake-orca"), "orchestration", "inject", "--event",
                         json.dumps(self.done(0, subject="hello"))], env=self.env, capture_output=True, check=True)
         text = self.bell()
         self.assertIn("WAKE unrouted · worker_done succeeded from a worker the router did not start", text)

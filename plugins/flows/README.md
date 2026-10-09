@@ -15,7 +15,7 @@ journal line and started the next worker by hand. The router does those steps. T
 something needs a decision.
 
 Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-coordinators-loop) ·
-[The flow file](#the-flow-file) · [Seeing progress](#seeing-progress) · [Every worker's logs](#every-workers-logs) · [What rings](#what-rings) ·
+[The flow file](#the-flow-file) · [Seeing progress](#seeing-progress) · [Every worker's logs](#every-workers-logs) · [The run report](#the-run-report) · [What rings](#what-rings) ·
 [A chain definition](#a-chain-definition) · [Repository profiles](#repository-profiles) ·
 [What the run provides](#what-the-run-provides) · [Checks](#checks) · [After a restart](#after-a-restart) ·
 [Tested how](#tested-how) · [Not tested, and limits](#not-tested-and-limits)
@@ -27,13 +27,14 @@ Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-
 | `router/router.py` | The mailbox daemon, the chain runner, the doorbell and the coordinator's commands. `router.py --help` prints all of it. Python 3.9+, standard library only. |
 | `router/collector.py` | Gathers each settled worker's logs whole: Orca's archive of it, its events, and the agent session file that ran it, matched and copied, with its token usage summed. See [Every worker's logs](#every-workers-logs). |
 | `router/progress.py` | Renders the owner's view: the text of `router.py progress` and `progress.html`. It reads nothing itself. |
+| `router/report.py` | The run report: one HTML page that says where the time, the tokens and the interruptions went, from the records alone. See [The run report](#the-run-report). |
 | `router/templates/inner-pr.json` | One inner PR of a larger change as a chain: 17 steps, two gates (contract acceptance, merge). `--dry-run` lists the steps and names anything missing. |
 | `router/specs/*.md`, `router/contract-template.md` | The 12 role specs the chain names, one per worker step, in Orca's shape (target, change, constraints, ownership, observable acceptance); `arbiter.md`, a template the coordinator fills for a test dispute; and the template every contract follows. |
 | `router/profiles/*.json` | What differs between repositories (test, lint and commit commands, guarded paths, the rules file): `python`, `typescript`, `bell`. See [Repository profiles](#repository-profiles). |
 | `router/templates/smoke.json`, `router/specs/smoke-*.md` | A harmless chain that proves the router against real Orca: two workers at once, a question, a failure with a retry, a script step, a gate. |
 | `router/checks/*` | Checks that print one line, `OK …` or `NOT OK …`, and exit 0 or 1. |
 | `router/draft-pr.sh` | Opens the inner PR as a draft, so that step needs no model. Refuses `main` as the base. |
-| `tests/` | `test_router.py` (148 tests), `fake-orca`, a stand-in for the Orca CLI, and synthetic session files under `fixtures/collector/`. |
+| `tests/` | `test_router.py` (162 tests), `fake-orca`, a stand-in for the Orca CLI, synthetic session files under `fixtures/collector/`, and a synthetic run under `fixtures/report-run/` with its `metrics.golden.json`. |
 | `skills/flow-run`, `skills/flow-status` | The two skills. |
 
 State lives in `$ROUTER_STATE` (default `$SCRATCH/router`, where `SCRATCH` is the run directory). `router.py --help`
@@ -323,6 +324,48 @@ turns the automatic collection off; `FLOWS_CLAUDE_PROJECTS` (default `~/.claude/
 `FLOWS_CODEX_SESSIONS` (default `~/.codex/sessions`) say where the session files are. When Orca's archive answers
 `archive_not_ready` (the code the fake uses: the real CLI's is not known yet) the first page is asked for again three
 times, two seconds apart; then `orca-read.json` says `"status": "not available"`, never an empty transcript.
+
+## The run report
+
+```sh
+$R report                                  # writes $ROUTER_STATE/report.html and prints its path
+$R report --pr <pr> --out <file>           # one PR's section only
+python3 $FLOWS/router/report.py --state <dir> --out <file.html> [--metrics <file.json>] [--prices <file.json>]
+```
+
+One self-contained page per run (inline SVG, no script, no font from anywhere, light and dark), and with `--metrics`
+the same numbers as JSON. It reads the run's records and writes only the files named on its command line: no Orca
+call, and no session file is opened (`tokens.json` and `meta.json` are what the collector summed from them). A number
+whose record is missing prints `not recorded`; nothing is interpolated or estimated. No transcript text is shown:
+from a worker's summary it takes only the number after `FINDINGS:` and the word after `VERDICT:`.
+
+| Question | Record | Field |
+|---|---|---|
+| a. Wall clock per PR | `chains/<pr>/state.json` | `created` .. `ended` (a chain not done: not recorded) |
+| a. Worker time | `chains/<pr>/state.json` | `attempts[].started` .. `ended`, attempts with a dispatch |
+| a. Waiting at gates | `journal.md` | `paused: blocked` to the PR's next `coordinator:` line |
+| a. Paused | `journal.md` | any other `paused:` line to the PR's next `coordinator:` line; a pause another pause or `chain complete` ends first is counted as open, not as time |
+| a. The rest | the four above | wall − workers − gates − paused: starts, checks, scripts |
+| a. Ad hoc workers | `dispatches/<dispatch>.json` | `started` .. `settled`, shown apart from the chain's time |
+| b. Step durations | `chains/<pr>/state.json` | a PR's step: the sum of its attempts; median and max per step id |
+| b. Attempts by cause | `chains/<pr>/state.json` | `attempts[].cause` (`first`, `retry`, `resume_from`); none recorded: `first` for n = 1, else not recorded |
+| b. Checks not OK | `journal.md` | `check: NOT OK` lines per step |
+| c. Rings per kind | `journal.md`; `wake/` file names | `paused: <status>` (gate, failed, check, start, script, runner), `question:`, `escalation:` and the other message types; silent from `wake/[seen/]*-silent.txt` |
+| c. Collector lines | `journal.md` | `collector: <dispatch>: …` under collector, `… locked by another collector …` under locked, never under failed |
+| c. Questions per role | `journal.md`, `chains/<pr>/state.json` | `question:` lines; the role is the asking step's spec (`ad hoc` for an ad hoc worker) |
+| c. Time to answer | `events/<dispatch>/<created>-question-<id>.json` (the name only), `journal.md` | created to `coordinator: replied to <id>` |
+| d. Tokens per model | `logs/<pr>/<step>/<dispatch>/tokens.json` | totals (subagents included), by the model the step asked for, `requested -> effective` when Orca launched another (`attempts[].effective`) |
+| d. Subagents' share | `tokens.json` | `subagents` {files, turns, input, output, cache_creation, cache_read} |
+| d. By session model, cost | `tokens.json` `by_model`, `--prices` | per million tokens; a Codex input is priced without its cached part (Codex counts it inside input); without `--prices`: not priced |
+| d. No session match | `logs/*/*/<dispatch>/meta.json` | `session.match` other than `unique`, or not collected |
+| e. Review yield | `chains/<pr>/state.json` | `attempts[].summary` of review and triage steps: `FINDINGS: <n>`, `VERDICT: <WORD>` |
+| f. Flow history | `flow.json`; `chains/<pr>/state.json` | `history[]` (v, at, by, note, changes); `flow.started_at` |
+| g. Lessons | sections a to c | the slowest step, the most-retried step, the role that asked the most questions, the longest single wait at a gate, each with its pr, step and dispatch |
+
+A run whose collector never ran (no `logs/`) still gets its page: time, steps and interruptions come from
+`state.json` and `journal.md`, and the token section says not recorded. A prices file:
+`{"claude-opus-5-5": {"input": 15, "output": 75, "cache_creation": 18.75, "cache_read": 1.5}}`; none ships with the
+plugin, because prices change and belong to the owner.
 
 ## What rings
 
@@ -635,7 +678,7 @@ The entries below predate the move: `chain-inner-pr.json` and `chain-smoke.json`
   part of the flow file yet.
 - The collector has not read a real Orca archive: `worker-read` is answered by the fake, in the shape documented
   above, and its `source_changed` restart is taken from `worker-read --help`. Codex reports no cache writes, and
-  older Codex clients no token counts: those fields say "not recorded". No token prices: the report (M4) does that.
+  older Codex clients no token counts: those fields say "not recorded". No token prices ship with the plugin: the report prices tokens from a file the owner gives (`--prices`).
 - The progress page has never shown a real Orca run.
 - The view is local: a file and a command. Nothing is posted on the epic and nobody is notified.
 - `stop <pr>` does not end a script step: the runner finishes the script first (a CI wait can take 90 minutes),
@@ -651,3 +694,5 @@ The entries below predate the move: `chain-inner-pr.json` and `chain-smoke.json`
   either: a profile's `TEST_CMD` and `COMMIT_CMD` can (the `bell` profile's wrapper lets one test run at a time across all workers).
 - Bounded loops (a second review round, a survivor going back to a test writer) are not steps. They are the
   coordinator's decisions: an ad hoc worker, then `resume`.
+- The report has not read a real run's `logs/`: the group-B run's state directory has none (the collector did not
+  exist then). Cross-run comparison is not part of it, and the planner skill that reads its lessons table is M5.

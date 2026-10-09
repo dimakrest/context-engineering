@@ -1820,6 +1820,10 @@ class Collector(RouterCase):
     MAIN = "claude/-work-wt-fixture/11111111-aaaa-4aaa-8aaa-000000000001.jsonl"
     CODEX = "codex/2026/01/10/rollout-2026-01-10T11-00-05-55555555-eeee-4eee-8eee-000000000005.jsonl"
 
+    def test_fake_orca_is_executable(self):
+        self.assertTrue(os.access(TESTS / "fake-orca", os.X_OK),          # without it every test that runs Orca fails
+                        "tests/fake-orca lost its executable bit: git update-index --chmod=+x plugins/flows/tests/fake-orca")
+
     def setUp(self):
         super().setUp()
         self.sessions = self.tmp / "sessions"

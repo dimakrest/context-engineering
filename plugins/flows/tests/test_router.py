@@ -6,6 +6,7 @@
 
 Each test gets its own state directory and its own fake Orca, and stops every daemon it started.
 """
+import fcntl
 import json
 import os
 import re
@@ -1242,10 +1243,16 @@ class FlowScheduler(FlowCase):
         passes = [subprocess.Popen([sys.executable, "-c", code], env=self.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                   for _ in range(3)]
         time.sleep(1.0)
+        held = open(self.state / "flow.lock", "a")                     # an apply, say, holds the lock
+        fcntl.flock(held, fcntl.LOCK_EX)
         go.touch()
+        time.sleep(1.5)
+        self.assertEqual([p.poll() for p in passes], [None, None, None])   # every pass waits for it
+        self.assertEqual(self.chains(), [])
+        held.close()
         outs = [p.communicate(timeout=60)[0] for p in passes]
         self.assertEqual(self.journal().count("flow: started"), 1, outs)
-        self.assertEqual(self.chains(), ["A1"])                        # once, and one slot
+        self.assertEqual(self.chains(), ["A1"])                        # then they take turns: once, and one slot
 
     def test_a_flow_the_daemon_cannot_read_rings_and_the_daemon_goes_on(self):
         self.scenario()

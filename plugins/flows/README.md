@@ -625,6 +625,22 @@ Every script prints its header with `--help` and exits 2 on bad usage.
 
 ## Tested how
 
+2026-10-09, the run report (M4) with the page (M2) merged in, #42's round-2 lows, and review round 1 of the report.
+
+- `python3 tests/test_router.py` in a `git archive HEAD` export of `plugins/flows`: 188 tests, green. The merge of
+  `orca-router` gave 181 (#42's 165 and M4's 16; no class, fixture or `fake-orca` scenario shared), and this round
+  adds 7. `Collector`: an expired lock that another collector takes over before this one's `mkdir` is counted
+  `locked 1 · failed 0` and journaled once. `Report`: B1's review run through its check pause pins every part of the
+  split (the rest 40 s, no minus sign); 300 generated runs (stdlib `random`, a fixed seed, workers, gates and pauses
+  that overlap, some outside the wall clock) whose four parts are each a second-by-second count and add up to the wall
+  clock; a run without `journal.md` (not recorded, the wall clock and worker time still numbers) and one with an empty
+  journal (a real 0); `--pr A2` in the header and the metrics; an attempt with no end; and `report.py`'s imports and
+  calls read from its syntax tree. `metrics.golden.json` is unchanged.
+- `python3 tests/test_page.py` with Playwright 1.63: 11 tests, green.
+- Mutants, each in a scratch copy: the rest from the raw gate and pause spans, gate waits not less the workers' time,
+  gate waits that include the pauses, the journal's absence ignored, `--metrics` back to the whole run, an attempt
+  without an end counted as 0, and the takeover's `FileExistsError` left to fail. Each one fails a named test.
+
 2026-10-09, the run report (M4).
 
 - `python3 tests/test_router.py` in a `git archive HEAD` export of `plugins/flows`: 164 tests, green (148 before). The

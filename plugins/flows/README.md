@@ -308,8 +308,9 @@ changes only that copy:
 | Slots, start mode | the bar above the canvas |
 
 Locked, drawn with 🔒 and refusing the drag: a chain's steps up to its last settled step (done, running, at a gate,
-or claimed by its runner), and no step can be put before them; a started PR cannot be dropped. A refused drop says why
-on the canvas and leaves the copy as it was.
+or claimed by its runner), and no step can be put before them; a started PR cannot be dropped. Right after the last
+settled step is a place for a step like any other, also when no pending step is left. A refused drop says why on the
+canvas and leaves the copy as it was.
 
 **Apply** sends the whole copy, with the version it started from, to `POST /flow`, which is `flow apply`: the same
 function, the same checks, the same history row. First as a dry run: the page lists the change lines the router will
@@ -328,10 +329,14 @@ write in the history, and asks for a note. Then the apply. The answers:
 | `POST /flow` | `{"base": <version>, "by", "note", "flow": {...}, "dry_run": false}`. `200 {"ok": true, "version", "changes", "started", "dry_run"}`; `409 {"ok": false, "reason", "current": <the copy>}`; `422 {"ok": false, "problems": [...]}`, nothing changed |
 
 Anything else is a 404. The server answers only a `Host` of `127.0.0.1:<port>` or `localhost:<port>`, and a `POST`
-only from that origin with a JSON body (403 and 415 otherwise), so another site open in the same browser can neither
+only from that origin with a JSON body (403 and 415 otherwise; 400 for a `Content-Length` that is not a number), so another site open in the same browser can neither
 read the run nor apply a flow. Each request has its own thread with a 30 s socket timeout, and the body is read before
 `flow.lock` is taken, so a slow client holds nothing. A handler that raises answers 500 and writes the traceback in
 `mailbox.log`; the mail loop never waits for the server.
+
+A poll draws the page again only when the run changed, and then in place: a PR, a step chip and a palette role stay
+the same elements wherever they move, and so does every element whose place did not change. A click, a drag or an
+element ref taken before the poll still reaches the page after it.
 
 The page is plain HTML, CSS and JavaScript (no build step, no library, no CDN). It needs a Chromium-class browser:
 Orca's browser tab, Chrome, Edge. The drag uses pointer events, so a mouse, a pen, a finger, Playwright and
@@ -567,6 +572,21 @@ Every script prints its header with `--help` and exits 2 on bad usage.
 
 ## Tested how
 
+2026-10-09, the page (M2) with the collector (M3) merged in, and review round 1 of the page.
+
+- `python3 tests/test_router.py` in a `git archive HEAD` export of `plugins/flows`: 165 tests, green. The merge of
+  `orca-router` gave 163 (M2's 142 and the 21 that M3 and its reviews added to the 127, no class or fixture shared),
+  and this round adds 2: `Page` (a `Content-Length` that is not a number answers 400, and nothing is logged as
+  raised) and `Collector` (a lock a third collector takes between the stat and the retry is counted `locked 1 ·
+  failed 0`, journaled once, and left to it). The daemon serves the page and collects released workers at once.
+- `python3 tests/test_page.py` with Playwright 1.63: 11 tests, green. The 3 new ones: a PR, its chips and the edit
+  switch are the same elements across two polls that redraw, and a ref taken before them still clicks through; a drag
+  started before a poll that reloads the flow still drops and applies; a step dropped on the right half of the
+  running step, and a role dropped there once no pending step is left, are taken, and the router applies them.
+- Mutants, each in a scratch copy: the page emptied and rebuilt at each draw, a drop on a locked chip refused
+  whatever its side, `Content-Length` read without its guard, and the retry's `FileExistsError` left to fail. Each
+  one fails a named test.
+
 2026-10-09, the page (M2).
 
 - `cd plugins/flows && python3 tests/test_router.py`: 142 tests, green (127 before). The 15 new ones: the class `Page`
@@ -592,7 +612,8 @@ Every script prints its header with `--help` and exits 2 on bad usage.
   switch). The router was not bound to the real Run: its mailbox daemon would have consumed the coordinator's
   messages. One `orca click` entered edit mode; later clicks answered `Clicked` and never reached the page, so
   `orca drag` was not tried. That run also showed that a redraw at every poll made Orca's element refs stale within
-  5 s: the page now redraws only when the run changed.
+  5 s: the page now redraws only when the run changed, and (review round 1) in place, which may also be what lost
+  the clicks after the first. Not tried again in Orca yet.
 
 2026-10-09, the collector, review round 2 (M3).
 

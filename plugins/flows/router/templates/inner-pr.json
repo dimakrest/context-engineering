@@ -19,7 +19,7 @@
   "TEST_PATHS": "profile: ONE git pathspec for every test file, in which the implementer may only remove xfail markers, and which /simplify and the code fixer may not touch; a script step checks it (tests/, ':(glob)**/*.test.ts'). Compare UNIT_DIRS: where the fast tests run from, not what is guarded",
   "TEST_CONFIG": "profile: ONE path, the test runner's settings file, which no worker after the contract may change; a script step checks it",
   "COPY_SETUP": "profile: a command run inside a throwaway copy of the worktree before its first test run, so the tests there find the installed dependencies (ln -s {WT}/node_modules node_modules); none when the copy needs nothing",
-  "LINT_CMD": "profile: the lint and type-check gate, run from the worktree root with the shell variable BASE set to the PR's base commit, so it can pick the files the PR changes; none skips the gate, and the validator reports it as skipped",
+  "LINT_CMD": "profile: the lint gate (and a type-check, when the command runs one), run from the worktree root with the shell variable BASE set to the PR's base commit, so it can pick the files the PR changes; none skips the gate, and the validator reports it as skipped",
   "FROZEN_PATHS": "profile: one or more paths, separated by spaces, whose diff must be empty unless the contract says otherwise (goldens, snapshots, lockfiles); none skips the gate, and the validator reports it as skipped",
   "EXTRA_SUITE": "profile: the command of one extra test suite the validator runs as its own run, for example a contract or ABI suite; none skips the gate, and the validator reports it as skipped",
   "COMMIT_CMD": "profile: how a worker commits; it takes git commit's arguments (git commit, or a wrapper that holds a test lock)",

@@ -15,7 +15,8 @@ journal line and started the next worker by hand. The router does those steps. T
 something needs a decision.
 
 Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-coordinators-loop) ·
-[The flow file](#the-flow-file) · [Seeing progress](#seeing-progress) · [Every worker's logs](#every-workers-logs) · [The run report](#the-run-report) · [What rings](#what-rings) ·
+[The flow file](#the-flow-file) · [Seeing progress](#seeing-progress) · [The page](#the-page) ·
+[Every worker's logs](#every-workers-logs) · [The run report](#the-run-report) · [What rings](#what-rings) ·
 [A chain definition](#a-chain-definition) · [Repository profiles](#repository-profiles) ·
 [What the run provides](#what-the-run-provides) · [Checks](#checks) · [After a restart](#after-a-restart) ·
 [Tested how](#tested-how) · [Not tested, and limits](#not-tested-and-limits)
@@ -27,6 +28,7 @@ Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-
 | `router/router.py` | The mailbox daemon, the chain runner, the doorbell and the coordinator's commands. `router.py --help` prints all of it. Python 3.9+, standard library only. |
 | `router/collector.py` | Gathers each settled worker's logs whole: Orca's archive of it, its events, and the agent session file that ran it, matched and copied, with its token usage summed. See [Every worker's logs](#every-workers-logs). |
 | `router/progress.py` | Renders the owner's view: the text of `router.py progress` and `progress.html`. It reads nothing itself. |
+| `router/page/` | [The page](#the-page) the mailbox daemon serves on 127.0.0.1: the run as a graph of PRs, live, and the flow edited on the same canvas. One HTML file, its script and its styles; no build step, no framework, no request to another host. |
 | `router/report.py` | The run report: one HTML page that says where the time, the tokens and the interruptions went, from the records alone. See [The run report](#the-run-report). |
 | `router/templates/inner-pr.json` | One inner PR of a larger change as a chain: 17 steps, two gates (contract acceptance, merge). `--dry-run` lists the steps and names anything missing. |
 | `router/specs/*.md`, `router/contract-template.md` | The 12 role specs the chain names, one per worker step, in Orca's shape (target, change, constraints, ownership, observable acceptance); `arbiter.md`, a template the coordinator fills for a test dispute; and the template every contract follows. |
@@ -34,7 +36,7 @@ Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-
 | `router/templates/smoke.json`, `router/specs/smoke-*.md` | A harmless chain that proves the router against real Orca: two workers at once, a question, a failure with a retry, a script step, a gate. |
 | `router/checks/*` | Checks that print one line, `OK …` or `NOT OK …`, and exit 0 or 1. |
 | `router/draft-pr.sh` | Opens the inner PR as a draft, so that step needs no model. Refuses `main` as the base. |
-| `tests/` | `test_router.py` (164 tests), `fake-orca`, a stand-in for the Orca CLI, synthetic session files under `fixtures/collector/`, and a synthetic run under `fixtures/report-run/` with its `metrics.golden.json`. |
+| `tests/` | `test_router.py` (the suite; it prints its count), `test_page.py` (the page in headless Chromium, skipped without Playwright), `fake-orca`, a stand-in for the Orca CLI, synthetic session files under `fixtures/collector/`, and a synthetic run under `fixtures/report-run/` with its `metrics.golden.json`. |
 | `skills/flow-run`, `skills/flow-status` | The two skills. |
 
 State lives in `$ROUTER_STATE` (default `$SCRATCH/router`, where `SCRATCH` is the run directory). `router.py --help`
@@ -176,8 +178,8 @@ Each problem is one line, and a refusal changes nothing: no version, no history 
   or `master`; a value that names an unknown variable; a step list the chain validator rejects (the one `chain`
   uses); `slots` that is not a positive integer; `start` that is not `auto` or `manual`; `vars` that set a variable
   the router sets.
-- **Against the run:** `--base <v>` that is not the current version (`stale: the run is at v<N>`; the page will
-  send it). For a PR whose chain exists:
+- **Against the run:** `--base <v>` that is not the current version (`stale: the run is at v<N>`; the page always
+  sends it). For a PR whose chain exists:
   - a settled step (one that is not pending, or that its runner is about to start) edited, removed or moved, or a
     step put before it;
   - a changed value of a variable a settled step used: the `{NAME}`s of its definition and of its spec, `WT` and
@@ -211,7 +213,7 @@ Each problem is one line, and a refusal changes nothing: no version, no history 
 
 | Command | Prints |
 |---|---|
-| `$R flow apply <file> [--base <v>] [--by <who>] [--note "<text>"]` | `OK flow v<N>: <n> changes` and one line per change, then any PR it started; `OK flow v<N>: no change …` for the current version's file; or `NOT OK flow: <n> problem(s), nothing changed` and one line per problem (exit 1). |
+| `$R flow apply <file> [--base <v>] [--by <who>] [--note "<text>"] [--dry-run]` | `OK flow v<N>: <n> changes` and one line per change, then any PR it started; `OK flow v<N>: no change …` for the current version's file; or `NOT OK flow: <n> problem(s), nothing changed` and one line per problem (exit 1). With `--dry-run`: `OK flow v<N> -> v<N+1>, dry run, nothing written` and the change lines an apply would write, or the same refusal; nothing is written. |
 | `$R flow show` | `flow v<N> · slots <used>/<n> · start <auto\|manual>`, then one line per PR: id · part · title · after · state. The state is `not started · after <ids>`, `waiting for: <vars>`, `ready`, `running <step>`, `at a gate`, `paused`, `stopped`, `done`, or `removed in v<N>`. |
 | `$R flow start <pr>` | `OK started <pr> (v<N>), runner pid …`, or why it is not ready. |
 | `$R flow history [<n>]` | The last n versions (default 10): `v<N> · <when> · by <who> · <n> changes · <note>`, then the changes. |
@@ -227,6 +229,7 @@ This view is for the owner. The coordinator keeps to `status`, which is shorter.
 ```sh
 $R plan $SCRATCH/inner-prs.json        # once: the run's inner PRs in order, so those not started are listed too (a flow replaces it)
 open $SCRATCH/router/progress.html     # once: the page reloads itself every 15 s
+$R page --open                         # or the live page, with the flow's graph and its edits: see The page
 $R progress                            # the same view as text, from any terminal with SCRATCH or ROUTER_STATE set
 ```
 
@@ -270,6 +273,84 @@ plan does not name is listed last, as "not in the plan". A chain is "done" when 
 
 `progress.py` only renders, and `router.py` catches whatever it raises: a mistake in the view does not stop a
 daemon. The daemon's log then says `progress.html was not rewritten`.
+
+## The page
+
+The mailbox daemon also serves a page, from a thread of its own, on `127.0.0.1` only. It shows the run as a graph and
+lets the owner change the flow on it. Nothing in it leaves the machine.
+
+```sh
+$R page             # prints the URL (also in `$R status`, and in $ROUTER_STATE/page.json)
+$R page --open      # opens it in an Orca browser tab: orca tab create --url <url>
+```
+
+`ROUTER_PORT` picks the port (default 0: a free one, written to `page.json` with the daemon's pid). The page is
+additional: `progress.html` and `router.py progress` are written as before, for a run nobody opens a browser on.
+
+**View** (the default). Everything `progress.html` shows, read from `GET /state` every 5 s: the header (title, flow
+version, slots used, the mailbox daemon and its last delivery, the state directory, when the page last heard from the
+router), the four counters, the PRs, the workers, the rings nobody picked up, the questions nobody answered, the done
+PRs, the flow's last versions and the journal's last lines. The PRs are a graph: one lane per part, a column per depth
+of `after`, an arrow from each PR to the PRs that wait for it. Inside each PR its steps are chips with the glyphs of
+`progress` (✓ done, – skipped, ▶ running, ◆ at a gate, · pending, ✗ failed), and under a running step the worker:
+agent, model, effort, attempt, heartbeat age and phase. When `GET /state` has not answered for 30 s a banner says so:
+the daemon that serves the page has probably stopped.
+
+**Edit the flow** (the switch in the header). The same canvas, drawn from a local copy of `GET /flow`. Every edit
+changes only that copy:
+
+| Edit | How |
+|---|---|
+| Move a pending step | drag it before or after another pending step of the same PR |
+| Add a step | drag a role from the palette into a PR: every spec in the kits of the flow's templates, plus `gate` and `script`. A spec's step comes with the agent, model, effort and checks of the first template step that runs it (the flow's templates, then the kit's own `templates/`) |
+| Remove a step | its `×` |
+| Change a step | click it: agent, model, effort (a gate's title, a script's command) |
+| Add a PR | `+ Add a PR`, or `+ PR after <id>` on a PR: id, part, title, base, after, template, vars |
+| Drop a PR | `Drop PR`, for a PR that has not started |
+| Slots, start mode | the bar above the canvas |
+
+Locked, drawn with 🔒 and refusing the drag: a chain's steps up to its last settled step (done, running, at a gate,
+or claimed by its runner), and no step can be put before them; a started PR cannot be dropped. Right after the last
+settled step is a place for a step like any other, also when no pending step is left. A refused drop says why on the
+canvas and leaves the copy as it was.
+
+**Apply** sends the whole copy, with the version it started from, to `POST /flow`, which is `flow apply`: the same
+function, the same checks, the same history row. First as a dry run: the page lists the change lines the router will
+write in the history, and asks for a note. Then the apply. The answers:
+
+- `200`: the canvas is drawn again from `GET /state` and `GET /flow`; the page assumes nothing.
+- `409` (`stale: the run is at v<N>`): someone else applied first. The page says "someone else changed the flow (v<N>):
+  reload and redo", and shows v<N>.
+- `422`: the router's problem lines, next to the canvas. The local edits stay, to be fixed and applied again.
+
+| Route | Answer |
+|---|---|
+| `GET /` and `GET /page/<file>` | the page (`router/page/index.html`, `page.js`, `page.css`) |
+| `GET /state` | `progress_data` as JSON, plus `flow`: `version`, `slots`, `start`, `prs` (each with the steps the flow gives it, `started`, and `fixed`: how many of its first steps are settled), `palette`, `templates`, `removed`, the last 5 `history` rows |
+| `GET /flow` | the router's copy, `flow.json` (404 before the first apply) |
+| `POST /flow` | `{"base": <version>, "by", "note", "flow": {...}, "dry_run": false}`. `200 {"ok": true, "version", "changes", "started", "dry_run"}`; `409 {"ok": false, "reason", "current": <the copy>}`; `422 {"ok": false, "problems": [...]}`, nothing changed |
+
+Anything else is a 404. The server answers only a `Host` of `127.0.0.1:<port>` or `localhost:<port>`, and a `POST`
+only from that origin with a JSON body (403 and 415 otherwise; 400 for a `Content-Length` that is not a number), so another site open in the same browser can neither
+read the run nor apply a flow. Each request has its own thread with a 30 s socket timeout, and the body is read before
+`flow.lock` is taken, so a slow client holds nothing. A handler that raises answers 500 and writes the traceback in
+`mailbox.log`; the mail loop never waits for the server.
+
+A poll draws the page again only when the run changed, and then in place: a PR, a step chip and a palette role stay
+the same elements wherever they move, and so does every element whose place did not change. A click, a drag or an
+element ref taken before the poll still reaches the page after it.
+
+The page is plain HTML, CSS and JavaScript (no build step, no library, no CDN). It needs a Chromium-class browser:
+Orca's browser tab, Chrome, Edge. The drag uses pointer events, so a mouse, a pen, a finger, Playwright and
+`orca tab drag` all work the same way.
+
+To run its browser tests (`tests/test_page.py`), install Playwright and its Chromium once:
+
+```sh
+python3 -m pip install playwright && python3 -m playwright install chromium
+```
+
+Without them `tests/test_page.py` skips every test and prints that line; `tests/test_router.py` needs neither.
 
 ## Every worker's logs
 
@@ -458,7 +539,7 @@ value may contain `{SCRATCH}`, `{WT}` and `{PR}`, and no other placeholder.
 | `TEST_PATHS` | One git pathspec for every test file: what the implementer may only un-mark and what `/simplify` and the code fixer may not touch. A script step checks it. | no | `tests/` | `:(glob)**/*.test.ts` | `tests/` |
 | `TEST_CONFIG` | One path: the test runner's settings, which no worker after the contract changes. A script step checks it. | no | `pytest.ini` | `vitest.config.ts` | `pytest.ini` |
 | `COPY_SETUP` | Run inside a throwaway copy of the worktree (ledgers, test fixer, validator replay) before its first test run, so the tests there find the installed dependencies. | yes: the copy needs nothing | `none` | `ln -s {WT}/node_modules node_modules` | `none` |
-| `LINT_CMD` | The lint and type-check gate, run from the worktree root with the shell variable `BASE` set to the PR's base commit, so it can pick the changed files. A pipeline starts with `set -o pipefail;`, so a failing `git diff` fails the gate. | yes: the validator reports "skipped: no lint command" | ruff on the changed `*.py` | `tsc --noEmit`, then eslint on the changed `*.ts`/`*.tsx` | `{SCRATCH}/bin/ci-lint-changed.sh "$BASE"` |
+| `LINT_CMD` | The lint gate, and a type-check when the command runs one (the `python` profile's does not), run from the worktree root with the shell variable `BASE` set to the PR's base commit, so it can pick the changed files. A pipeline starts with `set -o pipefail;`, so a failing `git diff` fails the gate. | yes: the validator reports "skipped: no lint command" | ruff on the changed `*.py` | `tsc --noEmit`, then eslint on the changed `*.ts`/`*.tsx` | `{SCRATCH}/bin/ci-lint-changed.sh "$BASE"` |
 | `FROZEN_PATHS` | Paths whose diff must be empty unless the contract says otherwise (goldens, snapshots, lockfiles); several, separated by spaces. | yes: "skipped: no frozen paths" | `none` | `none` | `tests/integration/bot/snapshots/` |
 | `EXTRA_SUITE` | The command of one extra suite the validator runs as its own run (a contract or ABI suite). | yes: "skipped: no extra suite" | `none` | `none` | the ABI suite through the same wrapper, `-n 0 -q -rfE --tb=line -p no:cacheprovider` |
 | `COMMIT_CMD` | How a worker commits; it takes `git commit`'s arguments. Hooks always run. | no | `git commit` | `git commit` | `{SCRATCH}/bin/locked-commit.sh` |
@@ -556,6 +637,49 @@ Every script prints its header with `--help` and exits 2 on bad usage.
 - Read-only over the group-B run's state directory: 14 PRs, 266 dispatches (104 ad hoc), 0 collected sessions (it has
   no `logs/`), 22 sections. The first pass found a negative rest in 8 of 14 PRs: a review group's workers run at once.
   The rest is now measured against the time workers covered.
+
+2026-10-09, the page (M2) with the collector (M3) merged in, and review round 1 of the page.
+
+- `python3 tests/test_router.py` in a `git archive HEAD` export of `plugins/flows`: 165 tests, green. The merge of
+  `orca-router` gave 163 (M2's 142 and the 21 that M3 and its reviews added to the 127, no class or fixture shared),
+  and this round adds 2: `Page` (a `Content-Length` that is not a number answers 400, and nothing is logged as
+  raised) and `Collector` (a lock a third collector takes between the stat and the retry is counted `locked 1 ·
+  failed 0`, journaled once, and left to it). The daemon serves the page and collects released workers at once.
+- `python3 tests/test_page.py` with Playwright 1.63: 11 tests, green. The 3 new ones: a PR, its chips and the edit
+  switch are the same elements across two polls that redraw, and a ref taken before them still clicks through; a drag
+  started before a poll that reloads the flow still drops and applies; a step dropped on the right half of the
+  running step, and a role dropped there once no pending step is left, are taken, and the router applies them.
+- Mutants, each in a scratch copy: the page emptied and rebuilt at each draw, a drop on a locked chip refused
+  whatever its side, `Content-Length` read without its guard, and the retry's `FileExistsError` left to fail. Each
+  one fails a named test.
+
+2026-10-09, the page (M2).
+
+- `cd plugins/flows && python3 tests/test_router.py`: 142 tests, green (127 before). The 15 new ones: the class `Page`
+  (11: the routes and the 404s; `GET /state` with the rows and the flow; `GET /flow` is the copy; `POST /flow` with
+  the current base makes one version and one history row, and its dry run writes nothing; a stale base answers 409
+  and leaves `flow.json` byte for byte; a done step moved answers 422 with the router's line, as do a bad body and a
+  `main` base, and a text body is 415; the page is on 127.0.0.1 at `ROUTER_PORT`, refuses another `Host` and another
+  `Origin`; the mail loop settles two workers while two clients hold half-sent requests open; a handler that raises
+  answers 500 and is logged while the daemon goes on; `router.py page` and `page --open` against the stand-in's `tab
+  create`; two threads of one daemon take turns at `flow.lock`), `FlowVersions` (a permuted `after` and a re-spelled
+  profile path are no change; `flow apply --dry-run`), `FlowValidation` (a shared value that fails for some PRs names
+  them), `Profiles` (no profile sets a variable the specs cannot do without to `none`).
+- `python3 tests/test_page.py` with Playwright 1.63 and its Chromium: 8 tests, green. A 2-PR flow on the daemon: the
+  canvas shows both PRs, their steps and the arrow; a pending step dragged before another and applied is v2 with
+  only that order changed, and the page's lines are the history's; a role dropped from the palette becomes a step
+  with the role's usual model; a drag onto a done step is drawn refused and offers no Apply; a refused apply shows the
+  router's line and keeps the edits; another terminal's apply first makes the page reload v2. View mode at 1400 px
+  light and 900 px dark matches `tests/fixtures/page/view-1400-light.png` and `view-900-dark.png` (same size, at most
+  1% of pixels off by more than 48 of 255). A node 20 px wider fails it. Without Playwright, the 8 are skipped with the
+  install line.
+- The Orca pilot, Orca 1.4.223: on a run of the stand-in, `router.py page --open` with the real `orca` opened the page
+  in an Orca browser tab, and `orca snapshot` showed its header (the title, the run line, the View / Edit the flow
+  switch). The router was not bound to the real Run: its mailbox daemon would have consumed the coordinator's
+  messages. One `orca click` entered edit mode; later clicks answered `Clicked` and never reached the page, so
+  `orca drag` was not tried. That run also showed that a redraw at every poll made Orca's element refs stale within
+  5 s: the page now redraws only when the run changed, and (review round 1) in place, which may also be what lost
+  the clicks after the first. Not tried again in Orca yet.
 
 2026-10-09, the collector, review round 2 (M3).
 
@@ -696,12 +820,15 @@ The entries below predate the move: `chain-inner-pr.json` and `chain-smoke.json`
 
 ## Not tested, and limits
 
-- No flow has run on real Orca. The page that edits a flow (M2) and creating the worktrees a flow names are not
-  part of the flow file yet.
+- No flow has run on real Orca. Creating the worktrees a flow names is not part of the flow file yet.
 - The collector has not read a real Orca archive: `worker-read` is answered by the fake, in the shape documented
   above, and its `source_changed` restart is taken from `worker-read --help`. Codex reports no cache writes, and
-  older Codex clients no token counts: those fields say "not recorded". No token prices ship with the plugin: the report prices tokens from a file the owner gives (`--prices`).
-- The progress page has never shown a real Orca run.
+  older Codex clients no token counts: those fields say "not recorded". No token prices ship with the plugin: the
+  report prices tokens from a file the owner gives (`--prices`).
+- The progress page has never shown a real Orca run. The live page has been opened in a real Orca tab only on a run
+  of the stand-in (see Tested how).
+- The page has no login: whoever can reach 127.0.0.1 on this machine can read the run and apply a flow, as from a
+  terminal. No remote access, no layout saved per person; the run report is not on it.
 - The view is local: a file and a command. Nothing is posted on the epic and nobody is notified.
 - `stop <pr>` does not end a script step: the runner finishes the script first (a CI wait can take 90 minutes),
   and `stop` says `STILL RUNNING` after 15 s. The page shows the script as running until then.

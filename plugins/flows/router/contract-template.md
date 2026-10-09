@@ -27,7 +27,7 @@ Every item of the intent's goal and "Done means" for this PR maps to at least on
 
 - Test writer may touch: <paths>
 - Implementer may touch: <paths>
-- Untouched by both: pytest.ini, frozen tests, goldens, <others>
+- Untouched by both: the test runner's settings file, the frozen paths the profile names, <others>
 
 ## Gates
 

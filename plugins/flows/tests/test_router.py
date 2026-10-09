@@ -1025,9 +1025,8 @@ class Sweep(unittest.TestCase):
                      "the test runner's settings", "rustc", "a ruffle"):
             self.assertFalse(self.TOOLS.search(fine), fine)
 
-    def files(self, with_contract_template=True):
-        files = sorted(p for d in (KIT / "specs", TEMPLATES) for p in d.rglob("*") if p.is_file())
-        return files + ([KIT / "contract-template.md"] if with_contract_template else [])
+    def files(self):
+        return sorted(p for d in (KIT / "specs", TEMPLATES) for p in d.rglob("*") if p.is_file()) + [KIT / "contract-template.md"]
 
     def test_specs_and_templates_name_no_project_version_or_pr_of_a_past_run(self):
         files = self.files()
@@ -1039,7 +1038,7 @@ class Sweep(unittest.TestCase):
 
     def test_specs_and_templates_name_no_test_runner_linter_or_script_of_one_repository(self):
         hits, used = [], set()
-        for p in self.files(with_contract_template=False):
+        for p in self.files():
             rel = str(p.relative_to(KIT))
             for n, line in enumerate(p.read_text().splitlines(), 1):
                 allowed = [key for key in self.ALLOWED if key[0] == rel and key[1] in line]

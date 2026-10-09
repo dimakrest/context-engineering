@@ -3021,6 +3021,22 @@ class Report(unittest.TestCase):
         self.assertEqual((m["time"]["A1"]["paused_s"], m["time"]["A1"]["gate_s"], m["time"]["A1"]["open_waits"]), (0, 2040, 1))
         self.assertEqual(m["time"]["A1"]["rest_s"], 7200 - 4200 - 2040)
 
+    def test_an_attempt_without_an_end_leaves_its_prs_worker_time_not_recorded(self):
+        state = self.copy()
+        st = json.loads((state / "chains/A1/state.json").read_text())
+        review = [s for s in st["steps"] if s["id"] == "review"][0]
+        del review["attempts"][0]["ended"]
+        (state / "chains/A1/state.json").write_text(json.dumps(st))
+        page, m, _ = self.report(state)
+        nr = "not recorded"
+        t = m["time"]["A1"]
+        self.assertEqual(t["wall_s"], 7200)
+        self.assertEqual([t[k] for k in ("worker_s", "worker_covered_s", "gate_s", "paused_s", "rest_s")], [nr] * 5)
+        self.assertEqual((m["time"]["total"]["worker_s"], m["per_pr"]["A1"]["steps"]["review"]["duration_s"]), (nr, nr))
+        self.assertEqual(m["time"]["B1"], self.golden()["time"]["B1"])         # the other PRs keep theirs
+        cells = re.findall(r"<td[^>]*>(.*?)</td>", page.split('id="pr-A1"')[1].split("<tr><td>A1</td>")[1].split("</tr>")[0])
+        self.assertEqual(cells[3:8], [nr] * 5)                                 # workers (sum, covered), gates, paused, rest
+
     def test_an_attempt_without_a_cause_is_first_only_when_it_is_the_first(self):
         state = self.copy()                                                     # a chain started before flows recorded causes
         for pr in ("A1", "B1", "A2"):

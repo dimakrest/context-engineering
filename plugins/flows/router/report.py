@@ -30,7 +30,8 @@ The questions, and the record behind each answer:
                       complete" ends first has no recorded end and is counted as open). The split is a partition of
                       the wall clock, each second in one part, by priority: covered, then at gates (gate waits less
                       covered), then paused (pauses less both), then the rest (starts, checks, scripts). So no part
-                      is negative and the four add up to the wall clock.
+                      is negative and the four add up to the wall clock. An attempt with a dispatch and no started
+                      or ended: the PR's worker time and its split are "not recorded".
                       Ad hoc workers: dispatches/<dispatch>.json started..settled, shown apart.
   b. steps            per step id across PRs: the duration of a PR's step is the sum of its attempts' started..ended;
                       median and max; attempts by state.json's cause (an attempt without one: "first" when n is 1,
@@ -325,13 +326,17 @@ def time_split(run: Run, pr: str) -> dict:
     st = run.chains[pr]
     done = st.get("ended") if st.get("status") == "done" else None
     wall = span(st.get("created"), done)
-    worker, spans = 0, []
+    worker, spans, unspanned = 0, [], False
     for step in st["steps"]:
         for att in step.get("attempts") or []:
+            if not att.get("dispatch"):
+                continue
             s = span(att.get("started"), att.get("ended"))
-            if att.get("dispatch") and s is not None:
-                worker += s
-                spans.append((ts_epoch(att["started"]), ts_epoch(att["ended"])))
+            if s is None:
+                unspanned = True   # as for its step: the time is "not recorded", never a partial sum
+                continue
+            worker += s
+            spans.append((ts_epoch(att["started"]), ts_epoch(att["ended"])))
     ws = waits(run, pr)
     lo, hi = ts_epoch(st.get("created")), ts_epoch(done)
 
@@ -344,11 +349,13 @@ def time_split(run: Run, pr: str) -> dict:
     pauses = minus(minus(within("paused"), covered), gates)
     split = {"worker_covered_s": seconds(covered), "gate_s": seconds(gates), "paused_s": seconds(pauses)}
     split["rest_s"] = NR if wall is None else wall - sum(split.values())
+    if unspanned:   # the split needs every worker's span: the gate and pause parts are what workers did not cover
+        split = dict.fromkeys(split, NR)
     if not run.has_journal:
         split.update(gate_s=NR, paused_s=NR, rest_s=NR)
     adhoc = [r["duration_s"] for r in run.dispatches if r["adhoc"] and r["pr"] == pr and r["duration_s"] is not None]
     return {"created": st.get("created") or NR, "done": done or NR, "wall_s": NR if wall is None else wall,
-            "worker_s": worker, **split, "open_waits": sum(1 for w in ws if w["s"] is None) if run.has_journal else NR,
+            "worker_s": NR if unspanned else worker, **split, "open_waits": sum(1 for w in ws if w["s"] is None) if run.has_journal else NR,
             "adhoc_s": sum(adhoc)}
 
 

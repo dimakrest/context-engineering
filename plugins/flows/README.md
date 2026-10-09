@@ -423,7 +423,7 @@ from a worker's summary it takes only the number after `FINDINGS:` and the word 
 | Question | Record | Field |
 |---|---|---|
 | a. Wall clock per PR | `chains/<pr>/state.json` | `created` .. `ended` (a chain not done: not recorded) |
-| a. Worker time | `chains/<pr>/state.json` | `attempts[].started` .. `ended`, attempts with a dispatch |
+| a. Worker time | `chains/<pr>/state.json` | `attempts[].started` .. `ended`, attempts with a dispatch; one of them without either: not recorded, and so is the split below |
 | a. Workers covered | `chains/<pr>/state.json` | the time at least one worker ran: a group's workers run at once, so their sum can pass the wall clock |
 | a. Waiting at gates | `journal.md` | `paused: blocked` to the PR's next `coordinator:` line, less the time a worker ran |
 | a. Paused | `journal.md` | any other `paused:` line to the PR's next `coordinator:` line, less the time a worker ran or a gate waited; a pause another pause or `chain complete` ends first is counted as open, not as time |

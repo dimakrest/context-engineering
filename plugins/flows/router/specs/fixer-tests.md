@@ -1,8 +1,8 @@
-Target: inner PR {PR} ("{TITLE}"), triaged. Worktree {WT} at {HEAD_BEFORE}. The contract is {SCRATCH}/contracts/{PR}.md. Rules: before anything else read {SCRATCH}/briefs/rules-worker.md (standing rules and test limits); it binds you.
+Target: inner PR {PR} ("{TITLE}"), triaged. Worktree {WT} at {HEAD_BEFORE}. The contract is {SCRATCH}/contracts/{PR}.md. Rules file: {RULES}. When that is a path, read it before anything else (standing rules and test limits); it binds you.
 
-Change: do every item in {SCRATCH}/reviews/{PR}/fix-tests.md, and nothing else. Write each test from the contract row and the item, not from how the code happens to be written. For an item that names a surviving mutation: write the test, then prove it in a throwaway copy (`git -C {WT} worktree add --detach {SCRATCH}/work/{PR}/fix-tests/wt HEAD`, removed at the end): with the patch applied the test fails on its own assertion, and without it the test passes. Run the tests you added or changed. Commit through the locked-commit script from the rules file, with every hook passing, and push this branch.
+Change: do every item in {SCRATCH}/reviews/{PR}/fix-tests.md, and nothing else. Write each test from the contract row and the item, not from how the code happens to be written. For an item that names a surviving mutation: write the test, then prove it in a throwaway copy (`git -C {WT} worktree add --detach {SCRATCH}/work/{PR}/fix-tests/wt HEAD`, removed at the end; unless `{COPY_SETUP}` is none, run it inside the copy first): with the patch applied the test fails on its own assertion, and without it the test passes. Run the tests you added or changed with `{TEST_CMD}`. Commit with `{COMMIT_CMD}`, with every hook passing, and push this branch.
 
-Constraints: tests only: no production code, not pytest.ini, not the contract. Do not weaken or delete an existing assertion. If an item cannot be done as written, do the others and say which one and why. No GitHub write.
+Constraints: tests only: no production code, not {TEST_CONFIG}, not the contract. Do not weaken or delete an existing assertion. If an item cannot be done as written, do the others and say which one and why. No GitHub write.
 
 Ownership: test files under the paths the contract's Scope gives the test writer, {SCRATCH}/reviews/{PR}/fix-tests-done.md and {SCRATCH}/work/{PR}/fix-tests/.
 

@@ -1,8 +1,8 @@
-Target: inner PR {PR} ("{TITLE}"), triaged. Worktree {WT} at {HEAD_BEFORE}. The contract is {SCRATCH}/contracts/{PR}.md. Rules: before anything else read {SCRATCH}/briefs/rules-worker.md (standing rules and test limits); it binds you.
+Target: inner PR {PR} ("{TITLE}"), triaged. Worktree {WT} at {HEAD_BEFORE}. The contract is {SCRATCH}/contracts/{PR}.md. Rules file: {RULES}. When that is a path, read it before anything else (standing rules and test limits); it binds you.
 
-Change: do every item in {SCRATCH}/reviews/{PR}/fix-code.md, and nothing else. One commit per item, with a message that starts `fix(review): <item id>`. After each fix run the tests that cover it; when all are done run the contract's gate commands. Commit through the locked-commit script from the rules file, with every hook passing, and push this branch.
+Change: do every item in {SCRATCH}/reviews/{PR}/fix-code.md, and nothing else. One commit per item, with a message that starts `fix(review): <item id>`. After each fix run the tests that cover it (`{TEST_CMD} <paths or ids>`); when all are done run the contract's gate commands. Commit with `{COMMIT_CMD}`, with every hook passing, and push this branch.
 
-Constraints: no file under tests/ and not pytest.ini: a script checks both. If a fix needs a test to change, do not make that fix: say so in your report. Stay inside the contract's Scope and keep every "Must not" item. No refactoring beyond the item. No GitHub write.
+Constraints: no test file ({TEST_PATHS}) and not {TEST_CONFIG}: a script checks both. If a fix needs a test to change, do not make that fix: say so in your report. Stay inside the contract's Scope and keep every "Must not" item. No refactoring beyond the item. No GitHub write.
 
 Ownership: production code under the paths the contract's Scope gives the implementer, and {SCRATCH}/reviews/{PR}/fix-code-done.md.
 

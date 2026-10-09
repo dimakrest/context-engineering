@@ -6,6 +6,7 @@
 
 Each test gets its own state directory and its own fake Orca, and stops every daemon it started.
 """
+import fcntl
 import json
 import os
 import re
@@ -995,6 +996,596 @@ class Templates(RouterCase):
         rc, out = self.R("chain", "t2", "--def", str(path), "--dry-run", f"OUT={self.out}")
         self.assertEqual(rc, 1, out)
         self.assertIn("t2: the definition's kit '../nowhere' is not a directory", out)
+
+    def test_a_definition_that_names_a_kit_runs_its_commands_from_the_kit(self):
+        kit2 = self.tmp / "kit2"
+        (kit2 / "checks").mkdir(parents=True)
+        (kit2 / "templates").mkdir()
+        (kit2 / "checks" / "x.sh").write_text('#!/usr/bin/env bash\necho "OK $1 ran in $(pwd -P)"\n')
+        (kit2 / "checks" / "x.sh").chmod(0o755)
+        shutil.copytree(self.kit / "specs", kit2 / "specs")
+        path = kit2 / "templates" / "c.json"
+        path.write_text(json.dumps({"name": "t1", "kit": "..", "steps": [
+            self.worker("a", when="test -x checks/x.sh", checks=["checks/x.sh check"]),
+            {"id": "s", "type": "script", "when": "test -x checks/x.sh", "run": "checks/x.sh script"},
+            {"id": "g", "type": "gate", "title": "hold", "show": ["checks/x.sh show"]}]}))
+        self.scenario({"match": "t1 a$", "events": [self.done(0.1)]})
+        self.R("init", ok=True)
+        self.assertEqual(self.R("chain", "t1", "--def", str(path), f"OUT={self.out}")[0], 0)
+        text = self.bell()
+        where = kit2.resolve()
+        self.assertIn(f"OK show ran in {where}", text)                 # the gate's show line
+        self.assertIn(f"check: OK check ran in {where}", self.journal())   # the worker's check, after its when
+        self.assertIn(f"script exit 0: OK script ran in {where}", self.journal())
+
+
+class FlowCase(RouterCase):
+    """A run planned as a flow file: tmp/flow.json, its template kit/templates/one.json, the fake Orca."""
+
+    def setUp(self):
+        super().setUp()
+        (self.kit / "templates").mkdir()
+        self.template("one", [self.worker("a"), self.worker("b")])
+
+    def template(self, name, steps, **extra):
+        path = self.kit / "templates" / f"{name}.json"
+        path.write_text(json.dumps(dict({"name": name, "kit": "..", "steps": steps}, **extra)))
+        return path
+
+    @staticmethod
+    def pr(pid, **kw):
+        return dict({"id": pid, "part": "Part " + pid[0], "title": f"what {pid} does", "base": "dev", "template": "one"}, **kw)
+
+    def write_flow(self, *prs, **top):
+        f = dict({"title": "the run", "slots": 1, "start": "auto", "templates": {"one": "kit/templates/one.json"},
+                  "vars": {"OUT": str(self.out)}, "prs": list(prs)}, **top)
+        path = self.tmp / "flow.json"
+        path.write_text(json.dumps(f))
+        return path
+
+    def apply(self, *prs, args=(), **top):
+        return self.R("flow", "apply", str(self.write_flow(*prs, **top)), "--by", "tester", *args)
+
+    def refused(self, *prs, **top):
+        """Apply, expect a refusal, and return its reason lines."""
+        rc, out = self.apply(*prs, **top)
+        self.assertEqual(rc, 1, out)
+        self.assertRegex(out, r"NOT OK flow: \d+ problem\(s\), nothing changed")
+        return [l[4:] for l in out.splitlines() if l.startswith("  - ")]
+
+    def copy(self):
+        return json.loads((self.state / "flow.json").read_text())
+
+    def show(self):
+        return self.R("flow", "show", ok=True)[1]
+
+    def chains(self):
+        return sorted(p.parent.name for p in (self.state / "chains").glob("*/state.json"))
+
+
+class FlowValidation(FlowCase):
+    """Every refusal of item 2 of the flow file, with its reason line. Nothing is written on a refusal."""
+
+    def test_an_unknown_template_name(self):
+        self.assertIn("A1: template 'nope' is not one of the flow's templates (one)", self.refused(self.pr("A1", template="nope")))
+        self.assertIn("A1: no template; the flow's templates: one", self.refused({"id": "A1", "base": "dev"}))
+        self.assertFalse((self.state / "flow.json").exists())
+
+    def test_a_template_or_profile_path_that_is_not_a_file(self):
+        lines = self.refused(self.pr("A1"), templates={"one": "kit/templates/one.json", "gone": "kit/templates/gone.json"},
+                             profile="profiles/none.json")
+        self.assertIn(f"templates.gone: not a file: {(self.tmp / 'kit/templates/gone.json').resolve()}", lines)
+        self.assertIn(f"profile: not a file: {(self.tmp / 'profiles/none.json').resolve()}", lines)
+
+    def test_a_cycle_in_after_and_an_after_that_names_no_pr(self):
+        lines = self.refused(self.pr("A1", after=["A2"]), self.pr("A2", after=["A1"]), self.pr("A3", after=["Z9"]))
+        self.assertIn("after: a cycle: A1 -> A2 -> A1", lines)
+        self.assertIn("A3: after names Z9, which is not in the flow", lines)
+        self.assertIn("after: a cycle: B1 -> B1", self.refused(self.pr("B1", after=["b1"])))
+
+    def test_two_prs_with_one_id_and_an_id_chain_would_refuse(self):
+        self.assertIn("A1: the id is in the flow 2 times (A1, a1); upper and lower case are the same",
+                      self.refused(self.pr("A1"), self.pr("a1")))
+        bad = "'a b': a PR id is letters, digits, '.', '_' and '-', and starts with a letter or digit"
+        self.assertIn(bad, self.refused(self.pr("a b")))
+        rc, out = self.R("chain", "a b", "--def", str(self.kit / "templates" / "one.json"), "--dry-run")
+        self.assertEqual((rc, out.strip()), (2, bad))                 # the same rule, from chain
+
+    def test_a_base_of_main_or_master(self):
+        lines = self.refused(self.pr("A1", base="main"), self.pr("A2", base="master"))
+        self.assertIn("A1: base main: inner PRs go into the integration branch, never main or master", lines)
+        self.assertIn("A2: base master: inner PRs go into the integration branch, never main or master", lines)
+
+    def test_a_value_that_names_an_unknown_variable(self):
+        lines = self.refused(self.pr("A1", vars={"TITLE": "{NOPE}: x"}), self.pr("A2"), vars={"OUT": str(self.out), "X": "{ALSO_NOPE}"})
+        self.assertIn("A1: vars.TITLE: {NOPE} is not a variable", lines)
+        self.assertEqual(lines.count("vars.X: {ALSO_NOPE} is not a variable"), 1)   # a flow variable is named once, not per PR
+        self.assertIn("vars.A: its value names itself: A -> B -> A", self.refused(self.pr("A1"), vars={"OUT": "o", "A": "{B}", "B": "{A}"}))
+        (self.tmp / "mine.json").write_text(json.dumps({"name": "mine", "vars": {"X": "{NOPE}/x"}}))
+        self.template("one", [self.worker("a")], vars={"Y": "{NOPE}/y"})
+        lines = self.refused(self.pr("A1"), self.pr("A2"), profile="mine.json")
+        self.assertEqual([l for l in lines if "NOPE" in l], ["profile mine: vars.X: {NOPE} is not a variable",   # its layer, once
+                                                             "template one: vars.Y: {NOPE} is not a variable"])
+
+    def test_a_steps_override_the_definition_validator_rejects(self):
+        lines = self.refused(self.pr("A1", steps=[{"id": "a", "spec": "w.md"}, self.worker("b", spec="gone.md")]))
+        self.assertIn("A1: step a: a worker step needs an agent", lines)
+        self.assertIn(f"A1: step b: spec file missing: {self.kit.resolve() / 'specs' / 'gone.md'}", lines)
+
+    def test_slots_and_start(self):
+        lines = self.refused(self.pr("A1"), slots=0, start="later")
+        self.assertIn("slots: 0 is not a positive integer", lines)
+        self.assertIn("start: 'later' is not auto or manual", lines)
+        self.assertIn("slots: True is not a positive integer", self.refused(self.pr("A1"), slots=True))
+
+    def test_variables_the_router_sets_and_values_that_are_not_text(self):
+        lines = self.refused(self.pr("A1", vars={"BASE_BRANCH": "dev", "PR": "x", "N": None}))
+        self.assertIn("A1: vars.BASE_BRANCH: the router sets it from the PR's base", lines)
+        self.assertIn("A1: vars.PR: the router sets it", lines)
+        self.assertIn("A1: vars.N: the value must be a string or a number", lines)
+
+    def test_a_missing_variable_is_accepted_and_shown_as_waited_for(self):
+        self.template("one", [self.worker("a", worktree="path:{WT}"), self.worker("b", checks=["echo OK {ISSUE}"])])
+        rc, out = self.apply(self.pr("A1"), self.pr("A2", vars={"WT": "{OUT}/wt", "ISSUE": "7"}),
+                             version=41, history=[{"v": 41}])           # a file's version and history are the router's to write
+        self.assertEqual(rc, 0, out)
+        self.assertIn("OK flow v1:", out)
+        self.assertIn("nothing was started: the mailbox daemon is not running (router.py init)", out)
+        text = self.show()
+        self.assertIn("A1 · Part A · what A1 does · after - · waiting for: ISSUE, WT", text)
+        self.assertIn("A2 · Part A · what A2 does · after - · ready", text)   # {OUT}/wt was filled in
+        self.assertEqual((self.copy()["version"], len(self.copy()["history"])), (1, 1))
+
+
+class FlowVersions(FlowCase):
+    def test_versions_history_and_a_stale_base(self):
+        self.assertIn("OK flow v1: 3 changes", self.apply(self.pr("A1"), self.pr("A2", after=["A1"]))[1])
+        rc, out = self.apply(self.pr("A1"), self.pr("A2", after=["A1"]))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("OK flow v1: no change; the file is v1 as it is, so the version stays", out)
+        before = (self.state / "flow.json").read_bytes()
+        rc, out = self.apply(self.pr("A1"), self.pr("A2", after=["A1"]), slots=2, args=("--base", "0"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NOT OK flow: 1 problem(s), nothing changed\n  - stale: the run is at v1", out)
+        self.assertEqual((self.state / "flow.json").read_bytes(), before)
+        rc, out = self.apply(self.pr("A1"), self.pr("A2", after=["A1"]), slots=2, args=("--base", "v1", "--note", "more room"))
+        self.assertIn("OK flow v2: 1 changes\n  - slots 1 -> 2", out)
+        self.assertEqual([h["v"] for h in self.copy()["history"]], [1, 2])
+        lines = [l for l in self.journal().splitlines() if "| flow v" in l]
+        self.assertEqual(len(lines), 2)                                # one journal line per accepted apply
+        self.assertIn("flow v2 by tester: 1 changes; more room · slots 1 -> 2", lines[1])
+        text = self.R("flow", "history", ok=True)[1]
+        self.assertRegex(text, r"v1 · \S+ · by tester · 3 changes\n  - flow created: 2 PRs · slots 1 · start auto\n  - A1 added\n  - A2 added after A1")
+        self.assertRegex(text, r"v2 · \S+ · by tester · 1 changes · more room\n  - slots 1 -> 2")
+        self.assertNotIn("v1 ·", self.R("flow", "history", "1", ok=True)[1])
+
+    def test_a_reorder_of_the_prs_is_a_new_version(self):
+        self.apply(self.pr("A1"), self.pr("B1"))
+        rc, out = self.apply(self.pr("B1"), self.pr("A1"))             # which ready PR takes the next free slot
+        self.assertEqual(rc, 0, out)
+        self.assertIn("OK flow v2: 1 changes\n  - PRs reordered: B1, A1", out)
+        self.assertEqual(self.copy()["history"][-1]["changes"], ["PRs reordered: B1, A1"])
+        self.assertEqual([p["id"] for p in self.copy()["prs"]], ["B1", "A1"])
+        text = self.show()
+        self.assertLess(text.index("  B1 · "), text.index("  A1 · "))
+
+    def test_scratch_from_the_environment_fills_in_and_stays(self):
+        self.template("one", [self.worker("a", worktree="path:{SCRATCH}")])
+        self.env["SCRATCH"] = str(self.out)
+        rc, out = self.apply(self.pr("A1"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("A1 · Part A · what A1 does · after - · ready", self.show())
+        self.env.pop("SCRATCH")                                        # another terminal, without SCRATCH
+        self.assertIn("no change", self.apply(self.pr("A1"))[1])
+        self.assertEqual(self.copy()["resolved"]["env"], {"SCRATCH": str(self.out)})
+        self.env["SCRATCH"] = str(self.tmp)
+        self.assertIn("  - SCRATCH from the environment ", self.apply(self.pr("A1"))[1])
+
+    def test_changes_are_listed_in_plain_words(self):
+        self.apply(self.pr("A2"), self.pr("A3"), self.pr("B1"))
+        rc, out = self.apply(self.pr("A2", steps=[self.worker("a"), self.worker("b", effort="xhigh")]), self.pr("A3"),
+                             self.pr("A4", after=["A3"]), slots=3, start="manual")
+        self.assertEqual(rc, 0, out)
+        for line in ("slots 1 -> 3", "start auto -> manual", "B1 removed (not started)", "A4 added after A3",
+                     "A2: its own steps now", "A2: b effort set to xhigh"):
+            self.assertIn(f"  - {line}\n", out)
+        self.assertEqual(self.copy()["history"][-1]["changes"], [l[4:] for l in out.splitlines() if l.startswith("  - ")])
+        self.assertIn("B1 · Part B · what B1 does · removed in v2", self.show())
+
+
+class FlowScheduler(FlowCase):
+    def test_a_pr_starts_when_the_pr_it_is_after_is_done_with_no_command(self):
+        self.scenario({"match": "A1 ", "events": [self.done(0.2)], "repeat": True}, {"match": "A2 a$", "events": []})
+        self.R("init", ok=True)
+        rc, out = self.apply(self.pr("A1"), self.pr("A2", after=["A1"]))
+        self.assertIn("started A1 (v1)", out)                         # the apply's own scheduler pass
+        self.assertIn("A2 · Part A · what A2 does · after A1 · not started · after A1", self.show())
+        self.until(lambda: any(s["title"] == "A2 a" for s in self.starts()), what="A2 to start by itself")
+        self.assertEqual(self.chain_state("A1")["status"], "done")
+        self.assertIn("flow: started A2 (v1)", self.journal())
+        self.assertEqual([s["title"] for s in self.starts()], ["A1 a", "A1 b", "A2 a"])
+        self.assertIn("A2 · Part A · what A2 does · after A1 · running a", self.show())
+
+    def test_slots_are_respected(self):
+        self.scenario({"match": "A1 ", "events": [self.done(0.3)], "repeat": True}, {"match": "B1 ", "events": [], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("B1"), self.pr("A1"), slots=1)
+        self.until(lambda: self.chains() == ["B1"])
+        time.sleep(1.0)                                                # several ticks: still one chain
+        self.assertEqual(self.chains(), ["B1"])
+        self.assertIn("flow v1 · slots 1/1 · start auto", self.show())
+        self.assertIn("A1 · Part A · what A1 does · after - · ready · no free slot", self.show())
+        rc, out = self.R("flow", "start", "A1")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("A1 is not ready: no free slot (1 of 1 open: B1)", out)
+        self.apply(self.pr("B1"), self.pr("A1"), slots=2)
+        self.until(lambda: self.chains() == ["A1", "B1"], what="the second slot to be used")
+
+    def test_under_manual_only_flow_start_starts_a_pr(self):
+        self.scenario({"match": ".", "events": [self.done(0.2)], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1"), self.pr("A2", after=["A1"]), start="manual")
+        time.sleep(1.0)
+        self.assertEqual(self.chains(), [])
+        self.assertIn("A1 · Part A · what A1 does · after - · ready · start manual: router.py flow start A1", self.show())
+        rc, out = self.R("flow", "start", "A2")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("A2 is not ready: after A1", out)
+        rc, out = self.R("flow", "start", "A1")
+        self.assertEqual(rc, 0, out)
+        self.assertRegex(out, r"OK started A1 \(v1\), runner pid \d+")
+        self.until(lambda: self.chain_state("A1")["status"] == "done")
+        time.sleep(1.0)
+        self.assertEqual(self.chains(), ["A1"])                        # A2 is ready now, and still waits for its command
+        rc, out = self.R("flow", "start", "A1")
+        self.assertIn("A1: its chain exists (done)", out)
+
+    def test_a_pr_missing_a_variable_never_starts_until_an_apply_gives_it(self):
+        self.template("one", [self.worker("a", worktree="path:{WT}")])
+        self.scenario({"match": ".", "events": [self.done(0.2)], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("B1"))
+        time.sleep(1.0)
+        self.assertEqual(self.chains(), [])
+        self.assertIn("B1 · Part B · what B1 does · after - · waiting for: WT", self.show())
+        rc, out = self.apply(self.pr("B1", vars={"WT": str(self.out)}))
+        self.assertIn("  - B1: vars.WT set\n", out)                    # a value too long for the line is not shown
+        self.assertIn("started B1 (v2)", out)
+        self.until(lambda: self.chain_state("B1")["status"] == "done")
+        self.assertEqual(self.starts()[0]["worktree"], f"path:{self.out}")
+
+    def test_a_value_that_names_a_declared_variable_nobody_gives_waits_for_it(self):
+        self.template("one", [self.worker("a", checks=["echo OK {TEST_CMD}"])], variables={"WT": "the worktree"})   # no step names {WT}
+        self.scenario({"match": ".", "events": [self.done(0.2)], "repeat": True})
+        self.R("init", ok=True)
+        flow_vars = {"OUT": str(self.out), "TEST_CMD": "run in {WT}"}
+        self.apply(self.pr("B1"), vars=flow_vars)
+        time.sleep(1.0)
+        self.assertEqual(self.chains(), [])
+        self.assertIn("B1 · Part B · what B1 does · after - · waiting for: WT", self.show())
+        rc, out = self.apply(self.pr("B1", vars={"WT": str(self.out)}), vars=flow_vars)
+        self.assertIn("started B1 (v2)", out)
+        self.assertEqual(self.chain_state("B1")["vars"]["TEST_CMD"], f"run in {self.out}")
+
+    def test_a_runner_whose_chain_completes_starts_the_next_pr_itself(self):
+        self.env["ROUTER_WAIT_MS"] = "30000"                           # the daemon ticks at init, then not for 30 s
+        self.template("one", [self.worker("a"), {"id": "s", "type": "script", "run": "sleep 1; echo OK done"}])
+        self.scenario({"match": "A1 a$", "events": [self.done(0.2)]}, {"match": "A2 a$", "events": []})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1"), self.pr("A2", after=["A1"]))
+        self.until(lambda: self.chain_state("A1")["status"] == "done", what="the fake Orca to finish A1")
+        self.until(lambda: "flow: started A2" in self.journal(), seconds=5, what="A1's runner to start A2")
+
+    def test_scheduler_passes_that_race_start_one_pr_once(self):
+        self.template("one", [{"id": "g", "type": "gate", "title": "hold"}])
+        self.apply(self.pr("A1"), self.pr("B1"))                       # no daemon yet: the apply starts nothing
+        sitter = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "router.py"])   # a live router.py pid
+        self.addCleanup(sitter.kill)
+        (self.state / "mailbox.pid").write_text(f"{sitter.pid}\n")
+        go = self.tmp / "go"
+        code = (f"import os, sys, time\nsys.path.insert(0, {str(KIT)!r})\nimport router\n"
+                f"while not os.path.exists({str(go)!r}):\n    time.sleep(0.001)\nprint(router.flow_schedule(router.State()))\n")
+        passes = [subprocess.Popen([sys.executable, "-c", code], env=self.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                  for _ in range(3)]
+        time.sleep(1.0)
+        held = open(self.state / "flow.lock", "a")                     # an apply, say, holds the lock
+        fcntl.flock(held, fcntl.LOCK_EX)
+        go.touch()
+        time.sleep(1.5)
+        self.assertEqual([p.poll() for p in passes], [None, None, None])   # every pass waits for it
+        self.assertEqual(self.chains(), [])
+        held.close()
+        outs = [p.communicate(timeout=60)[0] for p in passes]
+        self.assertEqual(self.journal().count("flow: started"), 1, outs)
+        self.assertEqual(self.chains(), ["A1"])                        # then they take turns: once, and one slot
+
+    def test_a_flow_the_daemon_cannot_read_rings_and_the_daemon_goes_on(self):
+        self.scenario()
+        self.R("init", ok=True)
+        self.apply(self.pr("A1"), start="manual")
+        (self.state / "flow.json").write_text("{ not json")
+        text = self.bell_for("WAKE daemon")
+        self.assertIn("WAKE daemon · the flow could not be read: flow.json: ", text)
+        self.assertIn("router.py flow apply", text)
+        self.assertTrue(self.R("status")[1].startswith("router  run_fake · mailbox alive"))
+        self.assertIn("OK quiet", self.bell(0.02))                     # it rang once, not at every tick
+
+
+class FlowReread(FlowCase):
+    """A running chain follows the flow's latest version at each step boundary, for the steps not settled."""
+
+    def setUp(self):
+        super().setUp()
+        self.steps = [self.worker("a"), {"id": "g", "type": "gate", "title": "hold"}, self.worker("b"), self.worker("c")]
+        self.template("one", self.steps)
+
+    def at_gate(self):
+        self.scenario({"match": ".", "events": [self.done(0.1)], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1"))
+        self.assertIn("WAKE gate · A1 · g: hold", self.bell())
+
+    def test_an_edited_pending_step_starts_as_edited(self):
+        self.at_gate()
+        steps = [dict(s, model="m-opus") if s["id"] == "b" else s for s in self.steps]
+        rc, out = self.apply(self.pr("A1", steps=steps), args=("--note", "b needs more"))
+        self.assertIn("  - A1: b model m-sonnet -> m-opus", out)
+        self.R("resume", "A1", ok=True)
+        self.until(lambda: self.chain_state("A1")["status"] == "done")
+        starts = {s["title"]: s for s in self.starts()}
+        self.assertEqual((starts["A1 a"]["model"], starts["A1 b"]["model"], starts["A1 c"]["model"]), ("m-sonnet", "m-opus", "m-sonnet"))
+        att = {s["id"]: s["attempts"][-1] for s in self.chain_state("A1")["steps"] if s["attempts"]}
+        self.assertEqual((att["a"]["flow_version"], att["a"].get("edited"), att["a"]["cause"]), (1, None, "first"))
+        self.assertEqual((att["b"]["flow_version"], att["b"].get("edited"), att["b"]["cause"]), (2, True, "first"))
+        self.assertEqual(att["c"].get("edited"), None)
+        self.assertIn("A1 | b | - | - | flow v2: step edited: model m-sonnet -> m-opus", self.journal())
+        own = json.loads((self.state / "chains" / "A1" / "def.json").read_text())
+        self.assertEqual(([s["id"] for s in own["steps"]], own["kit"]), (["a", "g", "b", "c"], str(self.kit.resolve())))
+
+    def test_an_added_step_runs_in_its_place_and_a_removed_one_never_starts(self):
+        self.at_gate()
+        rc, out = self.apply(self.pr("A1", steps=[self.steps[0], self.steps[1], self.worker("x"), self.steps[3]]))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("  - A1: step b removed\n", out)
+        self.assertIn("  - A1: step x added after g\n", out)
+        self.R("resume", "A1", ok=True)
+        self.until(lambda: self.chain_state("A1")["status"] == "done")
+        self.assertEqual([s["title"] for s in self.starts()], ["A1 a", "A1 x", "A1 c"])
+        self.assertIn("A1 | b | - | - | flow v2: step removed; it will not run", self.journal())
+        self.assertIn("A1 | x | - | - | flow v2: step added after g", self.journal())
+        self.assertEqual([s["id"] for s in self.chain_state("A1")["steps"]], ["a", "g", "x", "c"])
+
+    def test_a_running_step_and_a_done_step_cannot_change(self):
+        self.scenario({"match": "A1 a$", "events": [self.done(0.1)]}, {"match": "A1 g", "events": []})
+        self.template("one", [self.worker("a"), self.worker("g"), self.worker("b")])
+        self.R("init", ok=True)
+        self.apply(self.pr("A1"))
+        self.until(lambda: self.chain_state("A1")["steps"][1]["status"] == "running", what="g to run")
+        files = [self.state / "chains" / "A1" / "state.json", self.state / "flow.json"]
+        before = [f.read_bytes() for f in files]
+        lines = self.refused(self.pr("A1", steps=[self.worker("a"), self.worker("g", effort="xhigh"), self.worker("b", effort="xhigh")]))
+        self.assertEqual(lines, ["A1: step g is running: its definition cannot change (effort set to xhigh)"])   # b is pending: free
+        lines = self.refused(self.pr("A1", steps=[self.worker("a", model="m-opus"), self.worker("g"), self.worker("b")]))
+        self.assertEqual(lines, ["A1: step a is done: its definition cannot change (model m-sonnet -> m-opus)"])
+        lines = self.refused(self.pr("A1", steps=[self.worker("g"), self.worker("b")]))
+        self.assertIn("A1: step a is done: it cannot be removed", lines)
+        lines = self.refused(self.pr("A1", steps=[self.worker("b"), self.worker("a"), self.worker("g")]))
+        self.assertIn("A1: step a is done: the steps up to it cannot be reordered, and no step can go before it", lines)
+        self.assertEqual([f.read_bytes() for f in files], before)
+
+    def test_a_variable_a_settled_step_used_cannot_change_and_one_only_pending_steps_use_can(self):
+        self.template("one", [self.worker("a"), {"id": "g", "type": "gate", "title": "hold"},
+                              self.worker("b", when="test -n {LATER}")])
+        self.scenario({"match": ".", "events": [self.done(0.1)], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1", vars={"LATER": "1"}), self.pr("A2", vars={"LATER": "1"}), slots=2)
+        self.assertIn("WAKE gate", self.bell_for("WAKE gate"))
+        other = self.tmp / "other"
+        lines = self.refused(self.pr("A1", vars={"LATER": "1"}), self.pr("A2", vars={"LATER": "1"}), slots=2,
+                             vars={"OUT": str(other)})
+        self.assertIn("A1: OUT changed, and settled step(s) a used it", lines)   # a's spec named {OUT}
+        rc, out = self.apply(self.pr("A1", vars={"LATER": ""}), self.pr("A2", vars={"LATER": "1"}), slots=2)
+        self.assertEqual(rc, 0, out)                                   # only b, which is pending, uses LATER
+        self.assertIn("  - A1: vars.LATER 1 -> ''", out)
+        lines = self.refused(self.pr("A1", vars={"LATER": ""}, after=["A2"]), self.pr("A2", vars={"LATER": "1"}), slots=2)
+        self.assertIn("A1: its chain exists, so its after cannot change (- -> A2)", lines)
+        rc, out = self.R("resume", "A1", "--set", "LATER=1")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("A1: the flow sets LATER, and its runner takes the flow's value at the next step: change it with router.py flow apply", out)
+
+    def test_a_step_about_to_start_cannot_change(self):
+        self.template("one", [self.worker("b", when="sleep 2")])        # its when runs before it leaves pending
+        self.scenario({"match": ".", "events": [self.done(0.1)], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1"))
+        self.until(lambda: self.chain_state("A1")["flow"]["claimed"] == ["b"], what="the runner to claim b")
+        self.assertEqual(self.chain_state("A1")["steps"][0]["status"], "pending")
+        lines = self.refused(self.pr("A1", steps=[self.worker("b", when="sleep 2", model="m-opus")]))
+        self.assertEqual(lines, ["A1: step b is about to start: its definition cannot change (model m-sonnet -> m-opus)"])
+        self.until(lambda: self.chain_state("A1")["status"] == "done")
+        self.assertEqual(self.starts()[0]["model"], "m-sonnet")        # what ran is what the flow says
+        self.assertEqual(self.chain_state("A1")["flow"]["claimed"], [])
+
+    def test_the_worktree_and_the_kit_of_a_settled_worker_step_cannot_change(self):
+        kit2 = self.tmp / "kit2"
+        shutil.copytree(self.kit / "specs", kit2 / "specs")
+        (kit2 / "checks").symlink_to(CHECKS)
+        self.scenario({"match": ".", "events": [self.done(0.1)], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1", vars={"WT": "wt1"}))
+        self.assertIn("WAKE gate · A1 · g: hold", self.bell())
+        self.assertEqual(self.refused(self.pr("A1", vars={"WT": "wt2"})), ["A1: WT wt1 -> wt2, and settled step(s) a used it"])
+        self.template("one", self.steps, kit="../../kit2")              # a's spec text is the same in both kits
+        lines = self.refused(self.pr("A1", vars={"WT": "wt1"}))
+        self.assertEqual(len(lines), 1, lines)
+        self.assertRegex(lines[0], r"^A1: KIT (changed|\S+ -> \S+), and settled step\(s\) a used it$")
+
+    def test_the_runner_waits_for_the_flow_lock_at_a_step_boundary(self):
+        self.at_gate()
+        held = open(self.state / "flow.lock", "a")                     # an apply, say, holds the lock
+        self.addCleanup(held.close)
+        fcntl.flock(held, fcntl.LOCK_EX)
+        self.R("resume", "A1", ok=True)
+        time.sleep(1.5)
+        self.assertEqual([s["title"] for s in self.starts()], ["A1 a"])   # b waits for the boundary's re-read
+        held.close()
+        self.until(lambda: len(self.starts()) > 1, what="b to start once the lock is free")
+        self.assertEqual(self.starts()[1]["title"], "A1 b")
+
+    def test_what_a_step_exported_survives_the_re_read(self):
+        self.template("one", [{"id": "s", "type": "script", "exports": ["V"], "run": "echo VAR V=7; echo OK set"},
+                              {"id": "g", "type": "gate", "title": "hold", "show": ["echo OK V is {V}"]},
+                              {"id": "u", "type": "script", "run": "echo OK still {V}"}])
+        self.scenario()
+        self.R("init", ok=True)
+        self.apply(self.pr("A1", vars={"V": "from the flow"}))
+        self.assertIn("OK V is 7", self.bell())
+        self.apply(self.pr("A1", vars={"V": "from the flow, again"}))    # no settled step uses the flow's V: it is the run's
+        self.R("resume", "A1", ok=True)
+        self.until(lambda: self.chain_state("A1")["status"] == "done")
+        self.assertIn("script exit 0: OK still 7", self.journal())
+
+    def test_attempts_record_why_they_ran(self):
+        self.template("one", [self.worker("a", checks=["test -e {OUT}/ok && echo OK ok || echo NOT OK no ok"]),
+                              {"id": "g", "type": "gate", "title": "hold"}])
+        self.scenario({"match": "A1 a$", "events": [self.done(0.1, "failed")]}, {"match": r"A1 a \(", "events": [self.done(0.1)], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1"))
+        self.assertIn("WAKE failed · A1 · a", self.bell())
+        self.R("retry", "A1", ok=True)
+        self.assertIn("NOT OK no ok", self.bell())
+        (self.out / "ok").touch()
+        self.R("resume", "A1", ok=True)
+        self.assertIn("WAKE gate", self.bell())
+        self.R("resume", "A1", "--from", "a", ok=True)
+        self.assertIn("WAKE gate", self.bell())
+        atts = self.chain_state("A1")["steps"][0]["attempts"]
+        self.assertEqual([x["cause"] for x in atts], ["first", "retry", "resume_from"])
+        self.assertEqual([x["flow_version"] for x in atts], [1, 1, 1])
+        self.assertEqual([r["cause"] for r in atts[1]["rechecks"]], ["recheck"])
+        self.assertNotIn("rechecks", atts[2])
+
+    def test_a_flow_that_cannot_be_read_pauses_the_chain(self):
+        self.at_gate()
+        good = (self.state / "flow.json").read_bytes()
+        (self.state / "flow.json").write_text("{ not json")
+        self.R("resume", "A1", ok=True)
+        text = self.bell_for("WAKE runner")
+        self.assertIn("WAKE runner · A1: the flow could not be read: flow.json: ", text)
+        self.until(lambda: self.chain_state("A1")["status"] == "paused")
+        self.assertEqual([s["title"] for s in self.starts()], ["A1 a"])   # nothing was started on a guess
+        (self.state / "flow.json").write_bytes(good)
+        self.R("resume", "A1", ok=True)
+        self.until(lambda: self.chain_state("A1")["status"] == "done")
+
+
+class FlowRemoval(FlowCase):
+    def test_a_pr_not_started_is_dropped_and_never_starts(self):
+        self.scenario({"match": "A1 ", "events": [self.done(0.5)], "repeat": True}, {"match": "B1", "events": [], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1"), self.pr("B1", after=["A1"]))
+        rc, out = self.apply(self.pr("A1"), args=("--note", "B1 is not needed"))
+        self.assertIn("OK flow v2: 1 changes\n  - B1 removed (not started)", out)
+        self.assertIn("flow v2 by tester: 1 changes; B1 is not needed · B1 removed (not started)", self.journal())
+        self.until(lambda: self.chain_state("A1")["status"] == "done")
+        time.sleep(1.0)
+        self.assertEqual(self.chains(), ["A1"])
+        self.assertNotIn("B1", " ".join(s["title"] for s in self.starts()))
+
+    def test_a_started_pr_is_not_dropped(self):
+        self.scenario({"match": ".", "events": [], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1"), self.pr("B1"), slots=2)
+        self.until(lambda: self.chains() == ["A1", "B1"])
+        self.assertIn("B1: its chain exists (running), so it stays in the flow", self.refused(self.pr("A1"), slots=2))
+        self.assertEqual(self.copy()["version"], 1)
+
+
+class FlowCompat(FlowCase):
+    def test_with_a_flow_chain_and_plan_leave_its_prs_to_it(self):
+        self.scenario({"match": ".", "events": [], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1"), slots=2, start="manual")
+        rc, out = self.R("chain", "a1", "--def", str(self.kit / "templates" / "one.json"), f"OUT={self.out}")
+        self.assertEqual((rc, out.strip()), (1, "the flow owns a1: router.py flow start a1"))
+        rc, out = self.plan("x")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("the flow is the plan", out)
+        self.assertEqual(self.chain([self.worker("a")], pr="x1")[0], 0)   # a PR the flow does not name
+        self.until(lambda: self.chain_state("x1")["steps"][0]["status"] == "running")
+        att = self.chain_state("x1")["steps"][0]["attempts"][-1]
+        self.assertFalse({"flow_version", "cause", "edited"} & set(att), att)   # a chain outside the flow is as it was
+        self.assertNotIn("flow", self.chain_state("x1"))
+        self.assertEqual(self.chain([self.worker("a")], pr="x2")[0], 0)
+        rc, out = self.chain([self.worker("a")], pr="x3")
+        self.assertIn("2 chains are open (x1, x2) and the flow has 2 slots: x3 was not started", out)
+        self.assertIn("x1: its chain was started with router.py chain, so the flow cannot take it over",
+                      self.refused(self.pr("A1"), self.pr("x1"), slots=2, start="manual")[0])
+
+    def test_a_flow_of_inner_prs_takes_its_variables_from_a_profile(self):
+        """inner-pr.json defaults no profile variable: the flow's "profile" field gives them all."""
+        self.env["SCRATCH"] = str(self.out)
+        pr = {"id": "A1", "part": "Part A", "title": "the first", "base": "dev", "template": "inner-pr",
+              "vars": {"WT": str(self.repo()), "ISSUE": "1", "TITLE": "A1: the first"}}
+        f = self.tmp / "flow.json"
+        f.write_text(json.dumps({"templates": {"inner-pr": str(TEMPLATES / "inner-pr.json")}, "prs": [pr]}))
+        self.R("flow", "apply", str(f), ok=True)
+        self.assertRegex(self.show(), r"A1 · Part A · the first · after - · waiting for: COMMIT_CMD, COPY_SETUP, .*TEST_CMD")
+        f.write_text(json.dumps({"templates": {"inner-pr": str(TEMPLATES / "inner-pr.json")}, "prs": [pr],
+                                 "profile": str(KIT / "profiles" / "python.json")}))
+        rc, out = self.R("flow", "apply", str(f))
+        self.assertIn("  - profile: vars.TEST_CMD set to python -m pytest -q\n", out)
+        self.assertIn("A1 · Part A · the first · after - · ready", self.show())
+        self.assertEqual(self.copy()["resolved"]["profile"]["name"], "python")
+
+    def test_a_profiles_scratch_wt_and_pr_are_filled_by_the_flow(self):
+        self.template("one", [self.worker("a", worktree="path:{WT}", checks=["echo OK {TEST_CMD}"])], variables={"WT": "the worktree"})
+        self.env["SCRATCH"] = str(self.out)
+        self.scenario({"match": ".", "events": [], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1", vars={"WT": "{SCRATCH}/wt/{PR}"}), self.pr("A2"), slots=2, profile=str(PROFILES / "bell.json"))
+        self.until(lambda: self.chains() == ["A1"])
+        wt, v = f"{self.out}/wt/A1", self.chain_state("A1")["vars"]
+        self.assertEqual(v["TEST_CMD"], f"PYTEST_PY={wt}/.venv/bin/python {self.out}/bin/bounded.sh 600 {self.out}/bin/pytest-limited.sh -q")
+        self.assertEqual(v["RULES"], f"{self.out}/briefs/rules-worker.md")
+        self.until(lambda: self.starts(), what="A1's worker to start")
+        self.assertEqual(self.starts()[0]["worktree"], f"path:{wt}")
+        self.assertIn("A2 · Part A · what A2 does · after - · waiting for: WT", self.show())   # bell's TEST_CMD names {WT}
+
+    def test_a_run_without_a_flow_is_as_it_was(self):
+        self.scenario({"match": ".", "events": [self.done(0.1)], "repeat": True})
+        self.R("init", ok=True)
+        self.assertEqual(self.plan("t1")[0], 0)
+        self.chain([self.worker("a")])
+        self.until(lambda: self.chain_state()["status"] == "done")
+        self.assertFalse({"flow_version", "cause", "edited"} & set(self.chain_state()["steps"][0]["attempts"][-1]))
+        self.assertNotIn("flow", self.chain_state())
+        self.assertEqual(sorted(p.name for p in self.state.iterdir() if p.name.startswith("flow")), [])   # no flow.json, no flow.lock
+        rc, out = self.R("flow", "show")
+        self.assertEqual((rc, out.strip()), (1, "no flow: router.py flow apply <file>"))
+
+    def plan(self, *ids):
+        f = self.tmp / "plan.json"
+        f.write_text(json.dumps({"prs": [{"id": i} for i in ids]}))
+        return self.R("plan", str(f))
+
+    def test_progress_lists_the_flow(self):
+        self.env["ROUTER_WAIT_MS"] = "20000"
+        self.template("one", [self.worker("a", worktree="path:{WT}")])
+        self.scenario({"match": ".", "events": [], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1", vars={"WT": str(self.out)}), self.pr("A2", after=["A1"], vars={"WT": str(self.out)}), self.pr("B1"))
+        self.until(lambda: self.chains() == ["A1"])
+        text = self.R("progress", ok=True)[1]
+        self.assertIn("the run · run_fake · flow v1", text)
+        self.assertIn("0 of 3 inner PRs done (1 running · 2 not started)", text)
+        self.assertRegex(text, r"· A2\s+not started · after A1 · what A2 does")
+        self.assertRegex(text, r"· B1\s+not started · waiting for: WT · what B1 does")
+        self.assertLess(text.index("Part A"), text.index("Part B"))
+        self.assertNotIn("no plan recorded", text)
+        page = (self.state / "progress.html").read_text()
+        self.assertIn("flow v1", page)
+        self.assertIn("not started · waiting for: WT", page)
 
 
 class Sweep(unittest.TestCase):

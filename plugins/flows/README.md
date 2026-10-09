@@ -32,7 +32,7 @@ Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-
 | `router/templates/smoke.json`, `router/specs/smoke-*.md` | A harmless chain that proves the router against real Orca: two workers at once, a question, a failure with a retry, a script step, a gate. |
 | `router/checks/*` | Checks that print one line, `OK …` or `NOT OK …`, and exit 0 or 1. |
 | `router/draft-pr.sh` | Opens the inner PR as a draft, so that step needs no model. Refuses `main` as the base. |
-| `tests/` | `test_router.py` (127 tests) and `fake-orca`, a stand-in for the Orca CLI. |
+| `tests/` | `test_router.py` (the suite; it prints its count) and `fake-orca`, a stand-in for the Orca CLI. |
 | `skills/flow-run`, `skills/flow-status` | The two skills. |
 
 State lives in `$ROUTER_STATE` (default `$SCRATCH/router`, where `SCRATCH` is the run directory). `router.py --help`
@@ -359,7 +359,7 @@ value may contain `{SCRATCH}`, `{WT}` and `{PR}`, and no other placeholder.
 | `TEST_PATHS` | One git pathspec for every test file: what the implementer may only un-mark and what `/simplify` and the code fixer may not touch. A script step checks it. | no | `tests/` | `:(glob)**/*.test.ts` | `tests/` |
 | `TEST_CONFIG` | One path: the test runner's settings, which no worker after the contract changes. A script step checks it. | no | `pytest.ini` | `vitest.config.ts` | `pytest.ini` |
 | `COPY_SETUP` | Run inside a throwaway copy of the worktree (ledgers, test fixer, validator replay) before its first test run, so the tests there find the installed dependencies. | yes: the copy needs nothing | `none` | `ln -s {WT}/node_modules node_modules` | `none` |
-| `LINT_CMD` | The lint and type-check gate, run from the worktree root with the shell variable `BASE` set to the PR's base commit, so it can pick the changed files. A pipeline starts with `set -o pipefail;`, so a failing `git diff` fails the gate. | yes: the validator reports "skipped: no lint command" | ruff on the changed `*.py` | `tsc --noEmit`, then eslint on the changed `*.ts`/`*.tsx` | `{SCRATCH}/bin/ci-lint-changed.sh "$BASE"` |
+| `LINT_CMD` | The lint gate, and a type-check when the command runs one (the `python` profile's does not), run from the worktree root with the shell variable `BASE` set to the PR's base commit, so it can pick the changed files. A pipeline starts with `set -o pipefail;`, so a failing `git diff` fails the gate. | yes: the validator reports "skipped: no lint command" | ruff on the changed `*.py` | `tsc --noEmit`, then eslint on the changed `*.ts`/`*.tsx` | `{SCRATCH}/bin/ci-lint-changed.sh "$BASE"` |
 | `FROZEN_PATHS` | Paths whose diff must be empty unless the contract says otherwise (goldens, snapshots, lockfiles); several, separated by spaces. | yes: "skipped: no frozen paths" | `none` | `none` | `tests/integration/bot/snapshots/` |
 | `EXTRA_SUITE` | The command of one extra suite the validator runs as its own run (a contract or ABI suite). | yes: "skipped: no extra suite" | `none` | `none` | the ABI suite through the same wrapper, `-n 0 -q -rfE --tb=line -p no:cacheprovider` |
 | `COMMIT_CMD` | How a worker commits; it takes `git commit`'s arguments. Hooks always run. | no | `git commit` | `git commit` | `{SCRATCH}/bin/locked-commit.sh` |

@@ -1715,6 +1715,11 @@ class Profiles(RouterCase):
             for k in ("TEST_PATHS", "TEST_CONFIG"):               # a script step gets each as one shell word
                 self.assertNotIn(" ", p["vars"][k], f"{name}: {k}")
 
+    def test_no_profile_skips_a_variable_the_specs_cannot_do_without(self):
+        for name in self.NAMES:
+            for k in ("TEST_CMD", "UNIT_DIRS", "TEST_PATHS", "TEST_CONFIG", "COMMIT_CMD"):   # "none allowed: no" in the README
+                self.assertNotEqual(profile(name)["vars"][k].strip().lower(), "none", f"{name}: {k} cannot be none")
+
     def test_the_template_documents_every_profile_variable_and_defaults_none(self):
         defn = json.loads((TEMPLATES / "inner-pr.json").read_text())
         self.assertEqual([k for k in PROFILE_VARS if k in defn["vars"]], [])   # a default would hide a missing profile

@@ -1983,6 +1983,9 @@ def flow_changes(S: State, old: "dict | None", new: dict) -> "list[str]":
         except Exception:
             old_steps = []
         out += steps_changes(pid, old_steps, flow_effective(S, new, p)["def"]["steps"])
+    # The order is part of the version: the scheduler starts ready PRs in it, and show and progress list them in it.
+    if [i for i in (str(p["id"]).lower() for p in old["prs"]) if i in now_ids] != [i for i in (p["id"].lower() for p in new["prs"]) if i in before]:
+        out.append(f"PRs reordered: {', '.join(p['id'] for p in new['prs'])}")
     return out
 
 

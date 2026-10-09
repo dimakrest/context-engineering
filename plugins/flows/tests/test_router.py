@@ -1154,6 +1154,16 @@ class FlowVersions(FlowCase):
         self.assertRegex(text, r"v2 · \S+ · by tester · 1 changes · more room\n  - slots 1 -> 2")
         self.assertNotIn("v1 ·", self.R("flow", "history", "1", ok=True)[1])
 
+    def test_a_reorder_of_the_prs_is_a_new_version(self):
+        self.apply(self.pr("A1"), self.pr("B1"))
+        rc, out = self.apply(self.pr("B1"), self.pr("A1"))             # which ready PR takes the next free slot
+        self.assertEqual(rc, 0, out)
+        self.assertIn("OK flow v2: 1 changes\n  - PRs reordered: B1, A1", out)
+        self.assertEqual(self.copy()["history"][-1]["changes"], ["PRs reordered: B1, A1"])
+        self.assertEqual([p["id"] for p in self.copy()["prs"]], ["B1", "A1"])
+        text = self.show()
+        self.assertLess(text.index("  B1 · "), text.index("  A1 · "))
+
     def test_scratch_from_the_environment_fills_in_and_stays(self):
         self.template("one", [self.worker("a", worktree="path:{SCRATCH}")])
         self.env["SCRATCH"] = str(self.out)

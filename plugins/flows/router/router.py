@@ -1268,6 +1268,7 @@ def cmd_worker(S: State, a: argparse.Namespace) -> int:
             "--agent", a.agent, "--timeout-ms", str(START_TIMEOUT_MS)]
     if a.model:
         args += ["--model", a.model] + (["--effort", a.effort] if a.effort else [])
+    started = now()   # before the call, as a chain step's: the worker's session begins while worker-start blocks
     d, raw = orca(S, args, timeout=START_TIMEOUT_MS / 1000 + 120)
     res = (d or {}).get("result") or {}
     if orca_error(d) or res.get("state") != "ready":
@@ -1276,7 +1277,7 @@ def cmd_worker(S: State, a: argparse.Namespace) -> int:
         die(f"NOT OK {a.label}: the worker did not start; receipt: {out}")
     write_json(S / "dispatches" / f"{safe(res['dispatchId'])}.json",
                {"dispatch": res["dispatchId"], "task": res.get("taskId", ""), "pr": a.pr or "", "step": "",
-                "title": a.label, "started": now(), "adhoc": True,
+                "title": a.label, "started": started, "adhoc": True,
                 "who": " ".join(x for x in (a.agent, a.model, a.effort if a.model else "") if x),
                 "agent": a.agent, "model": a.model or "", "effort": a.effort if a.model else "",
                 "worktree": a.worktree if a.worktree != "current" else current_worktree()})

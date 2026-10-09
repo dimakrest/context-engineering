@@ -7,6 +7,7 @@ State lives in $FAKE_ORCA_DIR:
   scenario.json   {"rules": [{"match": "<regex on the task title>", "start": "ok" | "fail", "repeat": false,
                               "start_delay": <seconds worker-start blocks before it answers>,
                               "effect": "<shell, run when the worker starts>",
+                              "effective": {<what the start receipt says was launched, over what was asked>},
                               "events": [{"after": 0.2, "type": "heartbeat", "phase": "x"},
                                          {"after": 0.4, "type": "question", "question": "…", "options": ["A", "B"],
                                           "on_reply": [{"after": 0.1, "type": "worker_done", "outcome": "succeeded"}]},
@@ -174,7 +175,7 @@ def worker_start(args):
         enqueue(rule.get("events") or [], task, dispatch, time.time())
     launch = {"agent": opt(args, "--agent"), "model": opt(args, "--model"), "effort": opt(args, "--effort")}
     out({"runId": "run_fake", "taskId": task, "dispatchId": dispatch, "state": "ready", "stage": "input_accepted",
-         "launch": {"requested": launch, "effective": launch}, "residualResources": []})
+         "launch": {"requested": launch, "effective": dict(launch, **rule.get("effective", {}))}, "residualResources": []})
 
 
 def worker_read(args):

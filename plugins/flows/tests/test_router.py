@@ -2021,15 +2021,15 @@ class Collector(RouterCase):
         self.assertFalse((self.fake / "reads.log").exists())
 
     # -- the daemon's hook
-    def session_for(self, wt, sid="99999999-aaaa-4aaa-8aaa-000000000009"):
-        """A Claude session that ran in wt from now on, with the sentinel in it."""
-        t = lambda s: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + s))
+    def session_for(self, wt, sid="99999999-aaaa-4aaa-8aaa-000000000009", base=None, at=(1, 2)):
+        """A Claude session that ran in wt, its two lines at base + at seconds (base: now), with the sentinel in it."""
+        t = lambda s: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime((base or time.time()) + s))
         line = lambda typ, ts, **kw: json.dumps(dict({"type": typ, "timestamp": ts, "cwd": str(wt), "sessionId": sid,
                                                       "isSidechain": False}, **kw))
         path = self.tmp / "live-claude" / str(wt).replace("/", "-") / f"{sid}.jsonl"
-        path.parent.mkdir(parents=True)
-        path.write_text(line("user", t(1), message={"role": "user", "content": SENTINEL}) + "\n" + line(
-            "assistant", t(2), message={"id": "msg_1", "model": "m-sonnet", "usage": {"input_tokens": 3, "output_tokens": 4}}) + "\n")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(line("user", t(at[0]), message={"role": "user", "content": SENTINEL}) + "\n" + line(
+            "assistant", t(at[1]), message={"id": "msg_1", "model": "m-sonnet", "usage": {"input_tokens": 3, "output_tokens": 4}}) + "\n")
         return path
 
     def test_a_released_worker_is_collected_once_after_its_checks(self):
@@ -2047,6 +2047,7 @@ class Collector(RouterCase):
         m = json.loads(meta.read_text())
         self.assertEqual((m["session"]["match"], m["session"]["path"]), ("unique", str(session)))
         self.assertEqual((m["checks"], m["worktree"], m["agent"], m["model"]), (["OK the check ran"], str(wt), "claude", "m-sonnet"))
+        self.assertIsNone(m["effective"])                                   # Orca launched what was asked
         self.assertEqual(json.loads((meta.parent / "tokens.json").read_text())["output"], 4)
         time.sleep(1.0)
         self.assertEqual([r["dispatch"] for r in self.index()], [dispatch])                 # exactly one collection
@@ -2067,6 +2068,50 @@ class Collector(RouterCase):
         self.until(lambda: f"collector: {first}: the Claude projects root is not a directory" in self.journal(), what="the journal line")
         self.assertTrue(self.R("status")[1].startswith("router  run_fake · mailbox alive"))
         self.assertIn("logs    0/2 settled dispatches collected · router.py collect --all", self.R("status")[1])
+
+    def test_a_step_records_what_it_asked_for_and_what_orca_launched(self):
+        wt = self.tmp / "wt"
+        wt.mkdir()
+        self.env["FLOWS_CLAUDE_PROJECTS"] = str(self.tmp / "live-claude")
+        self.scenario({"match": "t1 a", "effective": {"model": "m-haiku"}, "events": [self.done(0.2)]})
+        self.R("init", ok=True)
+        self.chain([self.worker("a", worktree="path:{WT}", effort="high")], WT=str(wt))
+        self.until(lambda: self.chain_state()["status"] == "done")
+        att = self.chain_state()["steps"][0]["attempts"][0]
+        self.assertEqual({k: att[k] for k in ("agent", "model", "effort", "worktree")},
+                         {"agent": "claude", "model": "m-sonnet", "effort": "high", "worktree": f"path:{wt}"})
+        self.assertEqual(att["effective"], {"agent": "claude", "model": "m-haiku", "effort": "high"})
+        meta = self.state / "logs" / "t1" / "a" / att["dispatch"] / "meta.json"
+        self.until(meta.exists, what="the collector's meta.json")
+        m = json.loads(meta.read_text())
+        self.assertEqual((m["model"], m["effective"]), ("m-sonnet", att["effective"]))
+
+    def test_an_ad_hoc_worker_beside_the_coordinators_session_is_matched_unique_under_adhoc(self):
+        wt = self.repo()                                                 # `--worktree current`: the checkout the command runs in
+        top = subprocess.run(["git", "-C", str(wt), "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+        self.env["FLOWS_CLAUDE_PROJECTS"] = str(self.tmp / "live-claude")
+        self.scenario({"match": "helper", "start_delay": 4, "events": [self.done(3)]})
+        self.R("init", ok=True)
+        t0 = time.time()
+        p = subprocess.run([sys.executable, ROUTER, "worker", "helper", "--spec", "look", "--agent", "claude", "--model", "m-sonnet",
+                            "--effort", "low", "--pr", "b9"], cwd=wt, env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        dispatch = re.search(r"dispatch (\S+)", p.stdout).group(1)
+        reg = json.loads((self.state / "dispatches" / f"{dispatch}.json").read_text())
+        self.assertEqual({k: reg[k] for k in ("adhoc", "agent", "model", "effort", "worktree")},
+                         {"adhoc": True, "agent": "claude", "model": "m-sonnet", "effort": "low", "worktree": f"path:{top}"})
+        self.assertLessEqual(reg["started"], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t0 + 1)))   # before worker-start returned
+        # the worker's session began 1.5 s into the 4 s worker-start; the coordinator's own session spans the whole hour
+        worker = self.session_for(top, base=t0, at=(1.5, 2.5))
+        self.session_for(top, sid="88888888-aaaa-4aaa-8aaa-000000000008", base=t0, at=(-3600, 3600))
+        meta = self.state / "logs" / "b9" / "_adhoc" / dispatch / "meta.json"
+        self.until(meta.exists, seconds=30, what="the collector's meta.json")
+        m = json.loads(meta.read_text())
+        self.assertEqual((m["session"]["match"], m["session"]["candidates"], m["session"]["path"]), ("unique", 2, str(worker)))
+        self.assertEqual((m["adhoc"], m["agent"], m["model"], m["effort"], m["worktree"], m["worktree_source"]),
+                         (True, "claude", "m-sonnet", "low", top, f"registry: path:{top}"))
+        self.assertEqual([(r["dispatch"], r["pr"], r["step"], r["agent"], r["model"], r["effort"], r["session"]["match"],
+                           r["tokens"]["output"]) for r in self.index()], [(dispatch, "b9", "", "claude", "m-sonnet", "low", "unique", 4)])
 
     def test_collection_can_be_turned_off(self):
         self.env["ROUTER_COLLECT"] = "0"

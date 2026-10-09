@@ -940,6 +940,21 @@ class Progress(RouterCase):
 
 
 class Templates(RouterCase):
+    def test_inner_pr_without_a_base_branch_is_refused_before_anything_starts(self):
+        self.scenario({"match": ".", "events": [self.done(0.1)], "repeat": True})
+        self.R("init", ok=True)
+        given = [f"WT={self.repo()}", "ISSUE=1", "TITLE=t", f"SCRATCH={self.out}"]
+        rc, out = self.R("chain", "demo", "--def", str(TEMPLATES / "inner-pr.json"), *given)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NOT OK demo:", out)
+        self.assertIn("no value for {BASE_BRANCH}", out)
+        self.assertFalse((self.state / "chains" / "demo").exists())
+        time.sleep(0.3)
+        self.assertEqual(self.starts(), [])                            # the fake Orca saw no worker-start
+        rc, out = self.R("chain", "demo", "--def", str(TEMPLATES / "inner-pr.json"), "--dry-run", "BASE_BRANCH=dev", *given)
+        self.assertEqual(rc, 0, out)                                   # the branch was all it lacked
+        self.assertIn("OK demo: 17 steps", out)
+
     def test_a_definition_in_a_subdirectory_finds_specs_and_checks_in_its_kit(self):
         self.scenario({"match": "t1 a$", "events": [self.done(0.1)], "effect": f"echo OK > {self.out}/a.txt"})
         self.R("init", ok=True)

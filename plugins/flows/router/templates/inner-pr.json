@@ -2,11 +2,11 @@
  "name": "inner-pr",
  "about": "One inner PR of the pipecat upgrade, as settled on 2026-10-04: contract, blind test writer, ledger r0 on the green-pinned PRs, implementer, ledger r1, validator, draft PR, /simplify, two reviews at once, triage, fixers, CI, merge. The coordinator is rung at the two gates (accept, merge) and on an exception.",
  "kit": "..",
- "start": "router.py chain <pr> --def chain-inner-pr.json WT=<the PR's worktree> ISSUE=<the sub-issue's number> BASE_BRANCH=pipecat-1.11 TITLE='<pr>: <goal>' TESTS=1 LEDGER=1 GREEN_PINNED= IMPL_EFFORT=high",
+ "start": "router.py chain <pr> --def templates/inner-pr.json WT=<the PR's worktree> ISSUE=<the sub-issue's number> BASE_BRANCH=<the integration branch> TITLE='<pr>: <goal>' TESTS=1 LEDGER=1 GREEN_PINNED= IMPL_EFFORT=high",
  "variables": {
   "WT": "the PR's worktree, on the PR's branch, cut from the PR's base commit",
   "ISSUE": "the number of the sub-issue whose 'For the agent' comment is this PR's intent; the coordinator keeps its text at {SCRATCH}/intent/<number>.md, where every worker reads it",
-  "BASE_BRANCH": "the integration branch the PR merges into (never main)",
+  "BASE_BRANCH": "the integration branch the PR merges into (never main). It has no default: a chain started without BASE_BRANCH=<branch> is refused before anything runs",
   "TITLE": "the PR title",
   "TESTS": "1 when a blind test writer runs; empty for the bump-class PRs (B1.1, M0, B2.1) and the pilot, where a version move can turn existing tests red and only the implementer may fix them: there the contract names every test the implementer writes or changes",
   "LEDGER": "1 when the PR has code to mutate; empty for B1.1 and M0",
@@ -23,7 +23,7 @@
   "fixers": "{SCRATCH}/reviews/{PR}/fix-tests-done.md and fix-code-done.md, each with a first line 'VERDICT: OK <n> of <n> items done' or 'VERDICT: PARTIAL <k> of <n> items done'; a survivor the test fixer killed stays SURVIVED in the ledger, and fix-tests-done.md is the record that it was killed",
   "pr body": "{SCRATCH}/pr/{PR}.md, written by the validator step's worker from the contract"
  },
- "vars": {"TESTS": "1", "LEDGER": "1", "GREEN_PINNED": "", "IMPL_EFFORT": "high", "BASE_BRANCH": "pipecat-1.11"},
+ "vars": {"TESTS": "1", "LEDGER": "1", "GREEN_PINNED": "", "IMPL_EFFORT": "high"},
  "steps": [
   {"id": "contract", "agent": "claude", "model": "claude-fable-5-1", "effort": "xhigh", "worktree": "path:{WT}", "spec": "contract.md", "readonly": true,
    "checks": ["{CHECKS}/file-exists.sh {SCRATCH}/contracts/{PR}.md 10"]},

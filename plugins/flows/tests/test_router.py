@@ -2607,8 +2607,24 @@ class Report(unittest.TestCase):
         self.assertEqual((m["time"]["A1"]["paused_s"], m["time"]["A1"]["gate_s"], m["time"]["A1"]["open_waits"]), (0, 2040, 1))
         self.assertEqual(m["time"]["A1"]["rest_s"], 7200 - 4200 - 2040)
 
+    def test_an_attempt_without_a_cause_is_first_only_when_it_is_the_first(self):
+        state = self.copy()                                                     # a chain started before flows recorded causes
+        for pr in ("A1", "B1", "A2"):
+            st = json.loads((state / f"chains/{pr}/state.json").read_text())
+            for step in st["steps"]:
+                for a in step["attempts"]:
+                    a.pop("cause", None)
+            (state / f"chains/{pr}/state.json").write_text(json.dumps(st))
+        _page, m, _ = self.report(state)
+        self.assertEqual(m["steps"]["implement"]["by_cause"], {"first": 3, "not recorded": 1})
+        self.assertEqual(m["steps"]["contract"]["by_cause"], {"first": 3})
+
     def test_report_py_writes_only_the_files_it_is_given(self):
         state = self.copy()
+        self.addCleanup(shutil.rmtree, state, True)                             # after the modes below are restored
+        for f in list(state.glob("logs/*/*/*/session.jsonl")) + list(state.glob("logs/*/*/*/session.subagents")):
+            f.chmod(0)                                                          # a session file the report opened would fail it
+        self.addCleanup(lambda: [f.chmod(0o755) for f in state.glob("logs/*/*/*/session.subagents")])
         before = sorted((p.relative_to(state), p.stat().st_mtime_ns) for p in state.rglob("*"))
         self.report(state)
         self.assertEqual(sorted((p.relative_to(state), p.stat().st_mtime_ns) for p in state.rglob("*")), before)

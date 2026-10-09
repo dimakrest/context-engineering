@@ -44,7 +44,7 @@
       if (v === null || v === undefined || v === false) return;
       if (k === 'class') e.className = v;
       else if (k === 'text') e.textContent = v;
-      else if (k.slice(0, 2) === 'on') e.addEventListener(k.slice(2), v);
+      else if (k.slice(0, 2) === 'on') listen(e, k.slice(2), v);
       else if (k === 'dataset') Object.keys(v).forEach(function (d) { if (v[d] !== undefined && v[d] !== null) e.dataset[d] = v[d]; });
       else if (typeof v === 'boolean' || k === 'value') e[k] = v;
       else e.setAttribute(k, v);
@@ -56,6 +56,13 @@
     if (c === null || c === undefined || c === false) return;
     if (Array.isArray(c)) c.forEach(function (x) { put(e, x); });
     else e.appendChild(typeof c === 'object' ? c : document.createTextNode(String(c)));
+  }
+  // An element's handlers live in e._on, behind one listener per event type: when a redraw keeps the element, it
+  // takes the new drawing's handlers (patch), so no handler closes over a draw that is gone.
+  function listen(e, type, f) {
+    if (!e._on) e._on = {};
+    if (!(type in e._on)) e.addEventListener(type, function (ev) { var g = e._on[type]; return g ? g(ev) : undefined; });
+    e._on[type] = f;
   }
   function clone(x) { return JSON.parse(JSON.stringify(x)); }
   function lc(x) { return String(x || '').toLowerCase(); }
@@ -213,18 +220,71 @@
     S.held = false;
     if (!d) { tick(); return; }
     var keep = window.scrollY, gw = document.querySelector('.graph-wrap'), gx = gw ? gw.scrollLeft : 0;
-    app.textContent = '';
-    put(app, [header(d), banners(d), kpis(d)]);
-    put(app, h('h2', {}, S.edit ? 'The flow, editing' : 'The run'));
-    if (S.edit) put(app, editTools(d));
-    put(app, h('div', {class: 'graph-wrap'}, graph(d)));
-    put(app, legend());
-    put(app, rest(d));
+    var next = h('div', {id: 'app'});
+    put(next, [header(d), banners(d), kpis(d)]);
+    put(next, h('h2', {}, S.edit ? 'The flow, editing' : 'The run'));
+    if (S.edit) put(next, editTools(d));
+    put(next, h('div', {class: 'graph-wrap'}, graph(d)));
+    put(next, legend());
+    put(next, rest(d));
+    patch(app, next);
     document.title = tabTitle(d);
     edges();
     window.scrollTo(0, keep);
     gw = document.querySelector('.graph-wrap'); if (gw) gw.scrollLeft = gx;
     tick();
+  }
+
+  // patch: the page as drawn becomes the new drawing, in place. A PR (its id), a step chip (its PR and step) and a
+  // palette role are the same elements from one draw to the next wherever they move, and so is every other element
+  // whose place and tag did not change: only what changed is added, removed or rewritten. A click or a drag that
+  // began on an element, and the refs Orca's browser automation took of it, outlive the poll that redraws the page.
+  // Form fields are drawn afresh: a draw never comes while one is in use (busy).
+  function keyOf(e) {
+    if (e.nodeType !== 1) return null;
+    if (e.id) return '#' + e.id;
+    if (e.dataset.step !== undefined && e.dataset.pr !== undefined) return 'step:' + e.dataset.pr + ':' + e.dataset.step;
+    if (e.dataset.drag === 'role') return 'role:' + e.dataset.name;
+    return null;
+  }
+  function patch(app, next) {
+    var keyed = {};
+    app.querySelectorAll('[id],[data-step],[data-drag]').forEach(function (e) { var k = keyOf(e); if (k && !keyed[k]) keyed[k] = e; });
+    var used = typeof WeakSet === 'function' ? new WeakSet() : null;
+    function same(a, b) {
+      return a.nodeType === b.nodeType && a.nodeName === b.nodeName && !/^(INPUT|SELECT|TEXTAREA)$/.test(a.nodeName) && (!used || !used.has(a));
+    }
+    function morph(a, b) {   // a, on the page, takes b's attributes, handlers and children
+      if (used) used.add(a);
+      if (a.nodeType !== 1) { if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue; return; }
+      Array.prototype.slice.call(a.attributes).forEach(function (x) { if (!b.hasAttribute(x.name)) a.removeAttribute(x.name); });
+      Array.prototype.slice.call(b.attributes).forEach(function (x) { if (a.getAttribute(x.name) !== x.value) a.setAttribute(x.name, x.value); });
+      if (a._on) Object.keys(a._on).forEach(function (t) { if (!b._on || !(t in b._on)) a._on[t] = null; });
+      if (b._on) Object.keys(b._on).forEach(function (t) { listen(a, t, b._on[t]); });
+      children(a, b);
+    }
+    function children(a, b) {
+      var olds = Array.prototype.slice.call(a.childNodes), free = olds.filter(function (o) { return !keyOf(o); }), at = 0;
+      Array.prototype.slice.call(b.childNodes).forEach(function (c) {
+        var k = keyOf(c), o = null;
+        if (k) o = keyed[k] && same(keyed[k], c) ? keyed[k] : null;
+        else {
+          for (var j = 0; j < free.length; j++) if (free[j] && same(free[j], c)) { o = free[j]; free[j] = null; break; }
+        }
+        var here = a.childNodes[at], el = o || c;
+        if (here !== el) a.insertBefore(el, here || null);   // moved first: what morph takes is never its ancestor
+        if (o) morph(o, c); else adopt(c);
+        at++;
+      });
+      while (a.childNodes.length > at) a.removeChild(a.lastChild);
+    }
+    function adopt(c) {   // a new element: any keyed element inside it that the page already has is kept
+      Array.prototype.slice.call(c.childNodes).forEach(function (x) {
+        var k = keyOf(x), o = k && keyed[k] && same(keyed[k], x) ? keyed[k] : null;
+        if (o) { c.replaceChild(o, x); morph(o, x); } else adopt(x);
+      });
+    }
+    morph(app, next);
   }
 
   function tabTitle(d) {

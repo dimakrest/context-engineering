@@ -170,6 +170,45 @@ class Live(tr.FlowCase):
         self.assertEqual(self.page.locator('#pr-A1 [data-drag="step"]').evaluate_all("es => es.map(e => e.dataset.step)"), ["c", "d"])
         self.assertEqual(self.flow()["version"], 1)
 
+    def drag(self, src, dst, x=0.5):
+        """Drag with the mouse from the middle of src to dst, at the fraction x of its width; the button stays down."""
+        a, b = self.page.locator(src).bounding_box(), self.page.locator(dst).bounding_box()
+        m = self.page.mouse
+        m.move(a["x"] + a["width"] / 2, a["y"] + a["height"] / 2)
+        m.down()
+        m.move(b["x"] + b["width"] * x, b["y"] + b["height"] / 2, steps=5)
+        return m
+
+    def other_terminal_applies(self, slots):
+        rc, out = self.apply(self.pr("A1", template="two"), self.pr("B1", template="two", after=["A1"]), slots=slots,
+                             templates={"two": "kit/templates/two.json"})
+        self.assertEqual(rc, 0, out)
+
+    def test_a_redraw_keeps_the_elements_it_does_not_change(self):
+        mark = "es => es.forEach(e => { e._kept = true; })"
+        kept = "es => es.map(e => !!e._kept)"
+        for sel in ("#pr-A1", "#pr-A1 [data-step]", "#edit-toggle"):
+            self.page.locator(sel).evaluate_all(mark)
+        toggle = self.page.query_selector("#edit-toggle")   # a ref taken before the polls, as orca snapshot takes one
+        for v, slots in ((2, 3), (3, 4)):                       # two polls, each with a run that changed
+            self.other_terminal_applies(slots)
+            self.page.wait_for_selector(f"h1 + .sub >> text=flow v{v} · slots 1/{slots}")
+            self.assertEqual(self.page.locator("#pr-A1 [data-step]").evaluate_all(kept), [True] * 4)
+            self.assertEqual(self.page.locator("#pr-A1, #edit-toggle").evaluate_all(kept), [True, True])
+        toggle.click()                                          # the old ref still reaches the page
+        self.page.wait_for_selector("#palette")
+
+    def test_a_drag_started_before_a_poll_still_completes(self):
+        self.edit()
+        m = self.drag('#pr-A1 [data-step="d"]', '#pr-A1 [data-step="c"]', x=0.1)
+        with self.page.expect_response(lambda r: r.url.endswith("/flow")):   # the poll that finds v2 reloads the flow
+            self.other_terminal_applies(3)
+        m.up()
+        self.assertEqual(self.chips("A1"), ["a", "b", "d", "c"])
+        self.page.wait_for_selector("text=Local edits on v2, not applied")
+        self.assertEqual(self.apply_and_confirm(), ["A1: its own steps now", "A1: steps reordered: a, b, d, c"])
+        self.assertEqual(self.flow()["version"], 3)
+
     def test_a_refused_apply_shows_the_routers_problems_and_keeps_the_edits(self):
         self.edit()
         self.page.click("#pr-B1 >> text=+ PR after B1")

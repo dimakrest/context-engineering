@@ -3389,12 +3389,14 @@ class Skills(unittest.TestCase):
     ROOT = TESTS.parent
     SKILLS = ("flow-plan", "flow-report", "flow-run", "flow-status")
     DOCS = ("docs/FLOWS.md", "docs/FLOWS_GETTING_STARTED.html", "README.md")
-    FLOW_SUBS = ("apply", "show", "start", "history")
 
     @classmethod
     def setUpClass(cls):
         cls.help = subprocess.run([sys.executable, ROUTER, "--help"], capture_output=True, text=True).stdout
         cls.collector_help = subprocess.run([sys.executable, COLLECTOR, "--help"], capture_output=True, text=True).stdout
+        flow_help = subprocess.run([sys.executable, ROUTER, "flow", "--help"], capture_output=True, text=True).stdout
+        cls.commands = set(re.findall(r"^\s{2}router\.py ([a-z][a-z-]*)", cls.help, re.M))
+        cls.flow_subs = set(re.search(r"\{([a-z,-]+)\}", flow_help).group(1).split(","))
         cls.texts = {f"skills/{n}/SKILL.md": (cls.ROOT / "skills" / n / "SKILL.md").read_text() for n in cls.SKILLS}
         cls.texts.update({d: (cls.ROOT / d).read_text() for d in cls.DOCS})
 
@@ -3414,11 +3416,18 @@ class Skills(unittest.TestCase):
         return "\n".join(out)
 
     def mentions(self):
-        """Every router command the skills and docs spell, with the flags written after it on the same line."""
+        """Every router command the skills and docs spell, with every flag written after it in the same mention: up to
+        the end of the line, a backtick, a table bar, a comment or the next mention, past any <placeholder> and "quoted"
+        text."""
         for name, text in self.texts.items():
-            for m in re.finditer(r"(?:\$R|router\.py) ([a-z][a-z-]*)(?: (apply|show|start|history)\b)?([^\n`|<]*)", text):
-                cmd = m.group(1) + (f" {m.group(2)}" if m.group(1) == "flow" and m.group(2) else "")
-                yield name, cmd, re.findall(r"(?<![\w-])--[a-z][a-z-]*", m.group(3).split("#")[0])
+            for m in re.finditer(r"(?:\$R|router\.py) ([a-z][a-z-]*)((?:(?!\$R|router\.py)[^\n`|])*)", text):
+                cmd, rest = m.group(1), m.group(2)
+                rest = rest.split("<")[0] if name.endswith(".html") else re.sub(r"<[^<>]*>", " ", rest)
+                rest = re.sub(r'"[^"]*"', " ", rest.split("#")[0])
+                if cmd == "flow":
+                    sub = re.match(r" ([a-z][a-z-]*)", rest)
+                    cmd, rest = (f"flow {sub.group(1)}", rest[sub.end():]) if sub else (cmd, rest)
+                yield name, cmd, re.findall(r"(?<![\w-])--[a-z][a-z-]*", rest)
 
     def test_the_four_skills_have_frontmatter_and_a_body_under_2500_words(self):
         self.assertEqual(sorted(p.name for p in (self.ROOT / "skills").iterdir() if p.is_dir()), list(self.SKILLS))
@@ -3432,17 +3441,21 @@ class Skills(unittest.TestCase):
             self.assertIn("${CLAUDE_PLUGIN_ROOT}/router/router.py", m.group(2), name)
 
     def test_every_router_command_and_flag_the_skills_and_docs_name_is_in_help(self):
-        seen = set()
+        seen, wrong = set(), []
         for name, cmd, flags in self.mentions():
-            first = cmd.split()[0]
-            if first not in ("init", "chain", "wait", "resume", "retry", "fail", "reply", "worker", "status", "last",
-                             "workers", "progress", "plan", "stop", "page", "collect", "report", "flow"):
-                self.fail(f"{name}: router.py {cmd} is no command of router.py --help")
+            first, sub = cmd.split()[0], cmd.split()[1:]
+            if first not in self.commands:
+                wrong.append(f"{name}: router.py {cmd} is no command of router.py --help")
+                continue
+            if sub and sub[0] not in self.flow_subs:
+                wrong.append(f"{name}: router.py {cmd} is no subcommand of router.py flow --help ({', '.join(sorted(self.flow_subs))})")
+                continue
             block = self.help_block(cmd)
-            self.assertTrue(block, f"{name}: router.py {cmd} is not in --help")
-            for f in flags:
-                self.assertIn(f, block, f"{name}: router.py {cmd} {f}: the flag is not in its --help lines")
+            wrong += [f"{name}: router.py {cmd} {f}: the flag is not in its --help lines"
+                      for f in flags if not re.search(re.escape(f) + r"(?![\w-])", block)]
             seen.add(cmd)
+        if wrong:
+            self.fail("\n".join(wrong))
         self.assertLessEqual({"flow apply", "flow show", "flow history", "page", "collect", "report"}, seen)
         self.assertIn("--dry-run", self.help_block("flow apply"))
 

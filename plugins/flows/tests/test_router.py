@@ -3061,7 +3061,31 @@ class Report(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in self.tmp.iterdir()), ["m.json", "r.html", "state"])
         src = Path(self.REPORT).read_text()
         self.assertNotIn("session.jsonl\")", src)                               # never opened: tokens.json and meta.json only
-        self.assertNotIn("subprocess", src)                                    # and Orca is never called
+
+    @staticmethod
+    def calls_out(src):
+        """What in the source could reach Orca or another process or host: imports of subprocess, socket, urllib, http,
+        and os.system, os.popen, os.exec*, os.spawn*, called or imported."""
+        import ast
+        banned = lambda name: name in ("system", "popen") or name.startswith(("exec", "spawn"))
+        found = []
+        for n in ast.walk(ast.parse(src)):
+            if isinstance(n, ast.Import):
+                found += [a.name for a in n.names if a.name.split(".")[0] in ("subprocess", "socket", "urllib", "http")]
+            elif isinstance(n, ast.ImportFrom) and n.module:
+                if n.module.split(".")[0] in ("subprocess", "socket", "urllib", "http"):
+                    found.append(n.module)
+                elif n.module == "os":
+                    found += [f"os.{a.name}" for a in n.names if banned(a.name)]
+            elif isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "os" and banned(n.attr):
+                found.append(f"os.{n.attr}")
+        return found
+
+    def test_report_py_never_calls_orca_nor_another_process(self):
+        self.assertEqual(self.calls_out(Path(self.REPORT).read_text()), [])
+        self.assertEqual(self.calls_out("import os, urllib.request\nfrom http import client\nfrom os import execvp\n"
+                                        "import subprocess as s\nos.system('x'); os.popen('x'); os.spawnl(0, 'x')\n"),
+                         ["urllib.request", "http", "os.execvp", "subprocess", "os.system", "os.popen", "os.spawnl"])
 
 
 class Checks(unittest.TestCase):

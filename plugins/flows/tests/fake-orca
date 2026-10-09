@@ -14,6 +14,7 @@ State lives in $FAKE_ORCA_DIR:
   queue/          messages not yet due or not yet delivered
   delivery.json   the delivery that was handed out and not yet acknowledged (it is replayed until --ack)
   starts.jsonl, releases.log, replies.jsonl      what the router asked for
+  tabs.jsonl      the URL of each `tab create --url <url>` (the browser tab `router.py page --open` asks for)
   callers.log     the terminal handle each run-use and run-current call came from
   workers.json    the rows worker-list answers with (default: none)
   fail_checks     a number: that many checks answer runtime_unavailable
@@ -171,6 +172,11 @@ def worker_start(args):
 
 def main():
     args = sys.argv[1:]
+    if args[:2] == ["tab", "create"]:
+        with Lock():
+            with open(D / "tabs.jsonl", "a") as f:
+                f.write(json.dumps({"url": opt(args, "--url"), "caller": os.environ.get("ORCA_TERMINAL_HANDLE", "-")}) + "\n")
+        out({"tab": {"pageId": next_id("page"), "url": opt(args, "--url")}})
     if args[:1] != ["orchestration"]:
         out({"app": {"running": True}})
     verb = args[1]

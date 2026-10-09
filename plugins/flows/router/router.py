@@ -42,6 +42,9 @@ Usage (the coordinator's whole interface; every command but progress prints a fe
   router.py plan <plan.json>                      record the run's inner PRs in order, so that progress also shows
                                                   those not started: {"title": "…", "prs": [{"id", "title", "part"}]}
   router.py stop [<pr> | --all]                   stop a chain's runner, or every daemon
+  router.py page [--open]                         the URL of the page the mailbox daemon serves on 127.0.0.1: the
+                                                  live view of the run and its flow, edited on a canvas. --open
+                                                  opens it in an Orca browser tab (orca tab create --url <url>)
 
 The flow (one versioned file that is the run's plan: its PR graph, each PR's steps, the variables):
   router.py flow apply <file> [--base <version>] [--by <who>] [--note "<text>"] [--dry-run]
@@ -49,7 +52,8 @@ The flow (one versioned file that is the run's plan: its PR graph, each PR's ste
                                                   history row. Refused, nothing changed, when --base is not the
                                                   current version, or a change touches a settled step, a started PR's
                                                   after, or a variable a settled step used. --dry-run: the same
-                                                  checks and change lines, nothing written
+                                                  checks and change lines, nothing written. The page's Apply (POST
+                                                  /flow) runs this same apply
   router.py flow show                             the graph: one line per PR, with its state or what it waits for
   router.py flow start <pr>                       start a PR now (under "start": "manual"); refused unless it is ready
   router.py flow history [<n>]                    the last n versions: who, when, why, what changed (default 10)
@@ -64,6 +68,7 @@ Env:
   ROUTER_MAX_CHAINS     chains allowed to run at once (default 2); a flow's "slots" replaces it
   ROUTER_POLL_S         file poll interval (default 3)
   ROUTER_REGISTRY_WAIT_S   how long a message waits for its worker's start receipt to be recorded (default 10)
+  ROUTER_PORT           the page's port on 127.0.0.1 (default 0: a free port, written to page.json)
 
 Exit codes: 0 done; 1 a refusal or a failed Orca call (one line says why); 2 bad usage; 3 the doorbell found a
 dead daemon (the line starts with ACT).
@@ -83,6 +88,14 @@ Files under the state directory:
   flow.lock                   taken by flow apply, a scheduler pass and a runner's re-read, so they take turns
   chains/<pr>/def.json        a flow PR's own steps, when it overrides its template's
   progress.html               the owner's view. Rewritten at every change, and it reloads itself in the browser
+  page.json                   where the mailbox daemon serves the page: {url, host, port, pid}; gone when it stops
+
+The page (served by the mailbox daemon from a thread; 127.0.0.1 only; the mail loop never waits for it):
+  GET /            the page (router/page/), GET /page/<file> its script and styles
+  GET /state       what progress shows, as JSON, plus the flow: {version, slots, start, prs, palette, ...}
+  GET /flow        the router's copy of the flow (flow.json)
+  POST /flow       {"base": <version>, "by", "note", "flow": {...}, "dry_run"?}: `flow apply`. 200 {ok, version,
+                   changes}; 409 {reason: "stale: the run is at v<N>", current}; 422 {problems}, nothing changed
 """
 from __future__ import annotations
 
@@ -91,6 +104,7 @@ import contextlib
 import datetime
 import fcntl
 import hashlib
+import http.server
 import json
 import os
 import re
@@ -100,6 +114,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -413,6 +428,7 @@ def cmd_mailbox(S: State, _a: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, _on_term)
     run = (read_json(S / "run.json") or {}).get("run", "")
     print(f"{now()} mailbox daemon started for {run or 'the bound Run'} (pid {os.getpid()})", flush=True)
+    page = serve_page(S)   # a thread: the loop below never waits for it
     ack, lost, unreadable = "", 0, 0
     while not _stop:
         flow_tick(S)          # a PR of the flow that became ready starts here, at the latest one long-poll later
@@ -456,6 +472,9 @@ def cmd_mailbox(S: State, _a: argparse.Namespace) -> int:
         atomic_write(S / "mailbox.last", f"{now()}\n")
         silence_tick(S)
     refresh_progress(S, mailbox_stopped=True)   # the page's last word, before the pid file goes: `stop` waits for that
+    if page is not None:
+        page.server_close()
+        (S / "page.json").unlink(missing_ok=True)
     pidfile.unlink(missing_ok=True)
     print(f"{now()} mailbox daemon stopped", flush=True)
     return 0
@@ -1318,6 +1337,8 @@ def cmd_status(S: State, _a: argparse.Namespace) -> int:
         flow = None
     if flow:
         print(f"flow    v{flow['version']} · slots {len(open_chains(S))}/{flow['slots']} · start {flow['start']} · router.py flow show")
+    url = page_url(S)
+    print(f"page    {url} · router.py page --open" if url else "page    not served: the mailbox daemon serves it (router.py init)")
     for p in sorted((S / "chains").glob("*/state.json")):
         alive = pid_alive(p.parent / "runner.pid")
         st = read_json(p) or {}
@@ -2345,6 +2366,218 @@ def cmd_flow(S: State, a: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- the page
+
+PORT = int(os.environ.get("ROUTER_PORT", "0"))
+PAGE_DIR = HERE / "page"
+PAGE_FILES = {"index.html": "text/html; charset=utf-8", "page.js": "text/javascript; charset=utf-8",
+              "page.css": "text/css; charset=utf-8"}
+BODY_MAX = 2_000_000   # bytes of a POST /flow body
+
+
+def palette(f: dict) -> "list[dict]":
+    """The roles the page can drop into a PR: every spec in the kits of the flow's templates, then a gate and a script.
+    A spec's step is copied from the first template step that names it (the flow's templates first, then the kit's
+    own templates/), so a dropped role comes with its usual agent, model, effort and checks."""
+    kits, defs = [], []
+    for t in (f["resolved"].get("templates") or {}).values():
+        if t["kit"] not in kits:
+            kits.append(t["kit"])
+        defs.append(t["def"])
+    for kit in kits:
+        for path in sorted(Path(kit).glob("templates/*.json")):
+            d = read_json(path)
+            if isinstance(d, dict) and isinstance(d.get("steps"), list):
+                defs.append(d)
+    out, seen = [], set()
+    for kit in kits:
+        for spec in sorted(Path(kit).glob("specs/*.md")):
+            if spec.name in seen:
+                continue
+            seen.add(spec.name)
+            proto = next((s for d in defs for s in d["steps"] if isinstance(s, dict) and s.get("spec") == spec.name), None)
+            step = dict(proto) if proto else {"agent": "claude", "spec": spec.name}
+            step["id"] = step_var(spec.stem).lower()
+            out.append({"role": spec.stem, "step": step})
+    out.append({"role": "gate", "step": {"id": "gate", "type": "gate", "title": "the coordinator decides"}})
+    out.append({"role": "script", "step": {"id": "script", "type": "script", "run": "true"}})
+    return out
+
+
+def page_state(S: State) -> dict:
+    """GET /state: progress_data, and the flow as the canvas draws it. Each PR carries the steps the flow gives it
+    (its own or its template's) and how many of them are fixed: up to its chain's last settled step, nothing of a PR
+    that has not started."""
+    d = progress_data(S)
+    try:
+        f = load_flow(S)
+    except RouterError:
+        f = None
+    if f is None:
+        return d
+    prs = []
+    for p in f["prs"]:
+        q = {k: p.get(k) for k in ("id", "part", "title", "base", "after", "template", "vars")}
+        try:
+            q["steps"] = flow_effective(S, f, p)["def"]["steps"]
+        except Exception:   # a copy the router cannot read: the scheduler rings for it
+            q["steps"] = []
+        st = read_json(chain_dir(S, p["id"]) / "state.json")
+        q["own_steps"] = isinstance(p.get("steps"), list)
+        q["started"] = st is not None
+        q["fixed"] = settled_head(st) if st and st.get("flow") else len(q["steps"]) if st else 0
+        q["claimed"] = list(((st or {}).get("flow") or {}).get("claimed") or [])
+        prs.append(q)
+    d["flow"] = dict(d["flow"] or {}, title=f.get("title") or "", prs=prs, removed=f.get("removed") or [],
+                     templates=sorted((f["resolved"].get("templates") or {})), palette=palette(f),
+                     history=(f.get("history") or [])[-5:])
+    return d
+
+
+def page_url(S: State) -> str:
+    """The page's URL while the mailbox daemon that serves it is alive; "" otherwise."""
+    info = read_json(S / "page.json") or {}
+    pid = pid_alive(S / "mailbox.pid")
+    return str(info.get("url") or "") if pid and info.get("pid") == pid else ""
+
+
+class PageHandler(http.server.BaseHTTPRequestHandler):
+    """The page's four routes. A handler that raises answers 500 and is logged; it never reaches the mail loop."""
+    S: State
+    server_version = "router"
+    protocol_version = "HTTP/1.0"   # one request per connection
+    timeout = 30                    # a client that stops sending frees its thread
+
+    def log_message(self, fmt: str, *args: object) -> None:   # no access log; errors and applies are logged below
+        pass
+
+    def send(self, code: int, body: bytes, ctype: str) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def answer(self, code: int, obj: object) -> None:
+        self.send(code, json.dumps(obj).encode(), "application/json")
+
+    def send_error(self, code: int, message: "str | None" = None, explain: "str | None" = None) -> None:
+        super().send_error(404 if code == 501 else code, message, explain)   # an unknown method: no such route
+
+    def local(self) -> bool:
+        """Only this machine's own pages: the Host is 127.0.0.1 or localhost on our port (a DNS rebinding cannot
+        pass), and a POST from a page comes from this origin."""
+        port = self.server.server_address[1]
+        hosts = (f"127.0.0.1:{port}", f"localhost:{port}")
+        origin = self.headers.get("Origin")
+        return self.headers.get("Host", "") in hosts and (origin is None or origin in tuple(f"http://{h}" for h in hosts))
+
+    def guard(self, fn) -> None:
+        try:
+            if not self.local():
+                self.answer(403, {"ok": False, "reason": "the page answers http://127.0.0.1 and http://localhost only"})
+                return
+            fn()
+        except Exception as e:
+            print(f"{now()} page: {self.command} {self.path} raised {e!r}\n{traceback.format_exc()}", flush=True)
+            with contextlib.suppress(Exception):
+                self.answer(500, {"ok": False, "reason": f"the router could not answer: {e!r} (mailbox.log)"})
+
+    def do_GET(self) -> None:
+        self.guard(self.get)
+
+    def do_POST(self) -> None:
+        self.guard(self.post)
+
+    def get(self) -> None:
+        path = self.path.split("?", 1)[0]
+        name = "index.html" if path == "/" else path[len("/page/"):] if path.startswith("/page/") else ""
+        if name in PAGE_FILES:
+            self.send(200, (PAGE_DIR / name).read_bytes(), PAGE_FILES[name])
+        elif path == "/state":
+            self.answer(200, page_state(self.S))
+        elif path == "/flow":
+            f = load_flow(self.S)
+            if f is None:
+                self.answer(404, {"ok": False, "reason": "no flow: router.py flow apply <file>"})
+            else:
+                self.answer(200, f)
+        else:
+            self.answer(404, {"ok": False, "reason": f"no such page: {path}"})
+
+    def post(self) -> None:
+        if self.path.split("?", 1)[0] != "/flow":
+            self.answer(404, {"ok": False, "reason": f"no such page: {self.path}"})
+            return
+        if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+            self.answer(415, {"ok": False, "reason": "send the body as application/json"})
+            return
+        size = int(self.headers.get("Content-Length") or 0)
+        if not 0 < size <= BODY_MAX:
+            self.answer(413 if size else 411, {"ok": False, "reason": f"a body of 1 to {BODY_MAX} bytes, with its Content-Length"})
+            return
+        try:
+            body = json.loads(self.rfile.read(size))   # read whole before the flow lock is taken
+        except ValueError as e:
+            self.answer(422, {"ok": False, "problems": [f"the body is not JSON: {e}"]})
+            return
+        if not isinstance(body, dict) or isinstance(body.get("base"), bool) or not isinstance(body.get("base"), int) \
+                or "flow" not in body:
+            self.answer(422, {"ok": False, "problems": ['the body is {"base": <the version the edit started from>, "by", "note", "flow": {...}}']})
+            return
+        S = self.S
+        try:
+            old = load_flow(S)
+        except RouterError:
+            old = None   # flow_apply refuses it with the reason
+        by, note = oneline(body.get("by") or "page", 80), oneline(body.get("note") or "", 400)
+        r = flow_apply(S, body["flow"], Path(old["dir"]) if old and old.get("dir") else S.root, base=body["base"], by=by, note=note,
+                       dry_run=bool(body.get("dry_run")))
+        if not r["dry_run"]:
+            print(f"{now()} page: flow apply by {by} on v{body['base']}: " + (
+                f"v{r['version']}, {len(r['changes'])} changes" if r["ok"] else f"refused: {'; '.join(r['problems'])[:600]}"), flush=True)
+        if r["ok"]:
+            self.answer(200, {"ok": True, "version": r["version"], "changes": r["changes"], "started": r["started"], "dry_run": r["dry_run"]})
+        elif r["stale"]:
+            self.answer(409, {"ok": False, "reason": r["problems"][0], "current": load_flow(S)})
+        else:
+            self.answer(422, {"ok": False, "problems": r["problems"]})
+
+
+def serve_page(S: State) -> "http.server.ThreadingHTTPServer | None":
+    """Start the page's server on 127.0.0.1 in a thread of the mailbox daemon and write page.json. A port that
+    cannot be bound is logged: the daemon goes on without the page."""
+    handler = type("Handler", (PageHandler,), {"S": S})
+    try:
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), handler)
+    except OSError as e:
+        print(f"{now()} page: not served, 127.0.0.1:{PORT} could not be bound: {e}", flush=True)
+        (S / "page.json").unlink(missing_ok=True)
+        return None
+    srv.daemon_threads = True
+    host, port = srv.server_address[:2]
+    threading.Thread(target=srv.serve_forever, name="page", daemon=True).start()
+    write_json(S / "page.json", {"url": f"http://{host}:{port}/", "host": host, "port": port, "pid": os.getpid(), "started": now()})
+    print(f"{now()} page: http://{host}:{port}/", flush=True)
+    return srv
+
+
+def cmd_page(S: State, a: argparse.Namespace) -> int:
+    url = page_url(S)
+    if not url:
+        die("the page is not served: " + ("the mailbox daemon is not running (router.py init)" if not pid_alive(S / "mailbox.pid")
+                                          else f"the mailbox daemon has no page; tail {S / 'mailbox.log'}"))
+    print(url)
+    if a.open:
+        d, raw = orca(S, ["tab", "create", "--url", url], timeout=60, caller=True)
+        if orca_error(d):
+            die(f"NOT OK orca tab create answered {orca_error(d)}: {oneline(raw, 300)}")
+        print("OK opened in an Orca browser tab")
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
         print(__doc__.strip())
@@ -2372,6 +2605,7 @@ def main() -> int:
     sub.add_parser("progress")
     p = sub.add_parser("plan"); p.add_argument("file")
     p = sub.add_parser("stop"); p.add_argument("pr", nargs="?"); p.add_argument("--all", action="store_true")
+    p = sub.add_parser("page"); p.add_argument("--open", action="store_true")
     fs = sub.add_parser("flow").add_subparsers(dest="flow_cmd")
     p = fs.add_parser("apply"); p.add_argument("file"); p.add_argument("--base", type=lambda x: int(x.lstrip("v")))
     p.add_argument("--by", default="coordinator"); p.add_argument("--note", default="")
@@ -2406,7 +2640,7 @@ def dispatch(S: State, a: argparse.Namespace) -> int:
     return {"init": cmd_init, "mailbox": cmd_mailbox, "chain": cmd_chain, "run": cmd_run, "wait": cmd_wait,
             "resume": cmd_resume, "retry": cmd_retry, "reply": cmd_reply, "worker": cmd_worker, "status": cmd_status,
             "workers": cmd_workers, "stop": cmd_stop, "last": cmd_last, "fail": cmd_fail, "progress": cmd_progress,
-            "plan": cmd_plan, "flow": cmd_flow}[a.cmd](S, a)
+            "plan": cmd_plan, "flow": cmd_flow, "page": cmd_page}[a.cmd](S, a)
 
 
 if __name__ == "__main__":

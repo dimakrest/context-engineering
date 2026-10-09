@@ -13,13 +13,18 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+import urllib.error
+import urllib.request
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from unittest import mock
 
 TESTS = Path(__file__).resolve().parent
 KIT = TESTS.parent / "router"
@@ -1618,6 +1623,213 @@ class FlowCompat(FlowCase):
         page = (self.state / "progress.html").read_text()
         self.assertIn("flow v1", page)
         self.assertIn("not started · waiting for: WT", page)
+
+
+class Page(FlowCase):
+    """The page the mailbox daemon serves on 127.0.0.1: its routes, POST /flow as `flow apply`, a mail loop that never
+    waits for it. The browser side is tests/test_page.py."""
+
+    def setUp(self):
+        super().setUp()
+        self.scenario({"match": "A1 a$", "events": [self.done(0.1)]}, {"match": "A1 b$", "events": []})
+        self.R("init", ok=True)
+        self.url = json.loads((self.state / "page.json").read_text())["url"]
+
+    def http(self, method, path, body=None, headers=None):
+        data = body if body is None or isinstance(body, bytes) else json.dumps(body).encode()
+        h = dict({"Content-Type": "application/json"} if data is not None else {}, **(headers or {}))
+        req = urllib.request.Request(self.url.rstrip("/") + path, data=data, method=method, headers=h)
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                status, ctype, raw = r.status, r.headers.get("Content-Type", ""), r.read()
+        except urllib.error.HTTPError as e:
+            with e:
+                status, ctype, raw = e.code, e.headers.get("Content-Type", ""), e.read()
+        return status, json.loads(raw) if ctype.startswith("application/json") else raw.decode()
+
+    def post(self, flow, base, **kw):
+        return self.http("POST", "/flow", dict({"base": base, "by": "owner", "note": "from the test", "flow": flow}, **kw))
+
+    def steps(self, pr):
+        f = self.state / "chains" / pr / "state.json"
+        return [s["status"] for s in json.loads(f.read_text())["steps"]] if f.exists() else []
+
+    def two_prs(self):
+        """A1 has started: a is done, b runs and never ends. B1 is after A1."""
+        rc, out = self.apply(self.pr("A1"), self.pr("B1", after=["A1"]), slots=2)
+        self.assertEqual(rc, 0, out)
+        self.until(lambda: self.steps("A1") == ["done", "running"], what="A1 at step b")
+
+    def flow_bytes(self):
+        return (self.state / "flow.json").read_bytes()
+
+    def test_the_routes(self):
+        status, page = self.http("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertIn('<script src="/page/page.js"></script>', page)
+        self.assertEqual(self.http("GET", "/page/page.js")[0], 200)
+        self.assertEqual(self.http("GET", "/page/page.css")[0], 200)
+        self.assertEqual(self.http("GET", "/flow"), (404, {"ok": False, "reason": "no flow: router.py flow apply <file>"}))
+        for method, path in (("GET", "/nope"), ("GET", "/page/../router.py"), ("GET", "/page/x.js"), ("POST", "/state"),
+                             ("PUT", "/flow"), ("DELETE", "/flow"), ("PATCH", "/flow")):
+            self.assertEqual(self.http(method, path, None if method == "GET" else b"{}")[0], 404, (method, path))
+
+    def test_get_state_is_the_view_and_the_flow(self):
+        self.two_prs()
+        status, d = self.http("GET", "/state")
+        self.assertEqual(status, 200)
+        self.assertEqual([(r["id"], r["state"]) for r in d["rows"]], [("A1", "running"), ("B1", "not started")])
+        self.assertEqual([s["status"] for s in d["rows"][0]["steps"]], ["done", "running"])
+        self.assertEqual(d["rows"][1]["waits"], "after A1")
+        f = d["flow"]
+        self.assertEqual((f["version"], f["slots"], f["start"]), (1, 2, "auto"))
+        self.assertEqual([(p["id"], p["started"], p["fixed"], [s["id"] for s in p["steps"]]) for p in f["prs"]],
+                         [("A1", True, 2, ["a", "b"]), ("B1", False, 0, ["a", "b"])])   # A1: up to its running step
+        self.assertEqual([r["role"] for r in f["palette"]], ["w", "gate", "script"])
+        self.assertEqual(f["palette"][0]["step"], self.worker("w"))     # the template's step that names w.md
+
+    def test_get_flow_is_the_routers_copy(self):
+        self.two_prs()
+        self.assertEqual(self.http("GET", "/flow"), (200, json.loads(self.flow_bytes())))
+
+    def test_post_flow_with_the_current_base_is_one_version(self):
+        self.two_prs()
+        f = self.http("GET", "/flow")[1]
+        f["slots"] = 3
+        f["prs"][0]["steps"] = [self.worker("a"), self.worker("b"), self.worker("c")]
+        before = self.flow_bytes()
+        lines = ["slots 2 -> 3", "A1: its own steps now", "A1: step c added after b"]
+        self.assertEqual(self.post(f, 1, dry_run=True), (200, {"ok": True, "version": 1, "changes": lines, "started": [], "dry_run": True}))
+        self.assertEqual(self.flow_bytes(), before)                    # a dry run writes nothing
+        status, r = self.post(f, 1)
+        self.assertEqual((status, r["ok"], r["version"], r["changes"]), (200, True, 2, lines))
+        copy = self.copy()
+        self.assertEqual(copy["version"], 2)
+        self.assertEqual([h["v"] for h in copy["history"]], [1, 2])    # one history row
+        self.assertEqual({k: copy["history"][1][k] for k in ("by", "note", "changes")}, {"by": "owner", "note": "from the test", "changes": lines})
+        self.assertIn("flow v2 by owner: 3 changes; from the test", self.journal())
+        self.assertIn("page: flow apply by owner on v1: v2, 3 changes", (self.state / "mailbox.log").read_text())
+
+    def test_a_stale_base_answers_409_and_changes_nothing(self):
+        self.two_prs()
+        f = self.http("GET", "/flow")[1]
+        self.assertEqual(self.post(dict(f, slots=3), 1)[0], 200)      # someone else applied v2
+        before = self.flow_bytes()
+        status, r = self.post(dict(f, title="mine"), 1)
+        self.assertEqual((status, r["ok"], r["reason"]), (409, False, "stale: the run is at v2"))
+        self.assertEqual(r["current"], json.loads(before))
+        self.assertEqual(self.flow_bytes(), before)
+
+    def test_a_refused_edit_answers_422_with_the_routers_reason_and_changes_nothing(self):
+        self.two_prs()
+        f = self.http("GET", "/flow")[1]
+        before, journal = self.flow_bytes(), self.journal()
+        f["prs"][0]["steps"] = [self.worker("b"), self.worker("a")]   # a done step moved
+        status, r = self.post(f, 1)
+        self.assertEqual(status, 422)
+        self.assertIn("A1: step a is done: the steps up to it cannot be reordered, and no step can go before it", r["problems"])
+        status, r = self.post(dict(f, prs=[self.pr("A1"), self.pr("B1", base="main")]), 1)
+        self.assertEqual((status, r["problems"]), (422, ["B1: base main: inner PRs go into the integration branch, never main or master"]))
+        self.assertEqual(self.http("POST", "/flow", {"flow": f})[0], 422)               # no base
+        self.assertEqual(self.http("POST", "/flow", b"{not json")[0], 422)
+        self.assertEqual(self.http("POST", "/flow", json.dumps({"base": 1, "flow": f}).encode(), {"Content-Type": "text/plain"})[0], 415)
+        self.assertEqual(self.flow_bytes(), before)
+        self.assertEqual(self.journal(), journal)
+
+    def test_the_page_answers_on_127_0_0_1_only(self):
+        info = json.loads((self.state / "page.json").read_text())
+        self.assertEqual((info["host"], info["url"]), ("127.0.0.1", f"http://127.0.0.1:{info['port']}/"))
+        self.assertEqual(info["pid"], int((self.state / "mailbox.pid").read_text()))
+        self.R("stop", "--all", ok=True)
+        self.assertFalse((self.state / "page.json").exists())          # gone with the daemon
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        self.env["ROUTER_PORT"] = str(port)
+        self.R("init", ok=True)
+        info = json.loads((self.state / "page.json").read_text())
+        self.assertEqual((info["host"], info["port"]), ("127.0.0.1", port))
+        self.url = info["url"]
+        self.assertEqual(self.http("GET", "/state")[0], 200)
+        self.assertEqual(self.http("GET", "/state", headers={"Host": f"example.invalid:{port}"})[0], 403)   # a rebound name
+        self.apply(self.pr("A1"))
+        before = self.flow_bytes()
+        status = self.http("POST", "/flow", {"base": 1, "flow": dict(self.copy(), slots=3)}, {"Origin": "http://example.invalid"})[0]
+        self.assertEqual(status, 403)                                  # another site's page
+        self.assertEqual(self.flow_bytes(), before)
+
+    def test_the_mail_loop_settles_workers_while_clients_hold_connections_open(self):
+        self.scenario({"match": "A1 ", "events": [self.done(0.1)], "repeat": True})
+        port = int(self.url.rsplit(":", 1)[1].strip("/"))
+        slow = [socket.create_connection(("127.0.0.1", port)) for _ in range(2)]
+        slow[0].sendall(b"GET /state HTTP/1.1\r\nHost: 127.0.0.1\r\n")               # never finished
+        slow[1].sendall(f"POST /flow HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n"
+                        f"Content-Length: 500\r\n\r\n{{\"base\": 0,".encode())        # a body that never arrives
+        try:
+            started = time.time()
+            rc, out = self.apply(self.pr("A1"))                        # flow.lock is free: the slow POST holds nothing
+            self.assertEqual(rc, 0, out)
+            self.until(lambda: (read_json_or_none(self.state / "chains" / "A1" / "state.json") or {}).get("status") == "done",
+                       seconds=30, what="the daemon to settle both workers")
+            self.assertLess(time.time() - started, 30)
+            self.assertEqual(self.http("GET", "/state")[0], 200)       # and the page answers everyone else
+            self.assertIn("worker_done succeeded; released", self.journal())
+        finally:
+            for s in slow:
+                s.close()
+
+    def test_a_handler_that_raises_answers_500_and_the_daemon_goes_on(self):
+        self.two_prs()
+        (self.state / "flow.json").write_text("{broken")
+        status, r = self.http("GET", "/flow")
+        self.assertEqual(status, 500)
+        self.assertIn("the flow could not be read: flow.json", r["reason"])
+        self.assertIn("page: GET /flow raised RouterError", (self.state / "mailbox.log").read_text())
+        self.assertEqual(self.http("GET", "/state")[0], 200)           # the view goes on without the flow
+        self.assertIn("mailbox alive pid", self.R("status")[1])
+
+    def test_router_py_page_prints_the_url_and_opens_it_in_an_orca_tab(self):
+        self.assertEqual(self.R("page", ok=True)[1], self.url + "\n")
+        self.assertEqual(self.R("page", "--open", ok=True)[1], f"{self.url}\nOK opened in an Orca browser tab\n")
+        tabs = [json.loads(l) for l in (self.fake / "tabs.jsonl").read_text().splitlines()]
+        self.assertEqual(tabs, [{"url": self.url, "caller": "term_fake"}])
+        self.assertIn(f"page    {self.url} · router.py page --open", self.R("status", ok=True)[1])
+        self.R("stop", "--all", ok=True)
+        rc, out = self.R("page")
+        self.assertEqual((rc, out), (1, "the page is not served: the mailbox daemon is not running (router.py init)\n"))
+        self.assertIn("page    not served", self.R("status")[1])
+
+    def test_two_threads_of_one_daemon_take_turns_at_the_flow_lock(self):
+        spec = spec_from_file_location("router_threads", ROUTER)
+        rt = module_from_spec(spec)
+        spec.loader.exec_module(rt)
+        with mock.patch.dict(os.environ, ROUTER_STATE=str(self.state)):
+            S = rt.State()
+        held, waited = threading.Event(), []
+
+        def first():
+            with rt.flow_lock(S):
+                held.set()
+                time.sleep(0.6)
+
+        def second():
+            held.wait()
+            t = time.time()
+            with rt.flow_lock(S):
+                waited.append(time.time() - t)
+        threads = [threading.Thread(target=first), threading.Thread(target=second)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+        self.assertGreater(waited[0], 0.4)
+
+
+def read_json_or_none(path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
 
 
 class Sweep(unittest.TestCase):

@@ -2575,7 +2575,11 @@ class PageHandler(http.server.BaseHTTPRequestHandler):
         if not (self.headers.get("Content-Type") or "").startswith("application/json"):
             self.answer(415, {"ok": False, "reason": "send the body as application/json"})
             return
-        size = int(self.headers.get("Content-Length") or 0)
+        try:
+            size = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self.answer(400, {"ok": False, "reason": f"Content-Length is not a number: {oneline(self.headers.get('Content-Length'), 40)}"})
+            return
         if not 0 < size <= BODY_MAX:
             self.answer(413 if size else 411, {"ok": False, "reason": f"a body of 1 to {BODY_MAX} bytes, with its Content-Length"})
             return

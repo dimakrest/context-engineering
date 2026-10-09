@@ -1743,6 +1743,15 @@ class Page(FlowCase):
         self.assertEqual(self.flow_bytes(), before)
         self.assertEqual(self.journal(), journal)
 
+    def test_a_content_length_that_is_not_a_number_answers_400(self):
+        self.two_prs()
+        before = self.flow_bytes()
+        body = json.dumps({"base": 1, "flow": self.http("GET", "/flow")[1]}).encode()
+        status, r = self.http("POST", "/flow", body, {"Content-Length": "12x"})
+        self.assertEqual((status, r["ok"], r["reason"]), (400, False, "Content-Length is not a number: 12x"))
+        self.assertNotIn("raised", (self.state / "mailbox.log").read_text())   # an answer, not a handler that failed
+        self.assertEqual(self.flow_bytes(), before)
+
     def test_the_page_answers_on_127_0_0_1_only(self):
         info = json.loads((self.state / "page.json").read_text())
         self.assertEqual((info["host"], info["url"]), ("127.0.0.1", f"http://127.0.0.1:{info['port']}/"))

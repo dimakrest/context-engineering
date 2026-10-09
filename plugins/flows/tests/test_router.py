@@ -3617,16 +3617,17 @@ class Skills(unittest.TestCase):
 
     def page_commands(self):
         """The commands on the getting-started page: each line of a <pre> block and each <code> in a table cell that
-        starts with a program (python3, orca, mkdir, /plugin), with the outputs and comments (the <span>s) left out.
-        A variable assignment (export, R=) runs nothing, so it is not one."""
+        starts with a program (python3, orca, mkdir, /plugin), and each /flows: skill the page names, with the outputs
+        and comments (the <span>s) left out. A variable assignment (export, R=) runs nothing, so it is not one."""
         page = self.texts["docs/FLOWS_GETTING_STARTED.html"]
         lines = []
         for block in re.findall(r"<pre><code>(.*?)</code></pre>", page, re.S):
             lines += re.sub(r"<span[^>]*>.*?</span>", "", block, flags=re.S).replace("\\\n", " ").splitlines()
         for cell in re.findall(r"<td>(.*?)</td>", page, re.S):
             lines += re.findall(r"<code>(.*?)</code>", cell)
+        lines += re.findall(r"<code>(/flows:[^<]*)</code>", page)   # a skill, wherever the page names it
         cmds = [re.sub(r"\s+", " ", html.unescape(ln)).strip() for ln in lines]
-        return [c for c in cmds if re.match(r"(python3|orca|mkdir|/plugin) ", c)]
+        return [c for c in cmds if re.match(r"(python3|orca|mkdir|/plugin) |/flows:", c)]
 
     def listed_page_commands(self):
         """tests/fixtures/page-commands.txt: the page's commands as the pilot ran them; a line that ends in
@@ -3639,9 +3640,11 @@ class Skills(unittest.TestCase):
                          "a command on the page that is not in tests/fixtures/page-commands.txt, or the other way")
         page = self.texts["docs/FLOWS_GETTING_STARTED.html"]
         for c in listed:
-            if c.endswith(self.NOT_RUN):   # the page says so next to it
-                self.assertRegex(page, re.escape(html.escape(c.replace(self.NOT_RUN, ""), quote=False))
-                                 + r"</code> \([^)]*not run in the pilot")
+            if c.endswith(self.NOT_RUN):   # the page says so next to each <code> of it
+                code = "<code>" + html.escape(c.replace(self.NOT_RUN, ""), quote=False) + "</code>"
+                self.assertIn(code, page)
+                for at in [m.end() for m in re.finditer(re.escape(code), page)]:
+                    self.assertRegex(page[at:at + 200], r"^ \([^)]*not run in the pilot", code)
 
     def test_every_listed_page_command_is_in_the_pilots_command_log(self):
         """FLOWS_PILOT_LOG names the pilot's commands.log, which stays outside the repository: each listed command
@@ -3658,7 +3661,7 @@ class Skills(unittest.TestCase):
             if not any(re.fullmatch(pat, r) for r in ran):
                 missing.append(c)
         if missing:
-            self.fail("not in the pilot's command log:\n" + "\n".join(missing))
+            self.fail("\n".join("not in the pilot's command log: " + c for c in missing))
 
     def test_committed_docs_hold_no_path_of_this_machine(self):
         files = [self.ROOT / n for n in self.texts] + list((self.ROOT / "evals").rglob("*.*"))

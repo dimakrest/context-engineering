@@ -71,8 +71,9 @@
   <div class="kicker">flows · getting started</div>
   <h1>Your first flow: the smoke chain on real Orca</h1>
   <p class="sub">One PR, five Sonnet workers, a question, a failure and its retry, a script step and a gate, in about
-  three minutes. Every command below but the plugin install line was run on real Orca (1.4.223) on 2026-10-09; the
-  outputs are what it printed, with this machine's paths replaced by variables. <code>FLOWS.md</code> next to this page is the reference.</p>
+  three minutes. Every command below was run on real Orca (1.4.223) on 2026-10-09 but three, each marked "not run in
+  the pilot": the plugin install line and the skills /flows:flow-report and /flows:flow-plan. The outputs are what
+  it printed, with this machine's paths replaced by variables. <code>FLOWS.md</code> next to this page is the reference.</p>
 </header>
 
 <nav>
@@ -151,7 +152,7 @@
 <tr><td>Orca, with its CLI on the PATH</td><td><code>orca orchestration --help</code></td></tr>
 <tr><td>A terminal Orca started (it carries <code>ORCA_TERMINAL_HANDLE</code>)</td><td>run everything below from it</td></tr>
 <tr><td>Python 3.9+; nothing to install</td><td><code>python3 --version</code></td></tr>
-<tr><td>The plugin: from Claude Code, <code>/plugin install flows@dimakrest-context-engineering</code> (the one command on this page not run in the pilot), then <code>R=${CLAUDE_PLUGIN_ROOT}/router/router.py</code>; or a checkout of the repository</td><td>the pilot ran from a checkout: <code>R=plugins/flows/router/router.py</code></td></tr>
+<tr><td>The plugin: from Claude Code, <code>/plugin install flows@dimakrest-context-engineering</code> (not run in the pilot, like the two skills named at the end of this page), then <code>R=${CLAUDE_PLUGIN_ROOT}/router/router.py</code>; or a checkout of the repository</td><td>the pilot ran from a checkout: <code>R=plugins/flows/router/router.py</code></td></tr>
 </table></div>
 <div class="callout"><strong>Bind a Run of your own.</strong> The mailbox daemon becomes the only consumer of the Run it is
 bound to. Never <code>init</code> in a terminal whose Run another coordinator reads.</div>
@@ -330,8 +331,8 @@ first message names its own dispatch, and that now decides.</p>
 <tr><td>longest wait at a gate (raw)</td><td>7 s</td><td>smoke1 · accept</td><td><code>journal.md paused: blocked .. coordinator</code></td></tr>
 </table></div>
 <p>The gate lesson is the raw wait, how long the owner took to answer. The split's "at gates" takes off any second a
-worker ran, so on a bigger run the two can differ. <code>/flows:flow-report</code> reads this table back;
-<code>/flows:flow-plan</code> uses it to plan the next run.</p>
+worker ran, so on a bigger run the two can differ. <code>/flows:flow-report</code> (not run in the pilot) reads this
+table back; <code>/flows:flow-plan</code> (not run in the pilot) uses it to plan the next run.</p>
 </section>
 
 <section id="cleanup">
@@ -341,8 +342,8 @@ worker ran, so on a bigger run the two can differ. <code>/flows:flow-report</cod
 orca worktree rm --worktree path:&lt;the worktree's path&gt; --json</code></pre>
 <p>The smoke chain opens no PR. The state directory stays: it is the run's record, and the report can be built
 again from it at any time.</p>
-<div class="callout ok"><strong>Next:</strong> <code>/flows:flow-plan</code> writes a real flow file from an issue, on
-<code>router/templates/inner-pr.json</code> and the profile that fits the repository.</div>
+<div class="callout ok"><strong>Next:</strong> <code>/flows:flow-plan</code> (not run in the pilot) writes a real flow
+file from an issue, on <code>router/templates/inner-pr.json</code> and the profile that fits the repository.</div>
 </section>
 
 <section id="cheat">

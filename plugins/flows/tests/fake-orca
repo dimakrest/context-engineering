@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """A stand-in for the Orca CLI, for router.py's tests. It answers with the JSON shapes Orca 1.4.219 printed on
-2026-10-04 (check, worker-start, worker-release, reply, run-current, worker-list).
+2026-10-04 (check, worker-start, worker-release, reply, run-current, worker-list), and worker-read in the shape the
+flows README documents (its archive_not_ready error code is ours: the real CLI's code for that case is not known).
 
 State lives in $FAKE_ORCA_DIR:
   scenario.json   {"rules": [{"match": "<regex on the task title>", "start": "ok" | "fail", "repeat": false,
                               "start_delay": <seconds worker-start blocks before it answers>,
                               "effect": "<shell, run when the worker starts>",
+                              "effective": {<what the start receipt says was launched, over what was asked>},
                               "events": [{"after": 0.2, "type": "heartbeat", "phase": "x"},
                                          {"after": 0.4, "type": "question", "question": "…", "options": ["A", "B"],
                                           "on_reply": [{"after": 0.1, "type": "worker_done", "outcome": "succeeded"}]},
@@ -16,6 +18,14 @@ State lives in $FAKE_ORCA_DIR:
   starts.jsonl, releases.log, replies.jsonl      what the router asked for
   callers.log     the terminal handle each run-use and run-current call came from
   workers.json    the rows worker-list answers with (default: none)
+  scenario.json "reads": [{"match": "<regex on the dispatch>", "not_ready": <n>, "source_changed": <n>, "loop": false,
+                           "pages": [{"messages": [{"id", "role", "blocks"}], "clipping": [...]}, ...]}]
+                  worker-read --source transcript answers page 1, then follows --cursor. The last page has no cursor
+                  (with "loop", its cursor names itself); contentComplete is false unless a page says otherwise.
+                  The first n calls without a cursor answer the error archive_not_ready; the first n calls with
+                  a cursor answer source_changed (the real CLI's code: "start a fresh read"); "error": "<code>" answers
+                  every call with that code. No rule: one empty, complete page.
+  reads.log       one line per worker-read: the dispatch and the cursor asked for
   fail_checks     a number: that many checks answer runtime_unavailable
   lost_checks     a number: that many checks answer ok with connectionLost true and no message
 """
@@ -166,7 +176,37 @@ def worker_start(args):
         enqueue(rule.get("events") or [], task, dispatch, time.time())
     launch = {"agent": opt(args, "--agent"), "model": opt(args, "--model"), "effort": opt(args, "--effort")}
     out({"runId": "run_fake", "taskId": task, "dispatchId": dispatch, "state": "ready", "stage": "input_accepted",
-         "launch": {"requested": launch, "effective": launch}, "residualResources": []})
+         "launch": {"requested": launch, "effective": dict(launch, **rule.get("effective", {}))}, "residualResources": []})
+
+
+def worker_read(args):
+    dispatch, cursor = opt(args, "--dispatch"), opt(args, "--cursor")
+    with Lock():
+        with open(D / "reads.log", "a") as f:
+            f.write(f"{dispatch} {cursor or '-'}\n")
+        sc = json.loads((D / "scenario.json").read_text()) if (D / "scenario.json").exists() else {}
+        rule = next((r for r in sc.get("reads") or [] if re.search(r["match"], dispatch or "")), None)
+        if rule and rule.get("error"):
+            out(error={"code": rule["error"], "message": f"fake: {rule['error']}", "data": {"dispatchId": dispatch}}, code=1)
+        if rule and not cursor and rule.get("not_ready", 0) > 0:
+            rule["not_ready"] -= 1
+            (D / "scenario.json").write_text(json.dumps(sc))
+            out(error={"code": "archive_not_ready", "message": "fake: the transcript archive is not written yet",
+                       "data": {"dispatchId": dispatch}}, code=1)
+        if rule and cursor and rule.get("source_changed", 0) > 0:
+            rule["source_changed"] -= 1
+            (D / "scenario.json").write_text(json.dumps(sc))
+            out(error={"code": "source_changed", "message": "fake: the transcript changed under the cursor",
+                       "data": {"dispatchId": dispatch}}, code=1)
+    pages = (rule or {}).get("pages") or [{"messages": []}]
+    i = int(cursor[3:]) if cursor and cursor.startswith("cur") else 0
+    page, last = pages[min(i, len(pages) - 1)], i >= len(pages) - 1
+    nxt = f"cur{i + 1}" if not last else (f"cur{i}" if (rule or {}).get("loop") else None)
+    out({"dispatchId": dispatch, "provider": (rule or {}).get("provider", "claude"),
+         "status": {"worker": "completed", "terminal": "released", "liveness": "exited"}, "archived": True,
+         "transcript": {"messages": page.get("messages") or []}, "cursor": nxt,
+         "contentComplete": page.get("contentComplete", rule is None),
+         "clipping": page.get("clipping") or [], "warnings": [], "projection": {}})
 
 
 def main():
@@ -204,6 +244,8 @@ def main():
     if verb == "worker-list":
         rows = json.loads((D / "workers.json").read_text()) if (D / "workers.json").exists() else []
         out({"workers": rows, "counts": {"total": len(rows)}, "page": {"hasMore": False}})
+    if verb == "worker-read":
+        worker_read(args)
     if verb == "inject":  # test hook: a message from a worker the router did not start
         with Lock():
             enqueue([json.loads(opt(args, "--event"))], "task_stranger", "ctx_stranger", time.time())

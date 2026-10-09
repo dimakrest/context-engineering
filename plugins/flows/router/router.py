@@ -42,6 +42,10 @@ Usage (the coordinator's whole interface; every command but progress prints a fe
   router.py plan <plan.json>                      record the run's inner PRs in order, so that progress also shows
                                                   those not started: {"title": "…", "prs": [{"id", "title", "part"}]}
   router.py stop [<pr> | --all]                   stop a chain's runner, or every daemon
+  router.py collect [--all | --pr <pr> | --dispatch <id>] [--force] [--dry-run]
+                                                  gather settled workers' logs now (collector.py): for a run whose
+                                                  daemon was not collecting, or after a fix. --dry-run prints each
+                                                  dispatch's session match and copies nothing
 
 The flow (one versioned file that is the run's plan: its PR graph, each PR's steps, the variables):
   router.py flow apply <file> [--base <version>] [--by <who>] [--note "<text>"]
@@ -63,6 +67,9 @@ Env:
   ROUTER_MAX_CHAINS     chains allowed to run at once (default 2); a flow's "slots" replaces it
   ROUTER_POLL_S         file poll interval (default 3)
   ROUTER_REGISTRY_WAIT_S   how long a message waits for its worker's start receipt to be recorded (default 10)
+  ROUTER_COLLECT        0 turns off the automatic collection of a released worker's logs (default 1: on)
+  FLOWS_CLAUDE_PROJECTS where Claude Code writes its session files (default ~/.claude/projects)
+  FLOWS_CODEX_SESSIONS  where Codex writes its session files (default ~/.codex/sessions)
 
 Exit codes: 0 done; 1 a refusal or a failed Orca call (one line says why); 2 bad usage; 3 the doorbell found a
 dead daemon (the line starts with ACT).
@@ -82,6 +89,8 @@ Files under the state directory:
   flow.lock                   taken by flow apply, a scheduler pass and a runner's re-read, so they take turns
   chains/<pr>/def.json        a flow PR's own steps, when it overrides its template's
   progress.html               the owner's view. Rewritten at every change, and it reloads itself in the browser
+  logs/<pr>/<step>/<dispatch>/  a settled worker's logs and its agent session file; logs/index.jsonl, one row each
+                              (collector.py --help). Written by a collector the daemon starts after each release
 """
 from __future__ import annotations
 
@@ -108,6 +117,8 @@ START_TIMEOUT_MS = int(os.environ.get("ROUTER_START_TIMEOUT_MS", "300000"))
 MAX_CHAINS = int(os.environ.get("ROUTER_MAX_CHAINS", "2"))
 POLL_S = float(os.environ.get("ROUTER_POLL_S", "3"))
 REGISTRY_WAIT_S = float(os.environ.get("ROUTER_REGISTRY_WAIT_S", "10"))
+COLLECT = os.environ.get("ROUTER_COLLECT", "1") != "0"
+COLLECT_WAIT_S = 3600   # how long a collector waits for the chain to record the end of the attempt and its checks
 
 DONE = ("done", "skipped")
 PAUSED = ("failed", "check_failed", "start_failed", "start_unknown", "script_failed", "blocked")
@@ -310,6 +321,21 @@ def release(S: State, dispatch: str) -> str:
     return f"{r.get('state', 'release_unknown')} ({r.get('processAction', '-')})"
 
 
+def collect_later(S: State, dispatch: str) -> None:
+    """A released worker is gone, so its session file is complete: its logs are gathered now, in a process of their
+    own. Nothing here waits for it. A collector that fails journals "collector: <dispatch>: <why>" itself."""
+    if not COLLECT or not dispatch:
+        return
+    try:
+        (S / "logs").mkdir(exist_ok=True)
+        with open(S / "logs" / "collector.log", "ab") as f:
+            subprocess.Popen([sys.executable, str(HERE / "collector.py"), "collect", "--state", str(S.root), "--dispatch", dispatch,
+                              "--wait-settled", str(COLLECT_WAIT_S)],
+                             stdin=subprocess.DEVNULL, stdout=f, stderr=f, start_new_session=True, env=orca_env(S))
+    except OSError as e:
+        journal(S, "", "", "", dispatch, f"collector: {dispatch}: could not start: {e}")
+
+
 def handle_message(S: State, m: dict) -> None:
     typ = m.get("type") or "status"
     try:
@@ -352,6 +378,8 @@ def handle_message(S: State, m: dict) -> None:
                                         "then follow its recovery receipt"], key=f"rel-{m.get('id')}")
         write_json(ev, record)
         journal(S, pr, step, task, dispatch, f"worker_done {outcome}; {record.get('release', 'not released: unknown worker')}; {m.get('subject')}")
+        if reg is not None:
+            collect_later(S, dispatch)
         if reg is None:
             wake(S, "unrouted", "", [f"WAKE unrouted · worker_done {outcome} from a worker the router did not start",
                                      f"subject: {m.get('subject')}", f"summary: {oneline(m.get('body'), 400)}",
@@ -730,10 +758,12 @@ def start_worker(S: State, st: dict, step: dict) -> bool:
         (chain_dir(S, st["pr"]) / f"start-{step['id']}-{n}.json").write_text(json.dumps(r, indent=1) if r else raw)
         journal(S, st["pr"], step["id"], "", "", f"worker-start failed: {attempt['detail']}")
         return False
-    attempt.update(task=res.get("taskId", ""), dispatch=res["dispatchId"])
+    attempt.update(task=res.get("taskId", ""), dispatch=res["dispatchId"], agent=d["agent"], model=model, effort=effort,
+                   worktree=worktree if worktree != "current" else current_worktree())   # for the collector
     launch_info = res.get("launch") or {}
     if launch_info.get("requested") != launch_info.get("effective"):
         attempt["launch_differs"] = f"asked {launch_info.get('requested')}, got {launch_info.get('effective')}"
+        attempt["effective"] = launch_info.get("effective")
     write_json(S / "dispatches" / f"{safe(res['dispatchId'])}.json",
                {"dispatch": res["dispatchId"], "task": attempt["task"], "pr": st["pr"], "step": step["id"],
                 "title": title, "started": attempt["started"]})
@@ -794,6 +824,7 @@ def settle_step(S: State, st: dict, step: dict, ev: dict) -> None:
     if not ev.get("release"):  # it settled before the chain adopted it, so the daemon left its terminal alone
         ev["release"] = release(S, att["dispatch"])
         mark_settled(S, att["dispatch"], payload.get("outcome") or "unknown")   # or it would ring as silent later
+        collect_later(S, att["dispatch"])
     head, _ = git_head(st["vars"].get("WT", ""))
     att.update(ended=now(), outcome=payload.get("outcome") or "unknown", report=payload.get("reportPath") or "",
                head_after=head, subject=oneline(msg.get("subject"), 200), summary=oneline(msg.get("body"), 400),
@@ -1169,6 +1200,7 @@ def cmd_fail(S: State, a: argparse.Namespace) -> int:
         die(f"{a.pr}: step {sid} settled while this ran ({step['status']}); nothing was changed: router.py resume {a.pr}")
     rel = release(S, dispatch)
     mark_settled(S, dispatch, "gone")
+    collect_later(S, dispatch)
     head = git_head(st["vars"].get("WT", ""))[0]
     att.update(ended=now(), outcome="gone", head_after=head, release=rel, report="",
                subject=f"no worker_done; Orca shows {state}, liveness {verdict}", summary=oneline(a.why, 400))
@@ -1222,6 +1254,12 @@ def cmd_reply(S: State, a: argparse.Namespace) -> int:
     return 0
 
 
+def current_worktree() -> str:
+    """`--worktree current` is the worktree of the terminal that asks: this command's checkout, as a path: selector."""
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    return f"path:{top.stdout.strip()}" if top.returncode == 0 and top.stdout.strip() else "current"
+
+
 def cmd_worker(S: State, a: argparse.Namespace) -> int:
     spec = Path(a.spec_file).read_text() if a.spec_file else a.spec
     if not spec:
@@ -1230,6 +1268,7 @@ def cmd_worker(S: State, a: argparse.Namespace) -> int:
             "--agent", a.agent, "--timeout-ms", str(START_TIMEOUT_MS)]
     if a.model:
         args += ["--model", a.model] + (["--effort", a.effort] if a.effort else [])
+    started = now()   # before the call, as a chain step's: the worker's session begins while worker-start blocks
     d, raw = orca(S, args, timeout=START_TIMEOUT_MS / 1000 + 120)
     res = (d or {}).get("result") or {}
     if orca_error(d) or res.get("state") != "ready":
@@ -1238,12 +1277,33 @@ def cmd_worker(S: State, a: argparse.Namespace) -> int:
         die(f"NOT OK {a.label}: the worker did not start; receipt: {out}")
     write_json(S / "dispatches" / f"{safe(res['dispatchId'])}.json",
                {"dispatch": res["dispatchId"], "task": res.get("taskId", ""), "pr": a.pr or "", "step": "",
-                "title": a.label, "started": now(), "adhoc": True,
-                "who": " ".join(x for x in (a.agent, a.model, a.effort if a.model else "") if x)})
+                "title": a.label, "started": started, "adhoc": True,
+                "who": " ".join(x for x in (a.agent, a.model, a.effort if a.model else "") if x),
+                "agent": a.agent, "model": a.model or "", "effort": a.effort if a.model else "",
+                "worktree": a.worktree if a.worktree != "current" else current_worktree()})
     journal(S, a.pr or "", "adhoc", res.get("taskId", ""), res["dispatchId"], f"started ad hoc worker {a.label} ({a.agent} {a.model or ''})")
     refresh_progress(S)
     print(f"OK {a.label}: task {res.get('taskId')} · dispatch {res['dispatchId']} · rings when done")
     return 0
+
+
+def cmd_collect(S: State, a: argparse.Namespace) -> int:
+    args = ["--all"] if a.all or not (a.pr or a.dispatch) else (["--pr", a.pr] if a.pr else ["--dispatch", a.dispatch])
+    args += ["--force"] * a.force + ["--dry-run"] * a.dry_run
+    return subprocess.run([sys.executable, str(HERE / "collector.py"), "collect", "--state", str(S.root)] + args, env=orca_env(S)).returncode
+
+
+def collected_line(S: State) -> str:
+    settled = {r.get("dispatch") for r in (read_json(p) or {} for p in (S / "dispatches").glob("*.json")) if r.get("settled")}
+    rows = (S / "logs" / "index.jsonl").read_text().splitlines() if (S / "logs" / "index.jsonl").exists() else []
+    done = set()
+    for r in rows:
+        with contextlib.suppress(ValueError):
+            done.add(json.loads(r).get("dispatch"))
+    line = f"logs    {len(done & settled)}/{len(settled)} settled dispatches collected"
+    if len(done & settled) < len(settled):
+        line += " · router.py collect --all" + ("" if COLLECT else " (ROUTER_COLLECT=0: nothing is collected by itself)")
+    return line
 
 
 def self_check(S: State) -> "list[str]":
@@ -1343,6 +1403,7 @@ def cmd_status(S: State, _a: argparse.Namespace) -> int:
         if msg.get("id") and not (S / "replied" / safe(msg["id"])).exists() and not reg.get("settled"):
             print(f"question {msg['id']} · {reg.get('pr') or '-'} {reg.get('step') or reg.get('title') or '-'} · asked {age(msg.get('created_at', ''))} · "
                   f"NOT ANSWERED: router.py reply {msg['id']} \"<answer>\"   (the text: router.py last 5)")
+    print(collected_line(S))
     jr = S / "journal.md"
     if jr.exists():
         for line in jr.read_text().splitlines()[-3:]:
@@ -2354,6 +2415,9 @@ def main() -> int:
     sub.add_parser("progress")
     p = sub.add_parser("plan"); p.add_argument("file")
     p = sub.add_parser("stop"); p.add_argument("pr", nargs="?"); p.add_argument("--all", action="store_true")
+    p = sub.add_parser("collect"); g = p.add_mutually_exclusive_group(); g.add_argument("--all", action="store_true")
+    g.add_argument("--pr"); g.add_argument("--dispatch"); p.add_argument("--force", action="store_true")
+    p.add_argument("--dry-run", action="store_true")
     fs = sub.add_parser("flow").add_subparsers(dest="flow_cmd")
     p = fs.add_parser("apply"); p.add_argument("file"); p.add_argument("--base", type=lambda x: int(x.lstrip("v")))
     p.add_argument("--by", default="coordinator"); p.add_argument("--note", default="")
@@ -2387,7 +2451,7 @@ def dispatch(S: State, a: argparse.Namespace) -> int:
     return {"init": cmd_init, "mailbox": cmd_mailbox, "chain": cmd_chain, "run": cmd_run, "wait": cmd_wait,
             "resume": cmd_resume, "retry": cmd_retry, "reply": cmd_reply, "worker": cmd_worker, "status": cmd_status,
             "workers": cmd_workers, "stop": cmd_stop, "last": cmd_last, "fail": cmd_fail, "progress": cmd_progress,
-            "plan": cmd_plan, "flow": cmd_flow}[a.cmd](S, a)
+            "plan": cmd_plan, "flow": cmd_flow, "collect": cmd_collect}[a.cmd](S, a)
 
 
 if __name__ == "__main__":

@@ -52,7 +52,9 @@ The questions, and the record behind each answer:
                       review and triage steps; only that number and that word are taken.
   f. flow history     flow.json's history rows, and each chain's flow.started_at.
   g. lessons          the slowest step, the most-retried step, the role that asked the most questions, the PR with the
-                      longest single wait at a gate, each with its pr, step and dispatch.
+                      longest single wait at a gate, each with its pr, step and dispatch. The gate wait is raw: paused:
+                      blocked to the coordinator's line, the owner's answer time; section a's "at gates" takes off the
+                      time a worker ran, so the two can differ.
 """
 from __future__ import annotations
 
@@ -602,10 +604,10 @@ def lessons(run: Run, steps: dict, qs: "list[dict]", labels: "dict[str, str]") -
     gates = [(w, pr) for pr in run.prs for w in waits(run, pr) if w["kind"] == "gate" and w["s"] is not None]
     if gates:
         w, pr = max(gates, key=lambda x: x[0]["s"])
-        out.append({"lesson": "longest wait at a gate", "value": w["s"], "unit": "s", "pr": pr, "step": w["step"],
+        out.append({"lesson": "longest wait at a gate (raw)", "value": w["s"], "unit": "s", "pr": pr, "step": w["step"],
                     "dispatch": "-", "model": "-", "record": f"journal.md paused: blocked at {w['from']} .. coordinator at {w['to']}"})
     else:
-        out.append({"lesson": "longest wait at a gate", "value": NR, "unit": "", "pr": "-", "step": "-", "dispatch": "-",
+        out.append({"lesson": "longest wait at a gate (raw)", "value": NR, "unit": "", "pr": "-", "step": "-", "dispatch": "-",
                     "model": "-", "record": "no gate wait with an end in journal.md" if run.has_journal else "no journal.md"})
     return out
 

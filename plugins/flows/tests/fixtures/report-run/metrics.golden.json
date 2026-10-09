@@ -138,7 +138,7 @@
   },
   {
    "dispatch": "-",
-   "lesson": "longest wait at a gate",
+   "lesson": "longest wait at a gate (raw)",
    "model": "-",
    "pr": "A2",
    "record": "journal.md paused: blocked at 2026-01-12T11:15:20Z .. coordinator at 2026-01-12T11:55:20Z",

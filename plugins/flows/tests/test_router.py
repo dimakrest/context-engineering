@@ -2966,7 +2966,15 @@ class Report(unittest.TestCase):
         self.assertEqual(got, [("slowest step", 2400, "A1", "implement", "ctx_a1_impl1, ctx_a1_impl2"),
                                ("most-retried step", 2, "A1", "implement", "ctx_a1_impl1, ctx_a1_impl2"),
                                ("role that asked the most questions", 2, "A1", "implement", "ctx_a1_impl2"),
-                               ("longest wait at a gate", 2400, "A2", "accept", "-")])
+                               ("longest wait at a gate (raw)", 2400, "A2", "accept", "-")])
+
+    def test_the_gate_lesson_is_labelled_raw_on_the_page_and_in_the_metrics(self):
+        # M5, #43 R6: the lesson keeps the raw wait (how long the owner took to answer); the split's "at gates" takes off
+        # the time workers ran, so the two may differ, and the label says which one the lesson is
+        page, m, _ = self.report()
+        gate = [x for x in m["lessons"] if "gate" in x["lesson"]]
+        self.assertEqual([x["lesson"] for x in gate], ["longest wait at a gate (raw)"])
+        self.assertIn("<td>longest wait at a gate (raw)</td>", page)
 
     def test_workers_that_run_at_once_are_covered_once_in_the_rest(self):
         state = self.copy()                                                     # B1's review in a group with its implement

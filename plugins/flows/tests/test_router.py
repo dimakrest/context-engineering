@@ -1923,18 +1923,33 @@ class Collector(RouterCase):
         # the decoy is two hours earlier, the sidechain-only file and the file whose cwd is another worktree are no candidates
         self.assertEqual((meta["session"]["match"], meta["session"]["candidates"], meta["session"]["path"]),
                          ("unique", 1, str(self.sessions / self.MAIN)))
-        self.assertEqual(meta["session"]["subagent_files_not_copied"], 1)
+        sub = (self.sessions / self.MAIN).with_suffix("") / "subagents"
+        self.assertEqual(meta["session"]["subagent_files"], 1)
+        self.assertEqual(sorted(p.name for p in (d / "session.subagents").iterdir()), ["agent-0001.jsonl", "agent-0001.meta.json"])
+        for f in ("agent-0001.jsonl", "agent-0001.meta.json"):
+            self.assertEqual((d / "session.subagents" / f).read_bytes(), (sub / f).read_bytes())
+        self.assertEqual(meta["files"]["session.subagents/"], {"source": "claude", "path": str(sub), "of": str(self.sessions / self.MAIN),
+                                                               "files": ["agent-0001.jsonl", "agent-0001.meta.json"], "summed": ["agent-0001.jsonl"]})
         self.assertEqual((meta["n"], meta["agent"], meta["model"], meta["effort"], meta["worktree"], meta["flow_version"], meta["cause"]),
                          (1, "claude", "claude-opus-5-5", "high", self.CLAUDE_WT, 2, "first"))
         self.assertEqual(sorted(p.name for p in (d / "events").iterdir()), ["20260110103000-worker_done-msg_ctx_cl.json", "liveness"])
-        # by hand from the fixture: msg_01's two lines are one response (its last usage counts), msg_03 is a sidechain
+        # by hand from the fixture: msg_01's two lines are one response (its last usage counts), msg_03 is a sidechain.
+        #   the parent:   msg_01 100/20/1000/0 + msg_02 50/30/0/1000 + msg_04 7/40/100/1100 (opus) = 157/90/1100/2100, 3 turns
+        #                 msg_03 10/5/200/0 (haiku, inline sidechain)                                  =  10/5/200/0,     1 turn
+        #   subagents/agent-0001.jsonl (haiku): msg_s1's two lines are one response 4/60/300/0, msg_s2 6/80/0/300,
+        #                 and its msg_03 is the parent's, counted once                                 =  10/140/300/300, 2 turns
+        #   totals: input 157+10+10 = 177, output 90+5+140 = 235, cache_creation 1100+200+300 = 1600,
+        #           cache_read 2100+0+300 = 2400, turns 3+1+2 = 6, sidechain turns 1+2 = 3
         tok = json.loads((d / "tokens.json").read_text())
         self.assertEqual({k: tok[k] for k in ("input", "output", "cache_creation", "cache_read", "turns", "sidechain_turns")},
-                         {"input": 167, "output": 95, "cache_creation": 1300, "cache_read": 2100, "turns": 4, "sidechain_turns": 1})
+                         {"input": 177, "output": 235, "cache_creation": 1600, "cache_read": 2400, "turns": 6, "sidechain_turns": 3})
+        self.assertEqual(tok["subagents"], {"files": 1, "turns": 2, "input": 10, "output": 140, "cache_creation": 300, "cache_read": 300})
         self.assertEqual(tok["by_model"], {
             "claude-opus-5-5": {"input": 157, "output": 90, "cache_creation": 1100, "cache_read": 2100, "turns": 3},
-            "claude-haiku-5-5": {"input": 10, "output": 5, "cache_creation": 200, "cache_read": 0, "turns": 1}})
+            "claude-haiku-5-5": {"input": 20, "output": 145, "cache_creation": 500, "cache_read": 300, "turns": 3}})
         self.assertEqual((tok["first"], tok["last"]), ("2026-01-10T10:00:40.000Z", "2026-01-10T10:29:10.000Z"))
+        # the rollout from /work/wt-elsewhere began 5 s after this one and overlaps the window: another cwd, no candidate
+        self.assertEqual(self.meta("ctx_cx", pr="p2", step="review_codex")["session"]["candidates"], 1)
         cx = json.loads((self.logs("ctx_cx", pr="p2", step="review_codex") / "tokens.json").read_text())
         self.assertEqual({k: cx[k] for k in ("input", "output", "cache_creation", "cache_read", "turns")},
                          {"input": 3000, "output": 700, "cache_creation": "not recorded", "cache_read": 2000, "turns": 2})
@@ -1945,7 +1960,9 @@ class Collector(RouterCase):
                          {"input": "not recorded", "output": "not recorded", "cache_creation": "not recorded",
                           "cache_read": "not recorded", "turns": 1})
         rows = {r["dispatch"]: r for r in self.index()}
-        self.assertEqual(rows["ctx_cl"]["tokens"]["input"], 167)
+        self.assertEqual({k: rows["ctx_cl"]["tokens"][k] for k in ("input", "output", "cache_creation", "cache_read", "turns")},
+                         {"input": 177, "output": 235, "cache_creation": 1600, "cache_read": 2400, "turns": 6})   # the totals
+        self.assertEqual(rows["ctx_cl"]["tokens"]["subagents"], tok["subagents"])
         self.assertEqual((rows["ctx_cl"]["duration_s"], rows["ctx_cl"]["checks_ok"], rows["ctx_cx"]["checks_ok"]), (1800, True, False))
         self.assertEqual(rows["ctx_cx"]["session"], {"provider": "codex", "path": str(self.sessions / self.CODEX), "match": "unique", "candidates": 1})
         self.assertEqual((rows["ctx_cl"]["head_before"], rows["ctx_cl"]["head_after"], rows["ctx_cl"]["step"]), ("a" * 40, "b" * 40, "implement"))
@@ -1986,7 +2003,7 @@ class Collector(RouterCase):
                         for p in sorted((self.state / "logs").rglob("*")) if p.is_file() and not p.name.startswith(".")}
         self.assertEqual(self.collect("--all")[0], 0)
         first = tree()
-        self.assertEqual(len([k for k in first if k.endswith("meta.json")]), 2)
+        self.assertEqual(len([k for k in first if Path(k).name == "meta.json"]), 2)
         rc, out = self.collect("--all")
         self.assertEqual((rc, tree()), (0, first))
         self.assertIn("skipped 2", out)

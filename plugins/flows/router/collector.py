@@ -23,10 +23,13 @@ What it writes, under <state>/logs/ only (never into a repository):
     session.jsonl    the matched agent session file (Claude Code or Codex), copied byte for byte; absent when no
                      single file matches, and meta.json says why: "no candidate", "ambiguous: <n> candidates",
                      "provider not supported", "worktree unknown"
-    tokens.json      summed from session.jsonl: input, output, cache_creation, cache_read, by model; turns (one per
-                     model response: Claude lines that share a message id are one response); first and last
-                     timestamp; "not recorded" for a field the source never reports (Codex: cache_creation, and
-                     everything when it wrote no token_count line). Codex counts cached input inside input.
+    session.subagents/  a Claude session's <session>/subagents/ directory (each subagent's sidechain), copied whole
+    tokens.json      summed from session.jsonl and session.subagents/*.jsonl: input, output, cache_creation,
+                     cache_read, by model; turns (one per model response: Claude lines that share a message id are
+                     one response); "subagents" {files, turns, input, output, cache_creation, cache_read}, the
+                     subagent files' share of the totals; first and last timestamp of session.jsonl; "not
+                     recorded" for a field the source never reports (Codex: cache_creation, and everything when it
+                     wrote no token_count line). Codex counts cached input inside input.
   index.jsonl      one row per dispatch: {dispatch, task, pr, step, n, agent, model, effort, started, ended,
                    outcome, cause, flow_version, duration_s, tokens, session {provider, path, match, candidates},
                    head_before, head_after, checks_ok, orca {contentComplete, clipping}}
@@ -396,8 +399,13 @@ def match_session(info: dict, provider: "str | None", claude_root: Path, codex_r
 
 # ---------------------------------------------------------------- tokens
 
-def claude_tokens(path: Path) -> dict:
-    """Claude Code writes one line per content block; the lines of one response share message.id and its usage."""
+CLAUDE_FIELDS = {"input": "input_tokens", "output": "output_tokens", "cache_creation": "cache_creation_input_tokens",
+                 "cache_read": "cache_read_input_tokens"}
+
+
+def claude_responses(path: Path) -> "tuple[dict[str, tuple[str, dict, bool]], str | None, str | None]":
+    """Claude Code writes one line per content block; the lines of one response share message.id and its usage (the
+    last line's counts). Returns {response id: (model, usage, sidechain)}, the first and the last timestamp."""
     resp: "dict[str, tuple[str, dict, bool]]" = {}
     first = last = None
     for i, raw in enumerate(open(path, "rb")):
@@ -412,20 +420,39 @@ def claude_tokens(path: Path) -> dict:
             last = d["timestamp"]
         msg = d.get("message") if isinstance(d.get("message"), dict) else {}
         if d.get("type") == "assistant" and isinstance(msg.get("usage"), dict):
-            resp[str(msg.get("id") or d.get("uuid") or i)] = (str(msg.get("model") or "unknown"), msg["usage"], bool(d.get("isSidechain")))
-    fields = {"input": "input_tokens", "output": "output_tokens", "cache_creation": "cache_creation_input_tokens",
-              "cache_read": "cache_read_input_tokens"}
-    total: dict = {k: NR for k in fields}
+            resp[str(msg.get("id") or d.get("uuid") or f"{path.name}:{i}")] = (
+                str(msg.get("model") or "unknown"), msg["usage"], bool(d.get("isSidechain")))
+    return resp, first, last
+
+
+def add_usage(into: dict, usage: dict) -> None:
+    for k, src in CLAUDE_FIELDS.items():
+        if isinstance(usage.get(src), (int, float)):
+            into[k] = (0 if into[k] == NR else into[k]) + int(usage[src])
+
+
+def claude_tokens(path: Path, subagents: "list[Path] | tuple" = ()) -> dict:
+    """The session file's responses and its subagent files' (Claude Code keeps a subagent's sidechain in
+    <session>/subagents/agent-*.jsonl, not in the parent). The totals and by_model count both; "subagents" shows
+    the subagent files' share, so the parent's own numbers are the totals minus it. A response whose id the parent
+    already holds (an older client wrote sidechains inline) is counted once."""
+    resp, first, last = claude_responses(path)
+    sub_total: dict = dict({k: NR for k in CLAUDE_FIELDS}, files=len(subagents), turns=0)
+    for f in subagents:
+        for rid, r in claude_responses(f)[0].items():
+            if rid not in resp:
+                resp[rid] = r
+                sub_total["turns"] += 1
+                add_usage(sub_total, r[1])
+    total: dict = {k: NR for k in CLAUDE_FIELDS}
     by_model: dict = {}
     for model, usage, _side in resp.values():
-        m = by_model.setdefault(model, dict({k: NR for k in fields}, turns=0))
+        m = by_model.setdefault(model, dict({k: NR for k in CLAUDE_FIELDS}, turns=0))
         m["turns"] += 1
-        for k, src in fields.items():
-            if isinstance(usage.get(src), (int, float)):
-                m[k] = (0 if m[k] == NR else m[k]) + int(usage[src])
-                total[k] = (0 if total[k] == NR else total[k]) + int(usage[src])
+        add_usage(m, usage)
+        add_usage(total, usage)
     return dict(provider="claude", **total, turns=len(resp), sidechain_turns=sum(1 for r in resp.values() if r[2]),
-                by_model=by_model, first=first or NR, last=last or NR)
+                by_model=by_model, subagents=sub_total, first=first or NR, last=last or NR)
 
 
 def codex_tokens(path: Path) -> dict:
@@ -553,6 +580,8 @@ def index_row(meta: dict, tokens: "dict | None") -> dict:
     if tokens:
         tok = {k: tokens.get(k) for k in ("input", "output", "cache_creation", "cache_read", "turns")}
         tok["by_model"] = tokens.get("by_model") or {}
+        if (tokens.get("subagents") or {}).get("files"):
+            tok["subagents"] = tokens["subagents"]
     checks = meta.get("checks") or []
     orca = meta.get("orca") or {}
     return {"dispatch": meta["dispatch"], "task": meta.get("task"), "pr": meta.get("pr"), "step": meta.get("step"),
@@ -640,13 +669,20 @@ class Collector:
         if sess["match"] == "unique":
             src = Path(sess["path"])
             shutil.copyfile(src, tmp / "session.jsonl")
-            sub = src.with_suffix("") / "subagents"
-            if provider == "claude" and sub.is_dir():
-                sess["subagent_files_not_copied"] = len(list(sub.glob("*.jsonl")))
-            tokens = claude_tokens(tmp / "session.jsonl") if provider == "claude" else codex_tokens(tmp / "session.jsonl")
-            write_json(tmp / "tokens.json", tokens)
             files["session.jsonl"] = {"source": provider, "path": sess["path"], "match": "unique", "candidates": sess["candidates"]}
-            files["tokens.json"] = {"source": "session.jsonl"}
+            sub = src.with_suffix("") / "subagents"
+            if provider == "claude" and sub.is_dir():   # the subagents' sidechains, whole, next to their parent
+                shutil.copytree(sub, tmp / "session.subagents")
+                summed = sorted((tmp / "session.subagents").glob("*.jsonl"))
+                sess["subagent_files"] = len(summed)
+                files["session.subagents/"] = {"source": "claude", "path": str(sub), "of": sess["path"],
+                                               "files": sorted(str(f.relative_to(sub)) for f in sub.rglob("*") if f.is_file()),
+                                               "summed": [f.name for f in summed]}
+                tokens = claude_tokens(tmp / "session.jsonl", summed)
+            else:
+                tokens = claude_tokens(tmp / "session.jsonl") if provider == "claude" else codex_tokens(tmp / "session.jsonl")
+            write_json(tmp / "tokens.json", tokens)
+            files["tokens.json"] = {"source": "session.jsonl" + (" and session.subagents/*.jsonl" if "session.subagents/" in files else "")}
         else:
             files["session.jsonl"] = {"source": provider, "path": None, "match": sess["match"], "candidates": sess["candidates"],
                                       "why": sess["why"]}

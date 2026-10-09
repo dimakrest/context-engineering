@@ -44,6 +44,7 @@ Session matching. Candidates are session files whose cwd is the dispatch's workt
                where it is kept); subagent files in a session's own subdirectory are not candidates either.
   Codex        <codex-sessions>/YYYY/MM/DD/rollout-*.jsonl whose first line's session_meta.payload.cwd is the worktree.
   and whose first..last timestamps overlap [started - 2 min, ended + 2 min]. One candidate: "unique". Several: the
+  only one whose first 50 lines name the dispatch id (Orca's preamble does), if exactly one does ("unique"); else the
   one whose first timestamp falls within 3 minutes after the start, if exactly one does ("unique"); otherwise
   "ambiguous", the candidate paths are recorded and nothing is copied. The collector never guesses.
 
@@ -367,6 +368,12 @@ def codex_candidates(root: Path, worktree: str, lo: float, hi: float) -> "list[d
     return out
 
 
+def names_dispatch(path: Path, dispatch: str, limit: int = 50) -> bool:
+    """Whether the dispatch id appears in the file's first lines (Orca's preamble). An id is matched, no text is kept."""
+    with open(path, "rb") as f:
+        return any(dispatch.encode() in raw for _, raw in zip(range(limit), f))
+
+
 def provider_of(info: dict, orca_provider: "str | None") -> "str | None":
     agent = (info.get("agent") or orca_provider or "").lower()
     return agent if agent in ("claude", "codex") else (agent or None)
@@ -396,7 +403,11 @@ def match_session(info: dict, provider: "str | None", claude_root: Path, codex_r
     if not overlap:
         res["why"] = "no candidate"
         return res
-    if len(overlap) > 1:
+    named = [f for f in overlap if names_dispatch(Path(f["path"]), info["dispatch"])] if len(overlap) > 1 else []
+    if len(named) == 1:   # Orca's preamble names the worker's dispatch in its first message: workers in one worktree differ
+        overlap = named
+        res["why"] = f"{res['candidates']} candidates; the only one that names {info['dispatch']}"
+    elif len(overlap) > 1:
         near = [f for f in overlap if start - 1 <= (ts_epoch(f["first"]) or 0) <= start + NEAR_START_S]
         if len(near) != 1:
             res.update(match="ambiguous", why=f"ambiguous: {len(overlap)} candidates", paths=[f["path"] for f in overlap])

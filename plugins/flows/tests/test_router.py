@@ -2275,6 +2275,30 @@ class Collector(RouterCase):
                          ("unique", 2, str(self.sessions / self.MAIN)))
         self.assertEqual([r["session"]["match"] for r in self.index() if r["dispatch"] == "ctx_amb"], ["unique"])   # replaced, not added
 
+    def test_of_two_near_candidates_the_one_that_names_the_dispatch_is_unique(self):
+        # the M5 pilot: smoke workers one after another in one worktree began within 3 min of each other; each session's
+        # first message is Orca's preamble, which names its own dispatch id
+        named = lambda path, dispatch: path.write_text((self.sessions / self.MAIN).read_text().replace(
+            "Change the parser.", f"--dispatch-id {dispatch} Change the parser.").replace(self.MAIN[:-6], path.stem))
+        twin = self.sessions / "claude" / "-work-wt-fixture" / "77777777-aaaa-4aaa-8aaa-000000000007.jsonl"
+        named(twin, "ctx_other")
+        self.seed("ctx_mine")
+        rc, out = self.collect("--all")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.meta("ctx_mine")["session"]["match"], "ambiguous")   # the main file names no dispatch: no guess
+        named(self.sessions / self.MAIN, "ctx_mine")
+        rc, out = self.collect("--dispatch", "ctx_mine", "--force")
+        self.assertEqual(rc, 0, out)
+        s = self.meta("ctx_mine")["session"]
+        self.assertEqual((s["match"], s["candidates"], s["path"], s["why"]),
+                         ("unique", 2, str(self.sessions / self.MAIN), "2 candidates; the only one that names ctx_mine"))
+        self.seed("ctx_other", pr="p2")                                    # the twin's worker, in the same window
+        self.assertEqual(self.collect("--dispatch", "ctx_other")[0], 0)
+        self.assertEqual(self.meta("ctx_other", pr="p2")["session"]["path"], str(twin))
+        named(twin, "ctx_mine")                                            # both name it: back to the start-time rule
+        rc, out = self.collect("--dispatch", "ctx_mine", "--force")
+        self.assertEqual(self.meta("ctx_mine")["session"]["match"], "ambiguous")
+
     def test_collecting_twice_changes_nothing(self):
         self.seed("ctx_a")
         self.seed("ctx_b", pr="p2", step="review_codex", wt=self.CODEX_WT, agent="codex", model="",

@@ -658,7 +658,10 @@ class Collector:
                 if time.time() - since < LOCK_EXPIRY_S:
                     return self.held(info, lockdir, since)
                 shutil.rmtree(lockdir, ignore_errors=True)   # left by a collector that died
-                lockdir.mkdir()
+                try:
+                    lockdir.mkdir()
+                except FileExistsError:   # another collector took it over first: held, like any lock
+                    return self.held(info, lockdir)
         try:
             if (final / "meta.json").exists() and not self.force:
                 self.index(read_json(final / "meta.json") or {}, read_json(final / "tokens.json"))   # a row a crash lost

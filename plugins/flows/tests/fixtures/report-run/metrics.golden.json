@@ -1,0 +1,673 @@
+{
+ "flow": {
+  "history": [
+   {
+    "at": "2026-01-12T09:00:00Z",
+    "by": "coordinator",
+    "changes": 3,
+    "note": "",
+    "v": 1
+   },
+   {
+    "at": "2026-01-12T10:30:00Z",
+    "by": "owner",
+    "changes": 1,
+    "note": "review A2 with Claude",
+    "v": 2
+   }
+  ],
+  "started_under": {
+   "1": [
+    "A1",
+    "B1"
+   ],
+   "2": [
+    "A2"
+   ]
+  },
+  "version": 2
+ },
+ "interruptions": {
+  "answer_max_s": 400,
+  "answer_median_s": 250,
+  "questions": [
+   {
+    "answer_s": 400,
+    "answered": "2026-01-12T10:26:40Z",
+    "asked": "2026-01-12T10:20:00Z",
+    "dispatch": "ctx_a1_impl2",
+    "message": "msg_q1",
+    "pr": "A1",
+    "role": "implementer.md",
+    "step": "implement"
+   },
+   {
+    "answer_s": 100,
+    "answered": "2026-01-12T12:01:40Z",
+    "asked": "2026-01-12T12:00:00Z",
+    "dispatch": "ctx_a2_impl",
+    "message": "msg_q2",
+    "pr": "A2",
+    "role": "implementer.md",
+    "step": "implement"
+   },
+   {
+    "answer_s": "not recorded",
+    "answered": "not recorded",
+    "asked": "2026-01-12T12:40:00Z",
+    "dispatch": "ctx_a2_review",
+    "message": "msg_q3",
+    "pr": "A2",
+    "role": "review-claude.md",
+    "step": "review"
+   }
+  ],
+  "questions_by_role": {
+   "implementer.md": 2,
+   "review-claude.md": 1
+  },
+  "rings": {
+   "check": {
+    "B1": 1,
+    "total": 1
+   },
+   "collector": {
+    "-": 1,
+    "total": 1
+   },
+   "failed": {
+    "A1": 1,
+    "total": 1
+   },
+   "gate": {
+    "A1": 2,
+    "A2": 2,
+    "B1": 2,
+    "total": 6
+   },
+   "locked": {
+    "B1": 1,
+    "total": 1
+   },
+   "question": {
+    "A1": 1,
+    "A2": 2,
+    "total": 3
+   },
+   "runner": {
+    "total": 0
+   },
+   "silent": {
+    "A2": 1,
+    "total": 1
+   }
+  },
+  "unanswered": 1
+ },
+ "lessons": [
+  {
+   "dispatch": "ctx_a1_impl1, ctx_a1_impl2",
+   "lesson": "slowest step",
+   "model": "claude-opus-5-5",
+   "pr": "A1",
+   "record": "chains/A1/state.json steps[implement].attempts",
+   "step": "implement",
+   "unit": "s",
+   "value": 2400
+  },
+  {
+   "dispatch": "ctx_a1_impl1, ctx_a1_impl2",
+   "lesson": "most-retried step",
+   "model": "claude-opus-5-5",
+   "pr": "A1",
+   "record": "chains/A1/state.json steps[implement].attempts",
+   "step": "implement",
+   "unit": "attempts",
+   "value": 2
+  },
+  {
+   "dispatch": "ctx_a1_impl2",
+   "lesson": "role that asked the most questions",
+   "model": "claude-opus-5-5",
+   "pr": "A1",
+   "record": "journal.md question lines",
+   "role": "implementer.md",
+   "step": "implement",
+   "unit": "questions",
+   "value": 2
+  },
+  {
+   "dispatch": "-",
+   "lesson": "longest wait at a gate",
+   "model": "-",
+   "pr": "A2",
+   "record": "journal.md paused: blocked at 2026-01-12T11:15:20Z .. coordinator at 2026-01-12T11:55:20Z",
+   "step": "accept",
+   "unit": "s",
+   "value": 2400
+  }
+ ],
+ "outside": {
+  "adhoc_s": 300,
+  "dispatches": [
+   "ctx_adhoc_none"
+  ]
+ },
+ "per_pr": {
+  "A1": {
+   "questions": 1,
+   "rings": {
+    "check": 0,
+    "collector": 0,
+    "failed": 1,
+    "gate": 2,
+    "locked": 0,
+    "question": 1,
+    "runner": 0,
+    "silent": 0
+   },
+   "steps": {
+    "ci": {
+     "attempts": 1,
+     "check_not_ok": 0,
+     "duration_s": 600
+    },
+    "contract": {
+     "attempts": 1,
+     "check_not_ok": 0,
+     "duration_s": 1200
+    },
+    "implement": {
+     "attempts": 2,
+     "check_not_ok": 0,
+     "duration_s": 2400
+    },
+    "review": {
+     "attempts": 1,
+     "check_not_ok": 0,
+     "duration_s": 600
+    }
+   }
+  },
+  "A2": {
+   "questions": 2,
+   "rings": {
+    "check": 0,
+    "collector": 0,
+    "failed": 0,
+    "gate": 2,
+    "locked": 0,
+    "question": 2,
+    "runner": 0,
+    "silent": 1
+   },
+   "steps": {
+    "ci": {
+     "attempts": 1,
+     "check_not_ok": 0,
+     "duration_s": 600
+    },
+    "contract": {
+     "attempts": 1,
+     "check_not_ok": 0,
+     "duration_s": 900
+    },
+    "implement": {
+     "attempts": 1,
+     "check_not_ok": 0,
+     "duration_s": 1800
+    },
+    "review": {
+     "attempts": 1,
+     "check_not_ok": 0,
+     "duration_s": 600
+    }
+   }
+  },
+  "B1": {
+   "questions": 0,
+   "rings": {
+    "check": 1,
+    "collector": 0,
+    "failed": 0,
+    "gate": 2,
+    "locked": 1,
+    "question": 0,
+    "runner": 0,
+    "silent": 0
+   },
+   "steps": {
+    "ci": {
+     "attempts": 1,
+     "check_not_ok": 0,
+     "duration_s": 300
+    },
+    "contract": {
+     "attempts": 1,
+     "check_not_ok": 0,
+     "duration_s": 1200
+    },
+    "implement": {
+     "attempts": 1,
+     "check_not_ok": 1,
+     "duration_s": 1200
+    },
+    "review": {
+     "attempts": 1,
+     "check_not_ok": 0,
+     "duration_s": 600
+    }
+   }
+  }
+ },
+ "report": 1,
+ "review": {
+  "attempts": [
+   {
+    "dispatch": "ctx_a1_review",
+    "findings": 3,
+    "n": 1,
+    "pr": "A1",
+    "step": "review",
+    "verdict": "not recorded"
+   },
+   {
+    "dispatch": "ctx_b1_review",
+    "findings": "not recorded",
+    "n": 1,
+    "pr": "B1",
+    "step": "review",
+    "verdict": "not recorded"
+   },
+   {
+    "dispatch": "ctx_a2_review",
+    "findings": 2,
+    "n": 1,
+    "pr": "A2",
+    "step": "review",
+    "verdict": "PASS"
+   }
+  ],
+  "by_step": {
+   "review": {
+    "findings": 5,
+    "not_recorded": 1,
+    "recorded": 2
+   }
+  }
+ },
+ "run": {
+  "adhoc_dispatches": 2,
+  "chain_dispatches": 10,
+  "collected_sessions": 11,
+  "dispatches": 12,
+  "from": "2026-01-12T09:00:00Z",
+  "logs": true,
+  "prs": 3,
+  "run": "run_fixture01",
+  "title": "A synthetic run for the report",
+  "to": "2026-01-12T12:56:00Z"
+ },
+ "steps": {
+  "ci": {
+   "attempts": 3,
+   "by_cause": {
+    "first": 3
+   },
+   "check_not_ok": 0,
+   "check_not_ok_prs": [],
+   "instances": 3,
+   "max_pr": "A1",
+   "max_s": 600,
+   "median_s": 600,
+   "type": "script"
+  },
+  "contract": {
+   "attempts": 3,
+   "by_cause": {
+    "first": 3
+   },
+   "check_not_ok": 0,
+   "check_not_ok_prs": [],
+   "instances": 3,
+   "max_pr": "A1",
+   "max_s": 1200,
+   "median_s": 1200,
+   "type": "worker"
+  },
+  "implement": {
+   "attempts": 4,
+   "by_cause": {
+    "first": 3,
+    "retry": 1
+   },
+   "check_not_ok": 1,
+   "check_not_ok_prs": [
+    "B1"
+   ],
+   "instances": 3,
+   "max_pr": "A1",
+   "max_s": 2400,
+   "median_s": 1800,
+   "type": "worker"
+  },
+  "review": {
+   "attempts": 3,
+   "by_cause": {
+    "first": 3
+   },
+   "check_not_ok": 0,
+   "check_not_ok_prs": [],
+   "instances": 3,
+   "max_pr": "A1",
+   "max_s": 600,
+   "median_s": 600,
+   "type": "worker"
+  }
+ },
+ "time": {
+  "A1": {
+   "adhoc_s": 120,
+   "created": "2026-01-12T09:00:00Z",
+   "done": "2026-01-12T11:00:00Z",
+   "gate_s": 2040,
+   "open_waits": 0,
+   "paused_s": 300,
+   "rest_s": 660,
+   "wall_s": 7200,
+   "worker_covered_s": 4200,
+   "worker_s": 4200
+  },
+  "A2": {
+   "adhoc_s": 0,
+   "created": "2026-01-12T11:00:05Z",
+   "done": "not recorded",
+   "gate_s": 2400,
+   "open_waits": 1,
+   "paused_s": 0,
+   "rest_s": "not recorded",
+   "wall_s": "not recorded",
+   "worker_covered_s": 3300,
+   "worker_s": 3300
+  },
+  "B1": {
+   "adhoc_s": 0,
+   "created": "2026-01-12T09:05:00Z",
+   "done": "2026-01-12T10:20:00Z",
+   "gate_s": 840,
+   "open_waits": 0,
+   "paused_s": 300,
+   "rest_s": 360,
+   "wall_s": 4500,
+   "worker_covered_s": 3000,
+   "worker_s": 3000
+  },
+  "total": {
+   "adhoc_s": 120,
+   "gate_s": 5280,
+   "open_waits": 1,
+   "paused_s": 600,
+   "rest_s": "not recorded",
+   "wall_s": "not recorded",
+   "worker_covered_s": 10500,
+   "worker_s": 10500
+  }
+ },
+ "tokens": {
+  "by_label": {
+   "claude-fable-5-1": {
+    "cache_creation": 6400,
+    "cache_read": 84000,
+    "dispatches": 4,
+    "input": 2700,
+    "output": 4600,
+    "subagents": {
+     "cache_creation": 500,
+     "cache_read": 4000,
+     "files": 2,
+     "input": 200,
+     "output": 300,
+     "turns": 3
+    },
+    "tokens_files": 4,
+    "turns": 28
+   },
+   "claude-opus-5-5": {
+    "cache_creation": 6100,
+    "cache_read": 149000,
+    "dispatches": 4,
+    "input": 2400,
+    "output": 7800,
+    "subagents": {
+     "cache_creation": "not recorded",
+     "cache_read": "not recorded",
+     "files": 0,
+     "input": "not recorded",
+     "output": "not recorded",
+     "turns": 0
+    },
+    "tokens_files": 4,
+    "turns": 40
+   },
+   "claude-opus-5-5 -> claude-sonnet-5-5": {
+    "cache_creation": 1200,
+    "cache_read": 25000,
+    "dispatches": 1,
+    "input": 400,
+    "output": 1000,
+    "subagents": {
+     "cache_creation": "not recorded",
+     "cache_read": "not recorded",
+     "files": 0,
+     "input": "not recorded",
+     "output": "not recorded",
+     "turns": 0
+    },
+    "tokens_files": 1,
+    "turns": 9
+   },
+   "codex": {
+    "cache_creation": "not recorded",
+    "cache_read": 15000,
+    "dispatches": 3,
+    "input": 20000,
+    "output": 3000,
+    "subagents": "not recorded",
+    "tokens_files": 2,
+    "turns": 6
+   }
+  },
+  "by_model": {
+   "claude-fable-5-1": {
+    "cache_creation": 5900,
+    "cache_read": 80000,
+    "input": 2500,
+    "output": 4300,
+    "turns": 25
+   },
+   "claude-haiku-5-5": {
+    "cache_creation": 500,
+    "cache_read": 4000,
+    "input": 200,
+    "output": 300,
+    "turns": 3
+   },
+   "claude-opus-5-5": {
+    "cache_creation": 6100,
+    "cache_read": 149000,
+    "input": 2400,
+    "output": 7800,
+    "turns": 40
+   },
+   "claude-sonnet-5-5": {
+    "cache_creation": 1200,
+    "cache_read": 25000,
+    "input": 400,
+    "output": 1000,
+    "turns": 9
+   },
+   "gpt-5-codex": {
+    "cache_creation": "not recorded",
+    "cache_read": 15000,
+    "input": 20000,
+    "output": 3000,
+    "turns": 6
+   }
+  },
+  "cost": "not priced",
+  "dispatches": [
+   {
+    "cache_creation": 3000,
+    "cache_read": 40000,
+    "dispatch": "ctx_a1_contract",
+    "input": 1000,
+    "label": "claude-fable-5-1",
+    "match": "unique",
+    "output": 2000,
+    "pr": "A1",
+    "step": "contract",
+    "turns": 10
+   },
+   {
+    "cache_creation": 2000,
+    "cache_read": 30000,
+    "dispatch": "ctx_a1_impl1",
+    "input": 500,
+    "label": "claude-opus-5-5",
+    "match": "unique",
+    "output": 1500,
+    "pr": "A1",
+    "step": "implement",
+    "turns": 8
+   },
+   {
+    "cache_creation": 1000,
+    "cache_read": 50000,
+    "dispatch": "ctx_a1_impl2",
+    "input": 700,
+    "label": "claude-opus-5-5",
+    "match": "unique",
+    "output": 2500,
+    "pr": "A1",
+    "step": "implement",
+    "turns": 12
+   },
+   {
+    "cache_creation": "not recorded",
+    "cache_read": 15000,
+    "dispatch": "ctx_a1_review",
+    "input": 20000,
+    "label": "codex",
+    "match": "unique",
+    "output": 3000,
+    "pr": "A1",
+    "step": "review",
+    "turns": 6
+   },
+   {
+    "cache_creation": 2000,
+    "cache_read": 24000,
+    "dispatch": "ctx_b1_contract",
+    "input": 1000,
+    "label": "claude-fable-5-1",
+    "match": "unique",
+    "output": 1500,
+    "pr": "B1",
+    "step": "contract",
+    "turns": 10
+   },
+   {
+    "cache_creation": 1200,
+    "cache_read": 25000,
+    "dispatch": "ctx_b1_impl",
+    "input": 400,
+    "label": "claude-opus-5-5 -> claude-sonnet-5-5",
+    "match": "unique",
+    "output": 1000,
+    "pr": "B1",
+    "step": "implement",
+    "turns": 9
+   },
+   {
+    "cache_creation": "not recorded",
+    "cache_read": "not recorded",
+    "dispatch": "ctx_b1_review",
+    "input": "not recorded",
+    "label": "codex",
+    "match": "unique",
+    "output": "not recorded",
+    "pr": "B1",
+    "step": "review",
+    "turns": "not recorded"
+   },
+   {
+    "cache_creation": 1100,
+    "cache_read": 15000,
+    "dispatch": "ctx_a2_contract",
+    "input": 600,
+    "label": "claude-fable-5-1",
+    "match": "unique",
+    "output": 900,
+    "pr": "A2",
+    "step": "contract",
+    "turns": 6
+   },
+   {
+    "cache_creation": 2500,
+    "cache_read": 60000,
+    "dispatch": "ctx_a2_impl",
+    "input": 900,
+    "label": "claude-opus-5-5",
+    "match": "unique",
+    "output": 3000,
+    "pr": "A2",
+    "step": "implement",
+    "turns": 15
+   },
+   {
+    "cache_creation": 600,
+    "cache_read": 9000,
+    "dispatch": "ctx_a2_review",
+    "input": 300,
+    "label": "claude-opus-5-5",
+    "match": "unique",
+    "output": 800,
+    "pr": "A2",
+    "step": "review",
+    "turns": 5
+   },
+   {
+    "cache_creation": 300,
+    "cache_read": 5000,
+    "dispatch": "ctx_adhoc_arbiter",
+    "input": 100,
+    "label": "claude-fable-5-1",
+    "match": "unique",
+    "output": 200,
+    "pr": "A1",
+    "step": "_adhoc",
+    "turns": 2
+   },
+   {
+    "cache_creation": "not recorded",
+    "cache_read": "not recorded",
+    "dispatch": "ctx_adhoc_none",
+    "input": "not recorded",
+    "label": "codex",
+    "match": "none",
+    "output": "not recorded",
+    "pr": "-",
+    "step": "_adhoc",
+    "turns": "not recorded"
+   }
+  ],
+  "no_session": [
+   {
+    "dispatch": "ctx_adhoc_none",
+    "match": "none",
+    "pr": "-",
+    "step": "_adhoc"
+   }
+  ]
+ }
+}

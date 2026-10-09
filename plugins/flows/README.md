@@ -16,9 +16,10 @@ something needs a decision.
 
 Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-coordinators-loop) ·
 [The flow file](#the-flow-file) · [Seeing progress](#seeing-progress) · [The page](#the-page) ·
-[Every worker's logs](#every-workers-logs) · [What rings](#what-rings) · [A chain definition](#a-chain-definition) ·
-[Repository profiles](#repository-profiles) · [What the run provides](#what-the-run-provides) · [Checks](#checks) ·
-[After a restart](#after-a-restart) · [Tested how](#tested-how) · [Not tested, and limits](#not-tested-and-limits)
+[Every worker's logs](#every-workers-logs) · [The run report](#the-run-report) · [What rings](#what-rings) ·
+[A chain definition](#a-chain-definition) · [Repository profiles](#repository-profiles) ·
+[What the run provides](#what-the-run-provides) · [Checks](#checks) · [After a restart](#after-a-restart) ·
+[Tested how](#tested-how) · [Not tested, and limits](#not-tested-and-limits)
 
 ## Parts
 
@@ -28,13 +29,14 @@ Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-
 | `router/collector.py` | Gathers each settled worker's logs whole: Orca's archive of it, its events, and the agent session file that ran it, matched and copied, with its token usage summed. See [Every worker's logs](#every-workers-logs). |
 | `router/progress.py` | Renders the owner's view: the text of `router.py progress` and `progress.html`. It reads nothing itself. |
 | `router/page/` | [The page](#the-page) the mailbox daemon serves on 127.0.0.1: the run as a graph of PRs, live, and the flow edited on the same canvas. One HTML file, its script and its styles; no build step, no framework, no request to another host. |
+| `router/report.py` | The run report: one HTML page that says where the time, the tokens and the interruptions went, from the records alone. See [The run report](#the-run-report). |
 | `router/templates/inner-pr.json` | One inner PR of a larger change as a chain: 17 steps, two gates (contract acceptance, merge). `--dry-run` lists the steps and names anything missing. |
 | `router/specs/*.md`, `router/contract-template.md` | The 12 role specs the chain names, one per worker step, in Orca's shape (target, change, constraints, ownership, observable acceptance); `arbiter.md`, a template the coordinator fills for a test dispute; and the template every contract follows. |
 | `router/profiles/*.json` | What differs between repositories (test, lint and commit commands, guarded paths, the rules file): `python`, `typescript`, `bell`. See [Repository profiles](#repository-profiles). |
 | `router/templates/smoke.json`, `router/specs/smoke-*.md` | A harmless chain that proves the router against real Orca: two workers at once, a question, a failure with a retry, a script step, a gate. |
 | `router/checks/*` | Checks that print one line, `OK …` or `NOT OK …`, and exit 0 or 1. |
 | `router/draft-pr.sh` | Opens the inner PR as a draft, so that step needs no model. Refuses `main` as the base. |
-| `tests/` | `test_router.py` (the suite; it prints its count), `test_page.py` (the page in headless Chromium, skipped without Playwright), `fake-orca`, a stand-in for the Orca CLI, and synthetic session files under `fixtures/collector/`. |
+| `tests/` | `test_router.py` (the suite; it prints its count), `test_page.py` (the page in headless Chromium, skipped without Playwright), `fake-orca`, a stand-in for the Orca CLI, synthetic session files under `fixtures/collector/`, and a synthetic run under `fixtures/report-run/` with its `metrics.golden.json`. |
 | `skills/flow-run`, `skills/flow-status` | The two skills. |
 
 State lives in `$ROUTER_STATE` (default `$SCRATCH/router`, where `SCRATCH` is the run directory). `router.py --help`
@@ -329,10 +331,10 @@ write in the history, and asks for a note. Then the apply. The answers:
 | `POST /flow` | `{"base": <version>, "by", "note", "flow": {...}, "dry_run": false}`. `200 {"ok": true, "version", "changes", "started", "dry_run"}`; `409 {"ok": false, "reason", "current": <the copy>}`; `422 {"ok": false, "problems": [...]}`, nothing changed |
 
 Anything else is a 404. The server answers only a `Host` of `127.0.0.1:<port>` or `localhost:<port>`, and a `POST`
-only from that origin with a JSON body (403 and 415 otherwise; 400 for a `Content-Length` that is not a number), so another site open in the same browser can neither
-read the run nor apply a flow. Each request has its own thread with a 30 s socket timeout, and the body is read before
-`flow.lock` is taken, so a slow client holds nothing. A handler that raises answers 500 and writes the traceback in
-`mailbox.log`; the mail loop never waits for the server.
+only from that origin with a JSON body (403 and 415 otherwise; 400 for a `Content-Length` that is not a number), so
+another site open in the same browser can neither read the run nor apply a flow. Each request has its own thread with
+a 30 s socket timeout, and the body is read before `flow.lock` is taken, so a slow client holds nothing. A handler that
+raises answers 500 and writes the traceback in `mailbox.log`; the mail loop never waits for the server.
 
 A poll draws the page again only when the run changed, and then in place: a PR, a step chip and a palette role stay
 the same elements wherever they move, and so does every element whose place did not change. A click, a drag or an
@@ -403,6 +405,57 @@ turns the automatic collection off; `FLOWS_CLAUDE_PROJECTS` (default `~/.claude/
 `FLOWS_CODEX_SESSIONS` (default `~/.codex/sessions`) say where the session files are. When Orca's archive answers
 `archive_not_ready` (the code the fake uses: the real CLI's is not known yet) the first page is asked for again three
 times, two seconds apart; then `orca-read.json` says `"status": "not available"`, never an empty transcript.
+
+## The run report
+
+```sh
+$R report                                  # writes $ROUTER_STATE/report.html and prints its path
+$R report --pr <pr> --out <file>           # one PR: its section, and the header and --metrics count it alone
+python3 $FLOWS/router/report.py --state <dir> --out <file.html> [--metrics <file.json>] [--prices <file.json>]
+```
+
+One self-contained page per run (inline SVG, no script, no font from anywhere, light and dark), and with `--metrics`
+the same numbers as JSON. It reads the run's records and writes only the files named on its command line: no Orca
+call, and no session file is opened (`tokens.json` and `meta.json` are what the collector summed from them). A number
+whose record is missing prints `not recorded`; nothing is interpolated or estimated. No transcript text is shown:
+from a worker's summary it takes only the number after `FINDINGS:` and the word after `VERDICT:`.
+
+| Question | Record | Field |
+|---|---|---|
+| a. Wall clock per PR | `chains/<pr>/state.json` | `created` .. `ended` (a chain not done: not recorded) |
+| a. Worker time | `chains/<pr>/state.json` | `attempts[].started` .. `ended`, attempts with a dispatch; one of them without either: not recorded, and so is the split below |
+| a. Workers covered | `chains/<pr>/state.json` | the time at least one worker ran: a group's workers run at once, so their sum can pass the wall clock |
+| a. Waiting at gates | `journal.md` | `paused: blocked` to the PR's next `coordinator:` line, less the time a worker ran |
+| a. Paused | `journal.md` | any other `paused:` line to the PR's next `coordinator:` line, less the time a worker ran or a gate waited; a pause another pause or `chain complete` ends first is counted as open, not as time |
+| a. The rest | the above | wall − covered − gates − paused: starts, checks, scripts |
+| a. Ad hoc workers | `dispatches/<dispatch>.json` | `started` .. `settled`, shown apart from the chain's time |
+| b. Step durations | `chains/<pr>/state.json` | a PR's step: the sum of its attempts; median and max per step id |
+| b. Attempts by cause | `chains/<pr>/state.json` | `attempts[].cause` (`first`, `retry`, `resume_from`); none recorded: `first` for n = 1, else not recorded |
+| b. Checks not OK | `journal.md` | `check: NOT OK` lines per step |
+| c. Rings per kind | `journal.md`; `wake/` file names | `paused: <status>` (gate, failed, check, start, script, runner), `question:`, `escalation:` and the other message types; silent from `wake/[seen/]*-silent.txt` |
+| c. Collector lines | `journal.md` | `collector: <dispatch>: …` under collector, `… locked by another collector …` under locked, never under failed |
+| c. Questions per role | `journal.md`, `chains/<pr>/state.json` | `question:` lines; the role is the asking step's spec (`ad hoc` for an ad hoc worker) |
+| c. Time to answer | `events/<dispatch>/<created>-question-<id>.json` (the name only), `journal.md` | created to `coordinator: replied to <id>` |
+| d. Tokens per model | `logs/<pr>/<step>/<dispatch>/tokens.json` | totals (subagents included), by the model the step asked for, `requested -> effective` when Orca launched another (`attempts[].effective`) |
+| d. Subagents' share | `tokens.json` | `subagents` {files, turns, input, output, cache_creation, cache_read} |
+| d. By session model, cost | `tokens.json` `by_model`, `--prices` | per million tokens; a Codex input is priced without its cached part (Codex counts it inside input); without `--prices`: not priced |
+| d. No session match | `logs/*/*/<dispatch>/meta.json` | `session.match` other than `unique`, or not collected |
+| e. Review yield | `chains/<pr>/state.json` | `attempts[].summary` of review and triage steps: `FINDINGS: <n>`, `VERDICT: <WORD>` |
+| f. Flow history | `flow.json`; `chains/<pr>/state.json` | `history[]` (v, at, by, note, changes); `flow.started_at` |
+| g. Lessons | sections a to c | the slowest step, the most-retried step, the role that asked the most questions, the longest single wait at a gate, each with its pr, step and dispatch |
+
+A run whose collector never ran (no `logs/`) still gets its page: time, steps and interruptions come from
+`state.json` and `journal.md`, and the token section says not recorded. Without `journal.md`, what only it records
+says not recorded (gate waits, pauses, the rest, open waits, every ring kind but silent, checks not OK, questions and
+their answers), while the wall clock and the worker time still come from `state.json`; an empty `journal.md` is a
+real zero. A prices file:
+`{"claude-opus-5-5": {"input": 15, "output": 75, "cache_creation": 18.75, "cache_read": 1.5}}`; none ships with the
+plugin, because prices change and belong to the owner.
+
+The four parts of a PR's time split its wall clock: each second goes to one part only, in a fixed order. A second
+some worker ran is worker time; of the others, one a gate waited is gate time, then one the chain was paused is
+paused time, and what is left is the rest. A pause while a sibling worker of the same group runs on (a start that
+failed rings at once) is worker time, so no part is negative and the four add up to the wall clock.
 
 ## What rings
 
@@ -572,6 +625,43 @@ Every script prints its header with `--help` and exits 2 on bad usage.
 
 ## Tested how
 
+2026-10-09, the run report (M4) with the page (M2) merged in, #42's round-2 lows, and review round 1 of the report.
+
+- `python3 tests/test_router.py` in a `git archive HEAD` export of `plugins/flows`: 188 tests, green. The merge of
+  `orca-router` gave 181 (#42's 165 and M4's 16; no class, fixture or `fake-orca` scenario shared), and this round
+  adds 7. `Collector`: an expired lock that another collector takes over before this one's `mkdir` is counted
+  `locked 1 · failed 0` and journaled once. `Report`: B1's review run through its check pause pins every part of the
+  split (the rest 40 s, no minus sign); 300 generated runs (stdlib `random`, a fixed seed, workers, gates and pauses
+  that overlap, some outside the wall clock) whose four parts are each a second-by-second count and add up to the wall
+  clock; a run without `journal.md` (not recorded, the wall clock and worker time still numbers) and one with an empty
+  journal (a real 0); `--pr A2` in the header and the metrics; an attempt with no end; and `report.py`'s imports and
+  calls read from its syntax tree. `metrics.golden.json` is unchanged.
+- `python3 tests/test_page.py` with Playwright 1.63: 11 tests, green.
+- Mutants, each in a scratch copy: the rest from the raw gate and pause spans, gate waits not less the workers' time,
+  gate waits that include the pauses, the journal's absence ignored, `--metrics` back to the whole run, an attempt
+  without an end counted as 0, and the takeover's `FileExistsError` left to fail. Each one fails a named test.
+
+2026-10-09, the run report (M4).
+
+- `python3 tests/test_router.py` in a `git archive HEAD` export of `plugins/flows`: 164 tests, green (148 before). The
+  16 new ones are the class `Report`, over `tests/fixtures/report-run/`, a synthetic state directory (3 PRs under two
+  flow versions, 12 dispatches of which 2 ad hoc, one inside a PR and one outside any): the metrics equal
+  `metrics.golden.json` (a difference prints its path); the golden's arithmetic, worked out in the test from the
+  fixture's timestamps and `tokens.json` files; every golden number is on the page, the Codex session without counts
+  says not recorded and the cost says not priced; a price file gives the cost table, one cost checked by hand and a
+  Codex input priced without its cached part; neither the page nor the metrics hold the sentinel or any text of the
+  fixture's session lines; a run without `logs/` still has its time, steps and interruptions; `router.py report`
+  writes `report.html` in the state and prints its path, and `--pr` gives one section; ad hoc workers in their PR's
+  section and outside any PR; totals that include the subagents and their share; `requested -> effective` in the
+  tokens and the lessons tables; collector and locked lines apart from failed steps; the lessons and their records;
+  two workers at once covered once; a pause with no coordinator line is open, never a gate's time; an attempt
+  without a cause; and the report writes nothing in the state and opens no session file (they are made unreadable).
+- 20 mutants of `report.py`, each in a scratch copy against `Report`: 20 caught. The one that survived the first pass
+  (an attempt n 2 with no cause counted as first) has its own test now.
+- Read-only over the group-B run's state directory: 14 PRs, 266 dispatches (104 ad hoc), 0 collected sessions (it has
+  no `logs/`), 22 sections. The first pass found a negative rest in 8 of 14 PRs: a review group's workers run at once.
+  The rest is now measured against the time workers covered.
+
 2026-10-09, the page (M2) with the collector (M3) merged in, and review round 1 of the page.
 
 - `python3 tests/test_router.py` in a `git archive HEAD` export of `plugins/flows`: 165 tests, green. The merge of
@@ -579,10 +669,12 @@ Every script prints its header with `--help` and exits 2 on bad usage.
   and this round adds 2: `Page` (a `Content-Length` that is not a number answers 400, and nothing is logged as
   raised) and `Collector` (a lock a third collector takes between the stat and the retry is counted `locked 1 ·
   failed 0`, journaled once, and left to it). The daemon serves the page and collects released workers at once.
-- `python3 tests/test_page.py` with Playwright 1.63: 11 tests, green. The 3 new ones: a PR, its chips and the edit
-  switch are the same elements across two polls that redraw, and a ref taken before them still clicks through; a drag
-  started before a poll that reloads the flow still drops and applies; a step dropped on the right half of the
-  running step, and a role dropped there once no pending step is left, are taken, and the router applies them.
+- `python3 tests/test_page.py` with Playwright 1.63: 11 tests, green. The 3 new ones: the in-place draw, whose evidence
+  is `test_a_redraw_keeps_the_elements_it_does_not_change` (a PR, its chips and the edit switch are the same elements
+  across two polls that redraw, and a ref taken before them still clicks through); a guard for a flow reloaded during
+  a drag, `test_a_drag_started_before_a_poll_still_completes` (the drop lands on the reloaded flow and applies; it
+  passes on a full-replace draw too, so it is no evidence of the in-place one); a step dropped on the right half of
+  the running step, and a role dropped there once no pending step is left, are taken, and the router applies them.
 - Mutants, each in a scratch copy: the page emptied and rebuilt at each draw, a drop on a locked chip refused
   whatever its side, `Content-Length` read without its guard, and the retry's `FileExistsError` left to fail. Each
   one fails a named test.
@@ -757,7 +849,10 @@ The entries below predate the move: `chain-inner-pr.json` and `chain-smoke.json`
 - No flow has run on real Orca. Creating the worktrees a flow names is not part of the flow file yet.
 - The collector has not read a real Orca archive: `worker-read` is answered by the fake, in the shape documented
   above, and its `source_changed` restart is taken from `worker-read --help`. Codex reports no cache writes, and
-  older Codex clients no token counts: those fields say "not recorded". No token prices: the report (M4) does that.
+  older Codex clients no token counts: those fields say "not recorded". No token prices ship with the plugin: the
+  report prices tokens from a file the owner gives (`--prices`).
+- A collector that takes over an expired lock removes it first, unguarded: a second collector that removes it just
+  after the first one made it again collects the same dispatch, which at worst writes its index row twice.
 - The progress page has never shown a real Orca run. The live page has been opened in a real Orca tab only on a run
   of the stand-in (see Tested how).
 - The page has no login: whoever can reach 127.0.0.1 on this machine can read the run and apply a flow, as from a
@@ -776,3 +871,5 @@ The entries below predate the move: `chain-inner-pr.json` and `chain-smoke.json`
   either: a profile's `TEST_CMD` and `COMMIT_CMD` can (the `bell` profile's wrapper lets one test run at a time across all workers).
 - Bounded loops (a second review round, a survivor going back to a test writer) are not steps. They are the
   coordinator's decisions: an ad hoc worker, then `resume`.
+- The report has not read a real run's `logs/`: the group-B run's state directory has none (the collector did not
+  exist then). Cross-run comparison is not part of it, and the planner skill that reads its lessons table is M5.

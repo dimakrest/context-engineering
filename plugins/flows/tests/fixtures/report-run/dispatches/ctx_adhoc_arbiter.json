@@ -1,0 +1,16 @@
+{
+ "dispatch": "ctx_adhoc_arbiter",
+ "task": "task_adhoc_arbiter",
+ "pr": "A1",
+ "step": "",
+ "title": "arbiter SENTINEL-c0ffee-not-for-the-report",
+ "started": "2026-01-12T10:12:00Z",
+ "adhoc": true,
+ "who": "claude claude-fable-5-1 high",
+ "agent": "claude",
+ "model": "claude-fable-5-1",
+ "effort": "high",
+ "worktree": "path:/work/coordinator",
+ "settled": "2026-01-12T10:14:00Z",
+ "outcome": "succeeded"
+}

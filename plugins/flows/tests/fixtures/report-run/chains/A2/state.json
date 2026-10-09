@@ -1,0 +1,173 @@
+{
+ "pr": "A2",
+ "def": "/work/kit/templates/mini.json",
+ "def_dir": "/work/kit/templates",
+ "kit_dir": "/work/kit",
+ "created": "2026-01-12T11:00:05Z",
+ "status": "paused",
+ "vars": {
+  "WT": "/work/wt-a2",
+  "PR": "A2"
+ },
+ "steps": [
+  {
+   "id": "contract",
+   "def": {
+    "id": "contract",
+    "agent": "claude",
+    "worktree": "path:{WT}",
+    "spec": "contract.md",
+    "model": "claude-fable-5-1",
+    "effort": "xhigh"
+   },
+   "status": "done",
+   "attempts": [
+    {
+     "n": 1,
+     "started": "2026-01-12T11:00:15Z",
+     "ended": "2026-01-12T11:15:15Z",
+     "flow_version": 2,
+     "cause": "first",
+     "task": "task_a2_contract",
+     "dispatch": "ctx_a2_contract",
+     "outcome": "succeeded",
+     "agent": "claude",
+     "model": "claude-fable-5-1",
+     "effort": "xhigh",
+     "worktree": "path:/work/wt",
+     "head_before": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "head_after": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "title": "t",
+     "subject": "subject SENTINEL-c0ffee-not-for-the-report",
+     "summary": "VERDICT: ACCEPT SENTINEL-c0ffee-not-for-the-report",
+     "release": "released",
+     "checks": [
+      "OK file-exists"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "accept",
+   "def": {
+    "id": "accept",
+    "type": "gate",
+    "title": "contract acceptance"
+   },
+   "status": "done",
+   "attempts": []
+  },
+  {
+   "id": "implement",
+   "def": {
+    "id": "implement",
+    "agent": "claude",
+    "worktree": "path:{WT}",
+    "spec": "implementer.md",
+    "model": "claude-opus-5-5",
+    "effort": "high"
+   },
+   "status": "done",
+   "attempts": [
+    {
+     "n": 1,
+     "started": "2026-01-12T11:55:25Z",
+     "ended": "2026-01-12T12:25:25Z",
+     "flow_version": 2,
+     "cause": "first",
+     "task": "task_a2_impl",
+     "dispatch": "ctx_a2_impl",
+     "outcome": "succeeded",
+     "agent": "claude",
+     "model": "claude-opus-5-5",
+     "effort": "high",
+     "worktree": "path:/work/wt",
+     "head_before": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "head_after": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "title": "t",
+     "subject": "subject SENTINEL-c0ffee-not-for-the-report",
+     "summary": "done SENTINEL-c0ffee-not-for-the-report",
+     "release": "released",
+     "checks": [
+      "OK file-exists"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "ci",
+   "def": {
+    "id": "ci",
+    "type": "script",
+    "run": "{CHECKS}/ci-green.sh {PR}"
+   },
+   "status": "done",
+   "attempts": [
+    {
+     "n": 1,
+     "started": "2026-01-12T12:25:30Z",
+     "ended": "2026-01-12T12:35:30Z",
+     "flow_version": 2,
+     "cause": "first",
+     "rc": 0,
+     "line": "OK ci: 3 pass"
+    }
+   ]
+  },
+  {
+   "id": "review",
+   "def": {
+    "id": "review",
+    "agent": "claude",
+    "worktree": "path:{WT}",
+    "spec": "review-claude.md",
+    "model": "claude-opus-5-5",
+    "effort": "xhigh"
+   },
+   "status": "done",
+   "attempts": [
+    {
+     "n": 1,
+     "started": "2026-01-12T12:35:35Z",
+     "ended": "2026-01-12T12:45:35Z",
+     "flow_version": 2,
+     "cause": "first",
+     "task": "task_a2_review",
+     "dispatch": "ctx_a2_review",
+     "outcome": "succeeded",
+     "agent": "claude",
+     "model": "claude-opus-5-5",
+     "effort": "xhigh",
+     "worktree": "path:/work/wt",
+     "head_before": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "head_after": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "title": "t",
+     "subject": "subject SENTINEL-c0ffee-not-for-the-report",
+     "summary": "FINDINGS: 2 \u00b7 VERDICT: PASS SENTINEL-c0ffee-not-for-the-report",
+     "release": "released",
+     "checks": [
+      "OK file-exists"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "merge",
+   "def": {
+    "id": "merge",
+    "type": "gate",
+    "title": "ready to merge"
+   },
+   "status": "blocked",
+   "attempts": [],
+   "rung": true
+  }
+ ],
+ "flow": {
+  "version": 2,
+  "started_at": 2,
+  "vars_keys": [],
+  "created": {},
+  "claimed": []
+ }
+}

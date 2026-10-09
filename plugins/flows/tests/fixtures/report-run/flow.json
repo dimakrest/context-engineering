@@ -1,0 +1,59 @@
+{
+ "title": "A synthetic run for the report",
+ "slots": 2,
+ "start": "auto",
+ "version": 2,
+ "prs": [
+  {
+   "id": "A1",
+   "part": "Part 1",
+   "title": "first",
+   "base": "feature-x",
+   "after": [],
+   "template": "mini"
+  },
+  {
+   "id": "B1",
+   "part": "Part 1",
+   "title": "second",
+   "base": "feature-x",
+   "after": [],
+   "template": "mini"
+  },
+  {
+   "id": "A2",
+   "part": "Part 2",
+   "title": "third",
+   "base": "feature-x",
+   "after": [
+    "A1"
+   ],
+   "template": "mini"
+  }
+ ],
+ "history": [
+  {
+   "v": 1,
+   "at": "2026-01-12T09:00:00Z",
+   "by": "coordinator",
+   "note": "",
+   "changes": [
+    "PR A1 added",
+    "PR B1 added",
+    "PR A2 added"
+   ]
+  },
+  {
+   "v": 2,
+   "at": "2026-01-12T10:30:00Z",
+   "by": "owner",
+   "note": "review A2 with Claude",
+   "changes": [
+    "A2: step edited: agent codex -> claude; spec review-codex.md -> review-claude.md"
+   ]
+  }
+ ],
+ "removed": [],
+ "dir": "/work/flow",
+ "resolved": {}
+}

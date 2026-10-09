@@ -49,6 +49,10 @@ Usage (the coordinator's whole interface; every command but progress prints a fe
                                                   gather settled workers' logs now (collector.py): for a run whose
                                                   daemon was not collecting, or after a fix. --dry-run prints each
                                                   dispatch's session match and copies nothing
+  router.py report [--out <file>] [--pr <pr>] [--metrics <file>] [--prices <file>]
+                                                  the run report (report.py): where the time, the tokens and the
+                                                  interruptions went, from the records alone. Writes
+                                                  <state>/report.html unless --out, and prints its path
 
 The flow (one versioned file that is the run's plan: its PR graph, each PR's steps, the variables):
   router.py flow apply <file> [--base <version>] [--by <who>] [--note "<text>"] [--dry-run]
@@ -95,6 +99,7 @@ Files under the state directory:
   flow.lock                   taken by flow apply, a scheduler pass and a runner's re-read, so they take turns
   chains/<pr>/def.json        a flow PR's own steps, when it overrides its template's
   progress.html               the owner's view. Rewritten at every change, and it reloads itself in the browser
+  report.html                 the run report, written by `router.py report` only
   page.json                   where the mailbox daemon serves the page: {url, host, port, pid}; gone when it stops
   logs/<pr>/<step>/<dispatch>/  a settled worker's logs and its agent session file; logs/index.jsonl, one row each
                               (collector.py --help). Written by a collector the daemon starts after each release
@@ -1312,6 +1317,13 @@ def cmd_collect(S: State, a: argparse.Namespace) -> int:
     args = ["--all"] if a.all or not (a.pr or a.dispatch) else (["--pr", a.pr] if a.pr else ["--dispatch", a.dispatch])
     args += ["--force"] * a.force + ["--dry-run"] * a.dry_run
     return subprocess.run([sys.executable, str(HERE / "collector.py"), "collect", "--state", str(S.root)] + args, env=orca_env(S)).returncode
+
+
+def cmd_report(S: State, a: argparse.Namespace) -> int:
+    out = a.out or str(S / "report.html")
+    args = ["--state", str(S.root), "--out", out] + sum((["--" + k, v] for k, v in (("pr", a.pr), ("metrics", a.metrics),
+                                                                                     ("prices", a.prices)) if v), [])
+    return subprocess.run([sys.executable, str(HERE / "report.py")] + args).returncode
 
 
 def collected_line(S: State) -> str:
@@ -2674,6 +2686,8 @@ def main() -> int:
     p = sub.add_parser("collect"); g = p.add_mutually_exclusive_group(); g.add_argument("--all", action="store_true")
     g.add_argument("--pr"); g.add_argument("--dispatch"); p.add_argument("--force", action="store_true")
     p.add_argument("--dry-run", action="store_true")
+    p = sub.add_parser("report"); p.add_argument("--out"); p.add_argument("--pr"); p.add_argument("--metrics")
+    p.add_argument("--prices")
     fs = sub.add_parser("flow").add_subparsers(dest="flow_cmd")
     p = fs.add_parser("apply"); p.add_argument("file"); p.add_argument("--base", type=lambda x: int(x.lstrip("v")))
     p.add_argument("--by", default="coordinator"); p.add_argument("--note", default="")
@@ -2708,7 +2722,8 @@ def dispatch(S: State, a: argparse.Namespace) -> int:
     return {"init": cmd_init, "mailbox": cmd_mailbox, "chain": cmd_chain, "run": cmd_run, "wait": cmd_wait,
             "resume": cmd_resume, "retry": cmd_retry, "reply": cmd_reply, "worker": cmd_worker, "status": cmd_status,
             "workers": cmd_workers, "stop": cmd_stop, "last": cmd_last, "fail": cmd_fail, "progress": cmd_progress,
-            "plan": cmd_plan, "flow": cmd_flow, "page": cmd_page, "collect": cmd_collect}[a.cmd](S, a)
+            "plan": cmd_plan, "flow": cmd_flow, "page": cmd_page, "collect": cmd_collect,
+            "report": cmd_report}[a.cmd](S, a)
 
 
 if __name__ == "__main__":

@@ -2436,6 +2436,28 @@ class Collector(RouterCase):
         self.assertTrue(lock.exists())                 # the third collector's lock is left to it
         self.assertFalse(self.logs("ctx_a").exists())
 
+    def test_a_lock_another_collector_takes_over_first_is_counted_locked(self):
+        self.seed("ctx_a")
+        lock = self.state / "logs" / ".locks" / "ctx_a"
+        lock.mkdir(parents=True)
+        old = time.time() - 3 * 3600                   # expired: this collector removes it, and another one's takeover
+        os.utime(lock, (old, old))                     # makes it again before this one's mkdir
+        code = (f"import sys\nsys.path.insert(0, {str(KIT)!r})\nimport collector\nmkdir, lock, fired = collector.Path.mkdir, "
+                f"collector.Path({str(lock)!r}), []\n"
+                "def raced(p, *a, **k):\n"
+                "    if p == lock and not fired and not p.exists():\n"
+                "        fired.append(p)\n        mkdir(p)\n"
+                "        raise FileExistsError(17, 'File exists', str(p))\n"
+                "    return mkdir(p, *a, **k)\n"
+                "collector.Path.mkdir = raced\nsys.exit(collector.main())\n")
+        rc, out = self.collect("--dispatch", "ctx_a", code=code)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("skip ctx_a: locked by another collector", out)
+        self.assertIn("OK collected 0 · skipped 0 · locked 1 · not settled 0 · failed 0", out)
+        self.assertEqual(self.journal().count("collector: ctx_a: locked by another collector since"), 1, self.journal())
+        self.assertTrue(lock.exists())                 # the other collector's lock is left to it
+        self.assertFalse(self.logs("ctx_a").exists())
+
     def test_a_failed_collection_leaves_no_temporary_directory(self):
         self.seed("ctx_a")
         ev = next((self.state / "events" / "ctx_a").iterdir())
@@ -2617,6 +2639,453 @@ class ProgressView(unittest.TestCase):
         self.assertIn("1 of 3 inner PRs done (1 done · 1 running · 1 not started)", self.p.text(d))
         self.assertIn('<div class="big">1 of 3</div>', self.p.html_page(d))
         self.assertIn("took 100 min", self.p.text(d))
+
+
+class Report(unittest.TestCase):
+    """report.py: the run report, from the records alone. The fixture tests/fixtures/report-run/ is a synthetic state
+    directory: 3 PRs (A1, B1 under flow v1, A2 under v2), 10 chain dispatches and 2 ad hoc ones, a retry, a check NOT OK,
+    gate waits, questions, a silent ring, a Codex session that wrote no token counts, a session with subagent files, an
+    attempt Orca launched on another model, and two collector journal lines."""
+    REPORT = str(KIT / "report.py")
+    RUN = TESTS / "fixtures" / "report-run"
+    SENTINEL = "SENTINEL-c0ffee-not-for-the-report"   # in every fake session line, summary, subject, answer and note
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="report-test-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def report(self, state=None, *extra):
+        out, met = self.tmp / "r.html", self.tmp / "m.json"
+        p = subprocess.run([sys.executable, self.REPORT, "--state", str(state or self.RUN), "--out", str(out), "--metrics", str(met)]
+                           + list(extra), capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        return out.read_text(), json.loads(met.read_text()), p.stdout
+
+    def copy(self):
+        state = self.tmp / "state"
+        shutil.copytree(self.RUN, state)
+        return state
+
+    @staticmethod
+    def first_difference(a, b, path="$"):
+        if type(a) is not type(b):
+            return f"{path}: {a!r} != {b!r}"
+        if isinstance(a, dict):
+            for k in sorted(set(a) | set(b)):
+                if k not in a or k not in b:
+                    return f"{path}.{k}: {'missing in the metrics' if k not in a else 'not in the golden'}"
+                d = Report.first_difference(a[k], b[k], f"{path}.{k}")
+                if d:
+                    return d
+            return ""
+        if isinstance(a, list):
+            if len(a) != len(b):
+                return f"{path}: {len(a)} items != {len(b)}"
+            for i, (x, y) in enumerate(zip(a, b)):
+                d = Report.first_difference(x, y, f"{path}[{i}]")
+                if d:
+                    return d
+            return ""
+        return "" if a == b else f"{path}: {a!r} != {b!r}"
+
+    @staticmethod
+    def numbers(obj):
+        if isinstance(obj, bool):
+            return
+        if isinstance(obj, (int, float)):
+            yield obj
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                yield from Report.numbers(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                yield from Report.numbers(v)
+
+    def golden(self):
+        return json.loads((self.RUN / "metrics.golden.json").read_text())
+
+    def test_the_metrics_equal_the_golden(self):
+        _page, m, out = self.report()
+        self.assertEqual(self.first_difference(m, self.golden()), "")
+        self.assertIn("3 PRs · 12 dispatches (2 ad hoc) · 11 collected sessions", out)
+
+    def test_the_golden_numbers_worked_out_by_hand(self):
+        """The arithmetic behind the golden, from the fixture's timestamps and tokens.json files."""
+        g = self.golden()
+        t = g["time"]
+        # A1: created 09:00:00, chain complete 11:00:00. Workers: contract 09:00:10-09:20:10 (1200), implement #1
+        # 09:50:20-10:10:20 (1200), implement #2 10:15:30-10:35:30 (1200), review 10:45:40-10:55:40 (600); ci is a script.
+        # Gates: accept paused 09:20:15 .. gate passed 09:50:15 (1800), merge 10:55:45 .. 10:59:45 (240).
+        # Paused: implement failed 10:10:25 .. coordinator retry 10:15:25 (300).
+        self.assertEqual((t["A1"]["wall_s"], t["A1"]["worker_s"], t["A1"]["gate_s"], t["A1"]["paused_s"]),
+                         (7200, 1200 + 1200 + 1200 + 600, 1800 + 240, 300))
+        self.assertEqual(t["A1"]["worker_covered_s"], 4200)                    # no two of A1's workers ran at once
+        self.assertEqual(t["A1"]["rest_s"], 7200 - 4200 - 2040 - 300)          # 660: ci 600 and 60 s of starts and checks
+        self.assertEqual(t["A1"]["adhoc_s"], 120)                               # the arbiter, 10:12:00 .. 10:14:00
+        # B1: 09:05:00 .. 10:20:00. Workers 1200 + 1200 + 600; gates accept 09:25:15 .. 09:35:15 (600), merge 10:15:45 ..
+        # 10:19:45 (240); the check NOT OK paused 09:55:30 .. accepted 10:00:30 (300).
+        self.assertEqual((t["B1"]["wall_s"], t["B1"]["worker_s"], t["B1"]["gate_s"], t["B1"]["paused_s"], t["B1"]["rest_s"]),
+                         (4500, 3000, 600 + 240, 300, 4500 - 3000 - 840 - 300))
+        # A2 is still at its merge gate: no wall clock, no rest; workers 900 + 1800 + 600; accept 11:15:20 .. 11:55:20.
+        self.assertEqual((t["A2"]["wall_s"], t["A2"]["rest_s"], t["A2"]["worker_s"], t["A2"]["gate_s"], t["A2"]["open_waits"]),
+                         ("not recorded", "not recorded", 900 + 1800 + 600, 2400, 1))
+        self.assertEqual(t["total"]["worker_s"], 4200 + 3000 + 3300)
+        self.assertEqual(g["outside"]["adhoc_s"], 300)                         # ctx_adhoc_none 12:50:00 .. 12:55:00
+        s = g["steps"]
+        # implement per PR: A1 1200 + 1200, B1 1200, A2 1800 -> median 1800, max 2400 in A1; contract 1200, 1200, 900.
+        self.assertEqual((s["implement"]["median_s"], s["implement"]["max_s"], s["implement"]["max_pr"]), (1800, 2400, "A1"))
+        self.assertEqual((s["implement"]["attempts"], s["implement"]["by_cause"]), (4, {"first": 3, "retry": 1}))
+        self.assertEqual((s["contract"]["median_s"], s["ci"]["median_s"], s["ci"]["max_s"]), (1200, 600, 600))
+        self.assertEqual((s["implement"]["check_not_ok"], s["implement"]["check_not_ok_prs"]), (1, ["B1"]))
+        i = g["interruptions"]
+        self.assertEqual(i["rings"]["gate"], {"A1": 2, "B1": 2, "A2": 2, "total": 6})   # A2's merge rang and is open
+        self.assertEqual((i["rings"]["failed"]["total"], i["rings"]["check"]["total"], i["rings"]["silent"]), (1, 1, {"A2": 1, "total": 1}))
+        # A1's question 10:20:00 .. replied 10:26:40 (400); A2's 12:00:00 .. 12:01:40 (100); median (400 + 100) / 2.
+        self.assertEqual([q["answer_s"] for q in i["questions"]], [400, 100, "not recorded"])
+        self.assertEqual((i["answer_median_s"], i["answer_max_s"]), ((400 + 100) // 2, 400))
+        self.assertEqual(i["questions_by_role"], {"implementer.md": 2, "review-claude.md": 1})
+        lab = g["tokens"]["by_label"]
+        # fable: A1 contract 1000/2000/3000/40000/10, B1 contract 1000/1500/2000/24000/10, A2 contract 600/900/1100/15000/6,
+        # the arbiter 100/200/300/5000/2.
+        self.assertEqual([lab["claude-fable-5-1"][k] for k in ("input", "output", "cache_creation", "cache_read", "turns")],
+                         [1000 + 1000 + 600 + 100, 2000 + 1500 + 900 + 200, 3000 + 2000 + 1100 + 300, 40000 + 24000 + 15000 + 5000, 10 + 10 + 6 + 2])
+        # opus: A1 implement #1 500/1500/2000/30000/8 and #2 700/2500/1000/50000/12, A2 implement 900/3000/2500/60000/15,
+        # A2 review 300/800/600/9000/5.
+        self.assertEqual([lab["claude-opus-5-5"][k] for k in ("input", "output", "cache_creation", "cache_read", "turns")],
+                         [500 + 700 + 900 + 300, 1500 + 2500 + 3000 + 800, 2000 + 1000 + 2500 + 600, 30000 + 50000 + 60000 + 9000, 8 + 12 + 15 + 5])
+        # codex: A1 review counted 20000/3000/-/15000/6; B1 review wrote no counts; the ad hoc one matched no session.
+        self.assertEqual((lab["codex"]["dispatches"], lab["codex"]["tokens_files"], lab["codex"]["input"], lab["codex"]["cache_creation"]),
+                         (3, 2, 20000, "not recorded"))
+        bym = g["tokens"]["by_model"]
+        # the session-reported models: B1 contract's parent ran fable (800/1200/1500/20000/7), its subagents haiku.
+        self.assertEqual(bym["claude-fable-5-1"]["input"], 1000 + 800 + 600 + 100)
+        self.assertEqual(bym["claude-haiku-5-5"], {"input": 200, "output": 300, "cache_creation": 500, "cache_read": 4000, "turns": 3})
+        self.assertEqual(g["review"]["by_step"]["review"], {"findings": 3 + 2, "recorded": 2, "not_recorded": 1})
+
+    def test_the_page_shows_every_number_of_the_golden_and_names_what_is_missing(self):
+        page, _m, _ = self.report()
+        text = re.sub(r"<[^>]+>", " ", page)
+        missing = sorted({str(n) for n in self.numbers(self.golden()) if str(n) not in text})
+        self.assertEqual(missing, [])
+        codex = [r for r in page.split("<tr>") if "ctx_b1_review" in r and "unique" in r][0]
+        self.assertEqual(codex.count("not recorded"), 5)                       # the Codex session that wrote no token counts
+        self.assertIn("not priced", page)
+        self.assertIn("<td><code>ctx_adhoc_none</code></td><td>-</td><td>_adhoc</td><td>none</td>",
+                      page.split("Dispatches with no session match")[1].split("</table>")[0])
+        for chart in ("a · Where the time went", "b · Steps", "c · Interruptions", "d · Tokens", "e · Review", "f · The flow", "g · Lessons"):
+            self.assertIn(chart, page)
+        self.assertEqual(page.count("<svg"), 5 + 3 * 2)                       # sections a to e; per PR a timeline and its time
+        self.assertNotIn("<script", page)
+        self.assertIn("prefers-color-scheme:dark", page)
+
+    def test_with_a_price_file_the_cost_table_appears(self):
+        prices = self.tmp / "prices.json"
+        prices.write_text(json.dumps({"claude-opus-5-5": {"input": 15, "output": 75, "cache_creation": 18.75, "cache_read": 1.5},
+                                      "gpt-5-codex": {"input": 1.25, "output": 10, "cache_read": 0.125}}))
+        page, m, _ = self.report(None, "--prices", str(prices))
+        c = m["tokens"]["cost"]
+        # opus: 2400 x 15 + 7800 x 75 + 6100 x 18.75 + 149000 x 1.5 per million = 0.036 + 0.585 + 0.114375 + 0.2235
+        self.assertEqual(c["claude-opus-5-5"]["total"], 0.958875)
+        self.assertEqual(c["claude-opus-5-5"]["cache_creation"], 0.114375)
+        # Codex counts cached input inside input: (20000 - 15000) x 1.25 + 3000 x 10 + 15000 x 0.125 per million
+        self.assertEqual(c["gpt-5-codex"]["input"], 0.00625)
+        self.assertEqual((c["gpt-5-codex"]["total"], c["gpt-5-codex"]["unpriced"]), (0.038125, ["cache_creation"]))
+        self.assertEqual(c["claude-sonnet-5-5"], "not priced")
+        self.assertIn("<td>0.958875</td>", page)
+        self.assertIn("<td>0.038125</td>", page)
+
+    def test_the_page_and_the_metrics_hold_no_session_text(self):
+        page, m, _ = self.report()
+        metrics = json.dumps(m)
+        texts = set()
+
+        def strings(o, text=False):
+            if isinstance(o, str) and text:
+                yield o
+            elif isinstance(o, dict):
+                for k, v in o.items():
+                    yield from strings(v, text or k in ("text", "content", "instructions"))
+            elif isinstance(o, list):
+                for v in o:
+                    yield from strings(v, text)
+
+        files = sorted(self.RUN.glob("logs/*/*/*/session.jsonl")) + sorted(self.RUN.glob("logs/*/*/*/session.subagents/*.jsonl"))
+        self.assertEqual(len(files), 11 + 2)
+        for f in files:
+            for line in f.read_text().splitlines():
+                texts.update(s for s in strings(json.loads(line)) if " " in s)  # the text content of each line
+        self.assertGreater(len(texts), 30)
+        for body in (page, metrics):
+            self.assertNotIn(self.SENTINEL, body)
+            self.assertEqual([s for s in texts if s in body], [])
+
+    def test_a_run_whose_logs_were_never_collected_still_has_a_page(self):
+        state = self.copy()
+        shutil.rmtree(state / "logs")
+        page, m, out = self.report(state)
+        g = self.golden()
+        self.assertEqual(m["time"], g["time"])                                  # from state.json and journal.md
+        self.assertEqual(m["interruptions"], g["interruptions"])
+        self.assertEqual(m["steps"], g["steps"])
+        self.assertEqual(m["tokens"], {k: "not recorded" for k in ("by_label", "by_model", "dispatches", "cost", "no_session")})
+        self.assertEqual((m["run"]["logs"], m["run"]["collected_sessions"], m["run"]["dispatches"]), (False, 0, 12))
+        self.assertIn("not recorded: there is no logs/ directory", page)
+        self.assertIn("no logs/: tokens not recorded", out)
+
+    def test_a_run_without_a_journal_says_not_recorded_for_what_only_the_journal_records(self):
+        state = self.copy()
+        (state / "journal.md").unlink()
+        page, m, _ = self.report(state)
+        nr = "not recorded"
+        a1 = m["time"]["A1"]
+        self.assertEqual((a1["wall_s"], a1["worker_s"], a1["worker_covered_s"]), (7200, 4200, 4200))   # from state.json
+        self.assertEqual([a1[k] for k in ("gate_s", "paused_s", "rest_s", "open_waits")], [nr] * 4)
+        self.assertEqual([m["time"]["total"][k] for k in ("gate_s", "paused_s", "rest_s", "open_waits")], [nr] * 4)
+        i = m["interruptions"]
+        self.assertEqual({k: v for k, v in i["rings"].items() if k != "silent"},
+                         dict.fromkeys(("gate", "question", "failed", "check", "runner"), nr))
+        self.assertEqual(i["rings"]["silent"], {"A2": 1, "total": 1})          # from the wake files' names, still there
+        self.assertEqual([i[k] for k in ("questions", "questions_by_role", "answer_median_s", "answer_max_s", "unanswered")],
+                         [nr] * 5)
+        self.assertEqual((m["steps"]["implement"]["check_not_ok"], m["steps"]["implement"]["check_not_ok_prs"]), (nr, nr))
+        self.assertEqual((m["per_pr"]["B1"]["steps"]["implement"]["check_not_ok"], m["per_pr"]["B1"]["rings"]["gate"],
+                          m["per_pr"]["B1"]["questions"]), (nr, nr, nr))
+        a1_row = page.split('id="pr-A1"')[1].split("<tr><td>A1</td>")[1].split("</tr>")[0]   # its time table
+        cells = re.findall(r"<td[^>]*>(.*?)</td>", a1_row)
+        self.assertTrue(cells[2].startswith("7200 s") and cells[3].startswith("4200 s"), cells)
+        self.assertEqual(cells[5:9], [nr] * 4)                                 # at gates, paused, the rest, open waits
+        self.assertIn('<tr><td>gate</td><td class="nr">not recorded</td>', page)
+        shutil.rmtree(state)
+        empty = self.copy()                                                     # a journal with no line is a real zero
+        (empty / "journal.md").write_text("")
+        _page, m, _ = self.report(empty)
+        self.assertEqual((m["time"]["A1"]["gate_s"], m["time"]["A1"]["rest_s"], m["interruptions"]["rings"]["gate"]["total"]),
+                         (0, 7200 - 4200, 0))
+
+    def test_router_report_writes_report_html_in_the_state_by_default(self):
+        state = self.copy()
+        env = dict(os.environ, ROUTER_STATE=str(state))
+        p = subprocess.run([sys.executable, ROUTER, "report"], capture_output=True, text=True, env=env, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn(str(state / "report.html"), p.stdout)
+        self.assertIn("A synthetic run for the report", (state / "report.html").read_text())
+        p = subprocess.run([sys.executable, ROUTER, "--help"], capture_output=True, text=True, env=env, timeout=60)
+        self.assertIn("router.py report [--out <file>] [--pr <pr>]", p.stdout)
+        p = subprocess.run([sys.executable, ROUTER, "report", "--pr", "B1", "--out", str(self.tmp / "b1.html")], capture_output=True,
+                           text=True, env=env, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        b1 = (self.tmp / "b1.html").read_text()
+        self.assertIn('id="pr-B1"', b1)
+        self.assertNotIn('id="pr-A1"', b1)
+
+    def test_pr_limits_the_header_and_the_metrics_to_that_pr(self):
+        page, m, out = self.report(None, "--pr", "A2")
+        self.assertIn("1 PRs · 3 dispatches (0 ad hoc) · 3 collected sessions", out)
+        kpis = dict(re.findall(r'<div class="lab">([^<]+)</div><div class="big">([^<]+)</div>', page))
+        self.assertEqual((kpis["PRs"], kpis["dispatches"], kpis["ad hoc"]), ("1", "3", "0"))
+        self.assertEqual(page.count("<h2>"), 1)
+        self.assertEqual((m["run"]["prs"], m["run"]["dispatches"], m["run"]["from"]), (1, 3, "2026-01-12T11:00:05Z"))
+        self.assertEqual((sorted(m["time"]), list(m["per_pr"])), (["A2", "total"], ["A2"]))
+        self.assertEqual(m["time"]["total"]["worker_s"], 900 + 1800 + 600)    # A2's alone
+        self.assertEqual([d["dispatch"] for d in m["tokens"]["dispatches"]], ["ctx_a2_contract", "ctx_a2_impl", "ctx_a2_review"])
+        self.assertEqual(m["tokens"]["by_label"]["claude-fable-5-1"]["input"], 600)   # A2's contract, not the run's 2700
+        r = m["interruptions"]["rings"]
+        self.assertEqual((r["gate"], r["question"]["total"], r["failed"]["total"]), ({"A2": 2, "total": 2}, 2, 0))
+        self.assertEqual(m["flow"]["started_under"], {"2": ["A2"]})
+
+    def test_ad_hoc_workers_are_listed_in_their_prs_section_and_counted_apart(self):
+        page, m, _ = self.report()
+        self.assertEqual((m["run"]["chain_dispatches"], m["run"]["adhoc_dispatches"]), (10, 2))
+        a1 = page.split('id="pr-A1"')[1].split("</section>")[0]
+        self.assertIn("ctx_adhoc_arbiter", a1)
+        outside = page.split('id="pr-outside"')[1].split("</section>")[0]
+        self.assertIn("ctx_adhoc_none", outside)
+        self.assertNotIn("ctx_adhoc_none", a1)
+        self.assertEqual(m["tokens"]["no_session"], [{"dispatch": "ctx_adhoc_none", "pr": "-", "step": "_adhoc", "match": "none"}])
+
+    def test_totals_include_the_subagents_and_their_share_is_shown(self):
+        tok = json.loads((self.RUN / "logs/B1/contract/ctx_b1_contract/tokens.json").read_text())
+        parent, sub = tok["by_model"]["claude-fable-5-1"], tok["subagents"]
+        for k in ("input", "output", "cache_creation", "cache_read", "turns"):
+            self.assertEqual(tok[k], parent[k] + sub[k])                       # the fixture: totals = parent + subagents
+        page, m, _ = self.report()
+        self.assertEqual(m["tokens"]["by_label"]["claude-fable-5-1"]["subagents"],
+                         {"files": 2, "turns": 3, "input": 200, "output": 300, "cache_creation": 500, "cache_read": 4000})
+        self.assertEqual(m["tokens"]["by_label"]["codex"]["subagents"], "not recorded")
+        self.assertIn("The subagents' share of those totals", page)
+
+    def test_a_model_orca_launched_instead_is_named_requested_to_effective(self):
+        page, m, _ = self.report()
+        self.assertIn("claude-opus-5-5 -&gt; claude-sonnet-5-5", page)
+        self.assertEqual(m["tokens"]["by_label"]["claude-opus-5-5 -> claude-sonnet-5-5"]["dispatches"], 1)
+        state = self.copy()                                                     # make B1's implement the slowest step
+        st = json.loads((state / "chains/B1/state.json").read_text())
+        st["steps"][2]["attempts"][0]["ended"] = "2026-01-12T10:35:20Z"
+        (state / "chains/B1/state.json").write_text(json.dumps(st))
+        _page, m, _ = self.report(state)
+        slow = m["lessons"][0]
+        self.assertEqual((slow["lesson"], slow["pr"], slow["step"], slow["value"], slow["model"]),
+                         ("slowest step", "B1", "implement", 3600, "claude-opus-5-5 -> claude-sonnet-5-5"))
+
+    def test_collector_lines_are_counted_apart_from_failed_steps(self):
+        _page, m, _ = self.report()
+        r = m["interruptions"]["rings"]
+        self.assertEqual(r["collector"], {"-": 1, "total": 1})                 # "collector: ctx_gone: the router has no record ..."
+        self.assertEqual(r["locked"], {"B1": 1, "total": 1})                   # "... locked by another collector since ..."
+        self.assertEqual(r["failed"], {"A1": 1, "total": 1})                   # only A1's implement
+
+    def test_the_lessons_name_their_records(self):
+        _page, m, _ = self.report()
+        got = [(x["lesson"], x["value"], x["pr"], x["step"], x["dispatch"]) for x in m["lessons"]]
+        self.assertEqual(got, [("slowest step", 2400, "A1", "implement", "ctx_a1_impl1, ctx_a1_impl2"),
+                               ("most-retried step", 2, "A1", "implement", "ctx_a1_impl1, ctx_a1_impl2"),
+                               ("role that asked the most questions", 2, "A1", "implement", "ctx_a1_impl2"),
+                               ("longest wait at a gate", 2400, "A2", "accept", "-")])
+
+    def test_workers_that_run_at_once_are_covered_once_in_the_rest(self):
+        state = self.copy()                                                     # B1's review in a group with its implement
+        st = json.loads((state / "chains/B1/state.json").read_text())
+        st["steps"][4]["attempts"][0].update(started="2026-01-12T09:45:20Z", ended="2026-01-12T09:55:20Z")
+        (state / "chains/B1/state.json").write_text(json.dumps(st))
+        _page, m, _ = self.report(state)
+        t = m["time"]["B1"]
+        # implement 09:35:20 .. 09:55:20 (1200) and review 09:45:20 .. 09:55:20 (600): summed 3000, covered 1200 + 1200
+        self.assertEqual((t["worker_s"], t["worker_covered_s"]), (1200 + 1200 + 600, 1200 + 1200))
+        self.assertEqual(t["rest_s"], 4500 - 2400 - 840 - 300)
+
+    def test_a_pause_while_a_sibling_worker_runs_is_worker_time_and_the_rest_stays_positive(self):
+        state = self.copy()                                                     # B1's review runs through its check pause
+        st = json.loads((state / "chains/B1/state.json").read_text())
+        st["steps"][4]["attempts"][0]["started"] = "2026-01-12T09:50:00Z"
+        (state / "chains/B1/state.json").write_text(json.dumps(st))
+        page, m, _ = self.report(state)
+        t = m["time"]["B1"]
+        # wall 09:05:00 .. 10:20:00 (4500). Workers: contract 09:05:10 .. 09:25:10 (1200), implement 09:35:20 .. 09:55:20
+        # and review 09:50:00 .. 10:15:40 (1200 + 1540 summed, 2420 covered). Gates: accept 09:25:15 .. 09:35:15 (600),
+        # merge 10:15:45 .. 10:19:45 (240), outside any worker. The check pause 09:55:30 .. 10:00:30 is inside the review:
+        # worker time, so 0. The rest: 09:05:00 .. :10, 09:25:10 .. :15, 09:35:15 .. :20, 10:15:40 .. :45, 10:19:45 .. 10:20:00.
+        self.assertEqual((t["wall_s"], t["worker_s"], t["worker_covered_s"], t["gate_s"], t["paused_s"], t["rest_s"]),
+                         (4500, 1200 + 1200 + 1540, 1200 + 2420, 600 + 240, 0, 10 + 5 + 5 + 5 + 15))
+        self.assertEqual(t["worker_covered_s"] + t["gate_s"] + t["paused_s"] + t["rest_s"], t["wall_s"])
+        b1 = page.split('id="pr-B1"')[1].split("</section>")[0]
+        self.assertIn("<td>40 s", b1)
+        self.assertNotRegex(b1, r"[>(]-\d")                                   # no minus sign in the split
+
+    def test_the_time_split_is_a_partition_of_the_wall_clock(self):
+        """Generated runs: workers, gates and pauses that overlap, some outside the wall clock. Each part is >= 0, the
+        four add up to the wall clock, and each equals a count of the seconds it was given, by the fixed priority."""
+        import random
+        from types import SimpleNamespace
+        spec = spec_from_file_location("report_under_test", self.REPORT)
+        report = module_from_spec(spec)
+        spec.loader.exec_module(report)
+        base, rnd = 1768208400, random.Random(20261009)
+        at = lambda s: report.iso(base + s)
+        for case in range(300):
+            lo, hi = rnd.randint(0, 100), rnd.randint(200, 600)
+            atts = []
+            for _ in range(rnd.randint(0, 6)):
+                a = rnd.randint(-50, 650)
+                atts.append({"n": 1, "dispatch": f"d{len(atts)}", "started": at(a), "ended": at(a + rnd.randint(0, 200))})
+            lines, t = [], rnd.randint(-50, 100)
+            while t < 650:                                                      # paused / coordinator / complete, in order
+                kind = rnd.choice(["blocked", "failed", "check_failed", "coordinator", "coordinator", "complete"])
+                k, d = ("coordinator", "") if kind == "coordinator" else ("complete", "") if kind == "complete" else ("paused", kind)
+                lines.append({"t": at(t), "e": base + t, "pr": "P", "step": "s", "kind": k, "detail": d})
+                t += rnd.randint(1, 120)
+            run = SimpleNamespace(chains={"P": {"created": at(lo), "ended": at(hi), "status": "done",
+                                                "steps": [{"id": "s", "attempts": atts}]}},
+                                  journal=lines, dispatches=[], has_journal=True)
+            got = report.time_split(run, "P")
+            parts = [got[k] for k in ("worker_covered_s", "gate_s", "paused_s", "rest_s")]
+            self.assertTrue(all(p >= 0 for p in parts), (case, got))
+            self.assertEqual(sum(parts), hi - lo, (case, got))
+            ws = report.waits(run, "P")
+            inside = lambda sp, x: any(report.ts_epoch(a) - base <= x < report.ts_epoch(b) - base for a, b in sp)
+            work = [(a["started"], a["ended"]) for a in atts]
+            gate = [(w["from"], w["to"]) for w in ws if w["kind"] == "gate" and w["to"]]
+            pause = [(w["from"], w["to"]) for w in ws if w["kind"] == "paused" and w["to"]]
+            count = [0, 0, 0, 0]
+            for x in range(lo, hi):
+                count[0 if inside(work, x) else 1 if inside(gate, x) else 2 if inside(pause, x) else 3] += 1
+            self.assertEqual(parts, count, (case, got))
+
+    def test_a_gate_wait_and_a_pause_never_include_each_other(self):
+        state = self.copy()                                                     # a pause the coordinator never ended
+        lines = (state / "journal.md").read_text().splitlines()
+        lines = [l for l in lines if "coordinator: retry" not in l]
+        (state / "journal.md").write_text("\n".join(lines) + "\n")
+        _page, m, _ = self.report(state)
+        self.assertEqual((m["time"]["A1"]["paused_s"], m["time"]["A1"]["gate_s"], m["time"]["A1"]["open_waits"]), (0, 2040, 1))
+        self.assertEqual(m["time"]["A1"]["rest_s"], 7200 - 4200 - 2040)
+
+    def test_an_attempt_without_an_end_leaves_its_prs_worker_time_not_recorded(self):
+        state = self.copy()
+        st = json.loads((state / "chains/A1/state.json").read_text())
+        review = [s for s in st["steps"] if s["id"] == "review"][0]
+        del review["attempts"][0]["ended"]
+        (state / "chains/A1/state.json").write_text(json.dumps(st))
+        page, m, _ = self.report(state)
+        nr = "not recorded"
+        t = m["time"]["A1"]
+        self.assertEqual(t["wall_s"], 7200)
+        self.assertEqual([t[k] for k in ("worker_s", "worker_covered_s", "gate_s", "paused_s", "rest_s")], [nr] * 5)
+        self.assertEqual((m["time"]["total"]["worker_s"], m["per_pr"]["A1"]["steps"]["review"]["duration_s"]), (nr, nr))
+        self.assertEqual(m["time"]["B1"], self.golden()["time"]["B1"])         # the other PRs keep theirs
+        cells = re.findall(r"<td[^>]*>(.*?)</td>", page.split('id="pr-A1"')[1].split("<tr><td>A1</td>")[1].split("</tr>")[0])
+        self.assertEqual(cells[3:8], [nr] * 5)                                 # workers (sum, covered), gates, paused, rest
+
+    def test_an_attempt_without_a_cause_is_first_only_when_it_is_the_first(self):
+        state = self.copy()                                                     # a chain started before flows recorded causes
+        for pr in ("A1", "B1", "A2"):
+            st = json.loads((state / f"chains/{pr}/state.json").read_text())
+            for step in st["steps"]:
+                for a in step["attempts"]:
+                    a.pop("cause", None)
+            (state / f"chains/{pr}/state.json").write_text(json.dumps(st))
+        _page, m, _ = self.report(state)
+        self.assertEqual(m["steps"]["implement"]["by_cause"], {"first": 3, "not recorded": 1})
+        self.assertEqual(m["steps"]["contract"]["by_cause"], {"first": 3})
+
+    def test_report_py_writes_only_the_files_it_is_given(self):
+        state = self.copy()
+        self.addCleanup(shutil.rmtree, state, True)                             # after the modes below are restored
+        for f in list(state.glob("logs/*/*/*/session.jsonl")) + list(state.glob("logs/*/*/*/session.subagents")):
+            f.chmod(0)                                                          # a session file the report opened would fail it
+        self.addCleanup(lambda: [f.chmod(0o755) for f in state.glob("logs/*/*/*/session.subagents")])
+        before = sorted((p.relative_to(state), p.stat().st_mtime_ns) for p in state.rglob("*"))
+        self.report(state)
+        self.assertEqual(sorted((p.relative_to(state), p.stat().st_mtime_ns) for p in state.rglob("*")), before)
+        self.assertEqual(sorted(p.name for p in self.tmp.iterdir()), ["m.json", "r.html", "state"])
+        src = Path(self.REPORT).read_text()
+        self.assertNotIn("session.jsonl\")", src)                               # never opened: tokens.json and meta.json only
+
+    @staticmethod
+    def calls_out(src):
+        """What in the source could reach Orca or another process or host: imports of subprocess, socket, urllib, http,
+        and os.system, os.popen, os.exec*, os.spawn*, called or imported."""
+        import ast
+        banned = lambda name: name in ("system", "popen") or name.startswith(("exec", "spawn"))
+        found = []
+        for n in ast.walk(ast.parse(src)):
+            if isinstance(n, ast.Import):
+                found += [a.name for a in n.names if a.name.split(".")[0] in ("subprocess", "socket", "urllib", "http")]
+            elif isinstance(n, ast.ImportFrom) and n.module:
+                if n.module.split(".")[0] in ("subprocess", "socket", "urllib", "http"):
+                    found.append(n.module)
+                elif n.module == "os":
+                    found += [f"os.{a.name}" for a in n.names if banned(a.name)]
+            elif isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "os" and banned(n.attr):
+                found.append(f"os.{n.attr}")
+        return found
+
+    def test_report_py_never_calls_orca_nor_another_process(self):
+        self.assertEqual(self.calls_out(Path(self.REPORT).read_text()), [])
+        self.assertEqual(self.calls_out("import os, urllib.request\nfrom http import client\nfrom os import execvp\n"
+                                        "import subprocess as s\nos.system('x'); os.popen('x'); os.spawnl(0, 'x')\n"),
+                         ["urllib.request", "http", "os.execvp", "subprocess", "os.system", "os.popen", "os.spawnl"])
 
 
 class Checks(unittest.TestCase):

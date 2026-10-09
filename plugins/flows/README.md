@@ -33,7 +33,7 @@ Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-
 | `router/templates/smoke.json`, `router/specs/smoke-*.md` | A harmless chain that proves the router against real Orca: two workers at once, a question, a failure with a retry, a script step, a gate. |
 | `router/checks/*` | Checks that print one line, `OK …` or `NOT OK …`, and exit 0 or 1. |
 | `router/draft-pr.sh` | Opens the inner PR as a draft, so that step needs no model. Refuses `main` as the base. |
-| `tests/` | `test_router.py` (145 tests), `fake-orca`, a stand-in for the Orca CLI, and synthetic session files under `fixtures/collector/`. |
+| `tests/` | `test_router.py` (148 tests), `fake-orca`, a stand-in for the Orca CLI, and synthetic session files under `fixtures/collector/`. |
 | `skills/flow-run`, `skills/flow-status` | The two skills. |
 
 State lives in `$ROUTER_STATE` (default `$SCRATCH/router`, where `SCRATCH` is the run directory). `router.py --help`
@@ -301,7 +301,9 @@ logs/index.jsonl   one row per dispatch, for the report: ids, agent, model, effo
 | `none` | No such file, the worktree is unknown, or the agent is neither Claude nor Codex. |
 
 A file whose lines are all sidechain lines is never a candidate, nor is a subagent file: a sidechain belongs to its
-parent session and is kept with it (inline, or in the session's `subagents/` directory). Nothing is guessed. `index.jsonl` and `meta.json` hold ids, paths, timestamps and counts, never transcript
+parent session and is kept with it (inline, or in the session's `subagents/` directory). A subagent response whose
+message id the parent already holds inline is counted once. tokens.json's `first` and `last` are the parent session's
+timestamps; the subagent files do not move them. Nothing is guessed. `index.jsonl` and `meta.json` hold ids, paths, timestamps and counts, never transcript
 text; the copies stay in the state directory, never in a repository.
 
 ```sh
@@ -312,8 +314,9 @@ $R status                    # "logs N/M settled dispatches collected"
 ```
 
 A dispatch that fails to collect, for any reason, journals `collector: <dispatch>: <why>` and leaves no temporary
-directory. One that another collector holds is counted `locked` in the summary and journaled once; a lock older
-than 2 hours was left by a collector that died, and the next collect takes it over.
+directory. One that another collector holds is counted `locked` in the summary and journaled once, and the collect
+still exits 0: two collectors at once (the daemon's and a `collect --all`) are legitimate. A lock older than 2 hours
+was left by a collector that died, and the next collect takes it over.
 
 A collector that fails journals `collector: <dispatch>: <why>`; the daemon never waits for one. `ROUTER_COLLECT=0`
 turns the automatic collection off; `FLOWS_CLAUDE_PROJECTS` (default `~/.claude/projects`) and
@@ -488,6 +491,17 @@ Every script prints its header with `--help` and exits 2 on bad usage.
   rings.
 
 ## Tested how
+
+2026-10-09, the collector, review round 2 (M3).
+
+- `python3 tests/test_router.py` in a `git archive HEAD` export of `plugins/flows`, not the working copy: 148
+  tests, green (145 before). Round 1's head had committed `tests/fake-orca` without its executable bit, so its
+  suite failed there while passing in the working copy. The 3 new ones, in `Collector`: `fake-orca` is executable;
+  only the matched session's own `subagents/` is copied (a decoy under another session, and a session without
+  one); a lock its owner removes between the failed `mkdir` and the `stat` is taken, and the dispatch collected.
+  The held-lock test now checks that the lock's mtime is unchanged.
+- Mutants, each in a scratch copy against `Collector`: the lock's mtime not restored after the `reported` marker,
+  and any session's `subagents/` taken. Each one fails a named test.
 
 2026-10-09, the collector, review round 1 (M3).
 

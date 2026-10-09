@@ -525,7 +525,8 @@ again after a compaction.
 
 Every `ROUTER_*` and `FLOWS_*` name the code under `router/` reads (`grep -o 'ROUTER_[A-Z_]*\|FLOWS_[A-Z_]*'
 router/*.py | sort -u`, less `ROUTER_VARS`, which is a constant in `router.py`, not a setting), and the others it
-reads:
+reads. "Read by" names the files that read the variable (`os.environ`), not every file the grep prints: `progress.py`
+names `ROUTER_SILENT_MIN` in a comment only, and `router.py` names the `FLOWS_*` session paths in its `--help` only.
 
 | Variable | Default | Read by | Meaning |
 |---|---|---|---|

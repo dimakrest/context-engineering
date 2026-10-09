@@ -3543,9 +3543,12 @@ class Skills(unittest.TestCase):
         read = set(re.findall(r"ROUTER_[A-Z_]*|FLOWS_[A-Z_]*", "".join(p.read_text() for p in KIT.glob("*.py")))) - {"ROUTER_VARS"}
         doc = self.texts["docs/FLOWS.md"]
         table = doc[doc.index("## Environment variables"):doc.index("## Troubleshooting")]
-        self.assertEqual(set(re.findall(r"^\| `((?:ROUTER|FLOWS)_[A-Z_]+)`", table, re.M)), read)
+        rows = dict(re.findall(r"^\| `((?:ROUTER|FLOWS)_[A-Z_]+)` \|[^|\n]*\|([^|\n]*)\|", table, re.M))
+        self.assertEqual(set(rows), read)
         for name in read:
             self.assertTrue(name in self.help or name in self.collector_help, f"{name} is in neither --help")
+            readers = {p.name for p in KIT.glob("*.py") if f'"{name}"' in p.read_text()}   # a read, not a comment
+            self.assertEqual(set(re.findall(r"`([a-z]+\.py)`", rows[name])), readers, f"{name}: the Read by column")
 
     def test_the_troubleshooting_lines_are_the_codes_own(self):
         doc = self.texts["docs/FLOWS.md"]

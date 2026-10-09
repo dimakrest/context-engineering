@@ -34,7 +34,7 @@ Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-
 | `router/templates/smoke.json`, `router/specs/smoke-*.md` | A harmless chain that proves the router against real Orca: two workers at once, a question, a failure with a retry, a script step, a gate. |
 | `router/checks/*` | Checks that print one line, `OK …` or `NOT OK …`, and exit 0 or 1. |
 | `router/draft-pr.sh` | Opens the inner PR as a draft, so that step needs no model. Refuses `main` as the base. |
-| `tests/` | `test_router.py` (162 tests), `fake-orca`, a stand-in for the Orca CLI, synthetic session files under `fixtures/collector/`, and a synthetic run under `fixtures/report-run/` with its `metrics.golden.json`. |
+| `tests/` | `test_router.py` (164 tests), `fake-orca`, a stand-in for the Orca CLI, synthetic session files under `fixtures/collector/`, and a synthetic run under `fixtures/report-run/` with its `metrics.golden.json`. |
 | `skills/flow-run`, `skills/flow-status` | The two skills. |
 
 State lives in `$ROUTER_STATE` (default `$SCRATCH/router`, where `SCRATCH` is the run directory). `router.py --help`
@@ -535,6 +535,27 @@ Every script prints its header with `--help` and exits 2 on bad usage.
   rings.
 
 ## Tested how
+
+2026-10-09, the run report (M4).
+
+- `python3 tests/test_router.py` in a `git archive HEAD` export of `plugins/flows`: 164 tests, green (148 before). The
+  16 new ones are the class `Report`, over `tests/fixtures/report-run/`, a synthetic state directory (3 PRs under two
+  flow versions, 12 dispatches of which 2 ad hoc, one inside a PR and one outside any): the metrics equal
+  `metrics.golden.json` (a difference prints its path); the golden's arithmetic, worked out in the test from the
+  fixture's timestamps and `tokens.json` files; every golden number is on the page, the Codex session without counts
+  says not recorded and the cost says not priced; a price file gives the cost table, one cost checked by hand and a
+  Codex input priced without its cached part; neither the page nor the metrics hold the sentinel or any text of the
+  fixture's session lines; a run without `logs/` still has its time, steps and interruptions; `router.py report`
+  writes `report.html` in the state and prints its path, and `--pr` gives one section; ad hoc workers in their PR's
+  section and outside any PR; totals that include the subagents and their share; `requested -> effective` in the
+  tokens and the lessons tables; collector and locked lines apart from failed steps; the lessons and their records;
+  two workers at once covered once; a pause with no coordinator line is open, never a gate's time; an attempt
+  without a cause; and the report writes nothing in the state and opens no session file (they are made unreadable).
+- 20 mutants of `report.py`, each in a scratch copy against `Report`: 20 caught. The one that survived the first pass
+  (an attempt n 2 with no cause counted as first) has its own test now.
+- Read-only over the group-B run's state directory: 14 PRs, 266 dispatches (104 ad hoc), 0 collected sessions (it has
+  no `logs/`), 22 sections. The first pass found a negative rest in 8 of 14 PRs: a review group's workers run at once.
+  The rest is now measured against the time workers covered.
 
 2026-10-09, the collector, review round 2 (M3).
 

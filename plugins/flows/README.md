@@ -410,7 +410,7 @@ times, two seconds apart; then `orca-read.json` says `"status": "not available"`
 
 ```sh
 $R report                                  # writes $ROUTER_STATE/report.html and prints its path
-$R report --pr <pr> --out <file>           # one PR's section only
+$R report --pr <pr> --out <file>           # one PR: its section, and the header and --metrics count it alone
 python3 $FLOWS/router/report.py --state <dir> --out <file.html> [--metrics <file.json>] [--prices <file.json>]
 ```
 

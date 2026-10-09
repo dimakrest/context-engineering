@@ -2880,6 +2880,21 @@ class Report(unittest.TestCase):
         self.assertIn('id="pr-B1"', b1)
         self.assertNotIn('id="pr-A1"', b1)
 
+    def test_pr_limits_the_header_and_the_metrics_to_that_pr(self):
+        page, m, out = self.report(None, "--pr", "A2")
+        self.assertIn("1 PRs · 3 dispatches (0 ad hoc) · 3 collected sessions", out)
+        kpis = dict(re.findall(r'<div class="lab">([^<]+)</div><div class="big">([^<]+)</div>', page))
+        self.assertEqual((kpis["PRs"], kpis["dispatches"], kpis["ad hoc"]), ("1", "3", "0"))
+        self.assertEqual(page.count("<h2>"), 1)
+        self.assertEqual((m["run"]["prs"], m["run"]["dispatches"], m["run"]["from"]), (1, 3, "2026-01-12T11:00:05Z"))
+        self.assertEqual((sorted(m["time"]), list(m["per_pr"])), (["A2", "total"], ["A2"]))
+        self.assertEqual(m["time"]["total"]["worker_s"], 900 + 1800 + 600)    # A2's alone
+        self.assertEqual([d["dispatch"] for d in m["tokens"]["dispatches"]], ["ctx_a2_contract", "ctx_a2_impl", "ctx_a2_review"])
+        self.assertEqual(m["tokens"]["by_label"]["claude-fable-5-1"]["input"], 600)   # A2's contract, not the run's 2700
+        r = m["interruptions"]["rings"]
+        self.assertEqual((r["gate"], r["question"]["total"], r["failed"]["total"]), ({"A2": 2, "total": 2}, 2, 0))
+        self.assertEqual(m["flow"]["started_under"], {"2": ["A2"]})
+
     def test_ad_hoc_workers_are_listed_in_their_prs_section_and_counted_apart(self):
         page, m, _ = self.report()
         self.assertEqual((m["run"]["chain_dispatches"], m["run"]["adhoc_dispatches"]), (10, 2))

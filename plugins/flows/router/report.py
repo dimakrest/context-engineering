@@ -13,7 +13,8 @@ Usage:
     --metrics  the same numbers as JSON
     --prices   per-model prices per million tokens: {"<model>": {"input", "output", "cache_creation", "cache_read"}};
                without it every cost is "not priced"
-    --pr       the page shows that PR's section only (the metrics cover the whole run)
+    --pr       that PR only: the page shows its section, and the header and the metrics count its records alone
+               ("-": the ad hoc workers outside any PR)
 
 What it reads (it writes only the files named on its command line, and never calls Orca):
   run.json, flow.json (or plan.json), chains/<pr>/state.json, dispatches/<dispatch>.json, journal.md,
@@ -194,6 +195,14 @@ class Run:
             if kind == "silent" and ns.isdigit():
                 self.silent.append((int(ns) / 1e9, pr if pr and pr != "run" else OUTSIDE))
         self.dispatches = self._dispatches()
+
+    def only(self, pr: str) -> None:
+        """Keep one PR's records (OUTSIDE: those of no chain), so the header and the metrics are that PR's alone."""
+        keep = (lambda p: p == pr) if pr != OUTSIDE else (lambda p: p not in self.chains)
+        self.prs = [p for p in self.prs if keep(p)]
+        self.journal = [ln for ln in self.journal if keep(ln["pr"])]
+        self.silent = [x for x in self.silent if keep(x[1])]
+        self.dispatches = [r for r in self.dispatches if keep(r["pr"])]
 
     def _dispatches(self) -> "list[dict]":
         """One row per dispatch: the chain's attempts first, in step order, then the ad hoc ones."""
@@ -620,7 +629,7 @@ def metrics(run: Run, prices: "dict | None" = None) -> dict:
         by_role[q["role"]] = by_role.get(q["role"], 0) + 1
     labels = {r["dispatch"]: r["label"] for r in run.dispatches}
     stamps = [ln["e"] for ln in run.journal]
-    for st in run.chains.values():
+    for st in (run.chains[pr] for pr in run.prs):
         stamps += [e for e in (ts_epoch(st.get("created")), ts_epoch(st.get("ended"))) if e is not None]
     return {
         "report": 1,
@@ -995,6 +1004,8 @@ def main(argv: "list[str] | None" = None) -> int:
     if a.pr and a.pr not in run.prs and a.pr != OUTSIDE:
         print(f"report: no chain {a.pr}; PRs: {', '.join(run.prs) or 'none'}", file=sys.stderr)
         return 1
+    if a.pr:
+        run.only(a.pr)
     m = metrics(run, prices)
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)

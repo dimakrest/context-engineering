@@ -1,0 +1,7 @@
+{"timestamp": "2026-01-10T11:00:05.000Z", "type": "session_meta", "payload": {"id": "55555555-eeee-4eee-8eee-000000000005", "timestamp": "2026-01-10T11:00:05.000Z", "cwd": "/work/wt-codex", "originator": "codex_cli", "cli_version": "0.0.1", "git": {"branch": "feature/x", "commit_hash": "0000000000000000000000000000000000000000"}}}
+{"timestamp": "2026-01-10T11:00:06.000Z", "type": "turn_context", "payload": {"cwd": "/work/wt-codex", "model": "gpt-test-codex"}}
+{"timestamp": "2026-01-10T11:00:07.000Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Review it. SENTINEL-c0ffee-not-for-the-index"}]}}
+{"timestamp": "2026-01-10T11:05:00.000Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 1200, "cached_input_tokens": 800, "output_tokens": 300, "reasoning_output_tokens": 100, "total_tokens": 1500}}}}
+{"timestamp": "2026-01-10T11:06:00.000Z", "type": "turn_context", "payload": {"cwd": "/work/wt-codex", "model": "gpt-test-codex"}}
+{"timestamp": "2026-01-10T11:10:00.000Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Two findings. SENTINEL-c0ffee-not-for-the-index"}]}}
+{"timestamp": "2026-01-10T11:15:00.000Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 3000, "cached_input_tokens": 2000, "output_tokens": 700, "reasoning_output_tokens": 250, "total_tokens": 3700}}}}

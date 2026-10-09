@@ -1,0 +1,10 @@
+{
+ "dispatch": "ctx_a2_contract",
+ "task": "task_a2_contract",
+ "pr": "A2",
+ "step": "contract",
+ "title": "A2 contract",
+ "started": "2026-01-12T11:00:15Z",
+ "settled": "2026-01-12T11:15:15Z",
+ "outcome": "succeeded"
+}

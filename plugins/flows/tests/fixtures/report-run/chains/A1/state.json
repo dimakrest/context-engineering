@@ -1,0 +1,192 @@
+{
+ "pr": "A1",
+ "def": "/work/kit/templates/mini.json",
+ "def_dir": "/work/kit/templates",
+ "kit_dir": "/work/kit",
+ "created": "2026-01-12T09:00:00Z",
+ "status": "done",
+ "vars": {
+  "WT": "/work/wt-a1",
+  "PR": "A1"
+ },
+ "steps": [
+  {
+   "id": "contract",
+   "def": {
+    "id": "contract",
+    "agent": "claude",
+    "worktree": "path:{WT}",
+    "spec": "contract.md",
+    "model": "claude-fable-5-1",
+    "effort": "xhigh"
+   },
+   "status": "done",
+   "attempts": [
+    {
+     "n": 1,
+     "started": "2026-01-12T09:00:10Z",
+     "ended": "2026-01-12T09:20:10Z",
+     "flow_version": 1,
+     "cause": "first",
+     "task": "task_a1_contract",
+     "dispatch": "ctx_a1_contract",
+     "outcome": "succeeded",
+     "agent": "claude",
+     "model": "claude-fable-5-1",
+     "effort": "xhigh",
+     "worktree": "path:/work/wt",
+     "head_before": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "head_after": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "title": "t",
+     "subject": "subject SENTINEL-c0ffee-not-for-the-report",
+     "summary": "VERDICT: ACCEPT SENTINEL-c0ffee-not-for-the-report",
+     "release": "released",
+     "checks": [
+      "OK file-exists"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "accept",
+   "def": {
+    "id": "accept",
+    "type": "gate",
+    "title": "contract acceptance"
+   },
+   "status": "done",
+   "attempts": []
+  },
+  {
+   "id": "implement",
+   "def": {
+    "id": "implement",
+    "agent": "claude",
+    "worktree": "path:{WT}",
+    "spec": "implementer.md",
+    "model": "claude-opus-5-5",
+    "effort": "high"
+   },
+   "status": "done",
+   "attempts": [
+    {
+     "n": 1,
+     "started": "2026-01-12T09:50:20Z",
+     "ended": "2026-01-12T10:10:20Z",
+     "flow_version": 1,
+     "cause": "first",
+     "task": "task_a1_impl1",
+     "dispatch": "ctx_a1_impl1",
+     "outcome": "failed",
+     "agent": "claude",
+     "model": "claude-opus-5-5",
+     "effort": "high",
+     "worktree": "path:/work/wt",
+     "head_before": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "head_after": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "title": "t",
+     "subject": "subject SENTINEL-c0ffee-not-for-the-report",
+     "summary": "could not SENTINEL-c0ffee-not-for-the-report",
+     "release": "released",
+     "checks": []
+    },
+    {
+     "n": 2,
+     "started": "2026-01-12T10:15:30Z",
+     "ended": "2026-01-12T10:35:30Z",
+     "flow_version": 1,
+     "cause": "retry",
+     "task": "task_a1_impl2",
+     "dispatch": "ctx_a1_impl2",
+     "outcome": "succeeded",
+     "agent": "claude",
+     "model": "claude-opus-5-5",
+     "effort": "high",
+     "worktree": "path:/work/wt",
+     "head_before": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "head_after": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "title": "t",
+     "subject": "subject SENTINEL-c0ffee-not-for-the-report",
+     "summary": "done SENTINEL-c0ffee-not-for-the-report",
+     "release": "released",
+     "checks": [
+      "OK file-exists"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "ci",
+   "def": {
+    "id": "ci",
+    "type": "script",
+    "run": "{CHECKS}/ci-green.sh {PR}"
+   },
+   "status": "done",
+   "attempts": [
+    {
+     "n": 1,
+     "started": "2026-01-12T10:35:35Z",
+     "ended": "2026-01-12T10:45:35Z",
+     "flow_version": 1,
+     "cause": "first",
+     "rc": 0,
+     "line": "OK ci: 3 pass"
+    }
+   ]
+  },
+  {
+   "id": "review",
+   "def": {
+    "id": "review",
+    "agent": "codex",
+    "worktree": "path:{WT}",
+    "spec": "review-codex.md"
+   },
+   "status": "done",
+   "attempts": [
+    {
+     "n": 1,
+     "started": "2026-01-12T10:45:40Z",
+     "ended": "2026-01-12T10:55:40Z",
+     "flow_version": 1,
+     "cause": "first",
+     "task": "task_a1_review",
+     "dispatch": "ctx_a1_review",
+     "outcome": "succeeded",
+     "agent": "codex",
+     "model": "",
+     "effort": "",
+     "worktree": "path:/work/wt",
+     "head_before": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "head_after": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "title": "t",
+     "subject": "subject SENTINEL-c0ffee-not-for-the-report",
+     "summary": "2 high, 1 low SENTINEL-c0ffee-not-for-the-report. FINDINGS: 3",
+     "release": "released",
+     "checks": [
+      "OK file-exists"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "merge",
+   "def": {
+    "id": "merge",
+    "type": "gate",
+    "title": "ready to merge"
+   },
+   "status": "done",
+   "attempts": []
+  }
+ ],
+ "flow": {
+  "version": 2,
+  "started_at": 1,
+  "vars_keys": [],
+  "created": {},
+  "claimed": []
+ },
+ "ended": "2026-01-12T11:00:00Z"
+}

@@ -1,0 +1,46 @@
+{
+ "dispatch": "ctx_adhoc_none",
+ "task": "task_adhoc_none",
+ "pr": "",
+ "step": "",
+ "title": "ad hoc",
+ "adhoc": true,
+ "n": 1,
+ "agent": "codex",
+ "model": null,
+ "effort": null,
+ "effective": null,
+ "started": "2026-01-12T12:50:00Z",
+ "ended": "2026-01-12T12:55:00Z",
+ "outcome": "succeeded",
+ "flow_version": null,
+ "cause": null,
+ "worktree": "/work/wt",
+ "worktree_source": "attempt: path:/work/wt",
+ "head_before": null,
+ "head_after": null,
+ "checks": [],
+ "release": "released",
+ "settled_in_chain": true,
+ "session": {
+  "provider": "codex",
+  "path": null,
+  "match": "none",
+  "candidates": 0,
+  "why": "no candidate"
+ },
+ "orca": {
+  "status": "ok",
+  "provider": "codex",
+  "contentComplete": false,
+  "clipping": [
+   "older messages"
+  ]
+ },
+ "files": {
+  "session.jsonl": {
+   "source": "codex",
+   "match": "none"
+  }
+ }
+}

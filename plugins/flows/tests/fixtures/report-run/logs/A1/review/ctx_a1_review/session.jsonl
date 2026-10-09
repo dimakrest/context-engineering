@@ -1,0 +1,14 @@
+{"type": "session_meta", "timestamp": "2026-01-12T10:45:40Z", "payload": {"cwd": "/work/wt", "timestamp": "2026-01-12T10:45:40Z", "instructions": "codex instructions for ctx_a1_review SENTINEL-c0ffee-not-for-the-report"}}
+{"type": "turn_context", "timestamp": "2026-01-12T10:45:40Z", "payload": {"model": "gpt-5-codex"}}
+{"type": "response_item", "timestamp": "2026-01-12T10:45:40Z", "payload": {"type": "message", "content": [{"type": "output_text", "text": "codex turn 0 of ctx_a1_review: SENTINEL-c0ffee-not-for-the-report"}]}}
+{"type": "turn_context", "timestamp": "2026-01-12T10:45:40Z", "payload": {"model": "gpt-5-codex"}}
+{"type": "response_item", "timestamp": "2026-01-12T10:45:40Z", "payload": {"type": "message", "content": [{"type": "output_text", "text": "codex turn 1 of ctx_a1_review: SENTINEL-c0ffee-not-for-the-report"}]}}
+{"type": "turn_context", "timestamp": "2026-01-12T10:45:40Z", "payload": {"model": "gpt-5-codex"}}
+{"type": "response_item", "timestamp": "2026-01-12T10:45:40Z", "payload": {"type": "message", "content": [{"type": "output_text", "text": "codex turn 2 of ctx_a1_review: SENTINEL-c0ffee-not-for-the-report"}]}}
+{"type": "turn_context", "timestamp": "2026-01-12T10:45:40Z", "payload": {"model": "gpt-5-codex"}}
+{"type": "response_item", "timestamp": "2026-01-12T10:45:40Z", "payload": {"type": "message", "content": [{"type": "output_text", "text": "codex turn 3 of ctx_a1_review: SENTINEL-c0ffee-not-for-the-report"}]}}
+{"type": "turn_context", "timestamp": "2026-01-12T10:45:40Z", "payload": {"model": "gpt-5-codex"}}
+{"type": "response_item", "timestamp": "2026-01-12T10:45:40Z", "payload": {"type": "message", "content": [{"type": "output_text", "text": "codex turn 4 of ctx_a1_review: SENTINEL-c0ffee-not-for-the-report"}]}}
+{"type": "turn_context", "timestamp": "2026-01-12T10:45:40Z", "payload": {"model": "gpt-5-codex"}}
+{"type": "response_item", "timestamp": "2026-01-12T10:45:40Z", "payload": {"type": "message", "content": [{"type": "output_text", "text": "codex turn 5 of ctx_a1_review: SENTINEL-c0ffee-not-for-the-report"}]}}
+{"type": "event_msg", "timestamp": "2026-01-12T10:45:40Z", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 20000, "cached_input_tokens": 15000, "output_tokens": 3000}}}}

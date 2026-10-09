@@ -1,0 +1,46 @@
+{
+ "dispatch": "ctx_a1_impl1",
+ "task": "task_a1_impl1",
+ "pr": "A1",
+ "step": "implement",
+ "title": "A1 implement",
+ "adhoc": false,
+ "n": 1,
+ "agent": "claude",
+ "model": "claude-opus-5-5",
+ "effort": null,
+ "effective": null,
+ "started": "2026-01-12T09:50:20Z",
+ "ended": "2026-01-12T10:10:20Z",
+ "outcome": "failed",
+ "flow_version": null,
+ "cause": null,
+ "worktree": "/work/wt",
+ "worktree_source": "attempt: path:/work/wt",
+ "head_before": null,
+ "head_after": null,
+ "checks": [],
+ "release": "released",
+ "settled_in_chain": true,
+ "session": {
+  "provider": "claude",
+  "path": "/sessions/ctx_a1_impl1.jsonl",
+  "match": "unique",
+  "candidates": 1,
+  "why": ""
+ },
+ "orca": {
+  "status": "ok",
+  "provider": "claude",
+  "contentComplete": false,
+  "clipping": [
+   "older messages"
+  ]
+ },
+ "files": {
+  "session.jsonl": {
+   "source": "claude",
+   "match": "unique"
+  }
+ }
+}

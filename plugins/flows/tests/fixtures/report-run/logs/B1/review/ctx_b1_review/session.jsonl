@@ -1,0 +1,2 @@
+{"type": "session_meta", "timestamp": "2026-01-12T10:05:40Z", "payload": {"cwd": "/work/wt", "timestamp": "2026-01-12T10:05:40Z", "instructions": "codex instructions for ctx_b1_review SENTINEL-c0ffee-not-for-the-report"}}
+{"type": "response_item", "timestamp": "2026-01-12T10:05:40Z", "payload": {"type": "message", "content": [{"type": "output_text", "text": "an older codex wrote no counts ctx_b1_review: SENTINEL-c0ffee-not-for-the-report"}]}}

@@ -1,0 +1,46 @@
+{
+ "dispatch": "ctx_a1_contract",
+ "task": "task_a1_contract",
+ "pr": "A1",
+ "step": "contract",
+ "title": "A1 contract",
+ "adhoc": false,
+ "n": 1,
+ "agent": "claude",
+ "model": "claude-fable-5-1",
+ "effort": null,
+ "effective": null,
+ "started": "2026-01-12T09:00:10Z",
+ "ended": "2026-01-12T09:20:10Z",
+ "outcome": "succeeded",
+ "flow_version": null,
+ "cause": null,
+ "worktree": "/work/wt",
+ "worktree_source": "attempt: path:/work/wt",
+ "head_before": null,
+ "head_after": null,
+ "checks": [],
+ "release": "released",
+ "settled_in_chain": true,
+ "session": {
+  "provider": "claude",
+  "path": "/sessions/ctx_a1_contract.jsonl",
+  "match": "unique",
+  "candidates": 1,
+  "why": ""
+ },
+ "orca": {
+  "status": "ok",
+  "provider": "claude",
+  "contentComplete": false,
+  "clipping": [
+   "older messages"
+  ]
+ },
+ "files": {
+  "session.jsonl": {
+   "source": "claude",
+   "match": "unique"
+  }
+ }
+}

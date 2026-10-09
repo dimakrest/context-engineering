@@ -1,0 +1,22 @@
+{
+  "name": "flows",
+  "version": "0.1.0",
+  "description": "Run a flow of inner pull requests through Orca workers, with a router that rings the coordinator only when a decision is needed.",
+  "author": {
+    "name": "Dima Krest"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Flows",
+    "shortDescription": "Run and watch a flow of inner PRs through the Orca router.",
+    "longDescription": "Shares the flow skills with Claude Code. The router is a standard-library Python script that reads an Orca Run's mailbox, runs each inner PR's chain of worker, script and gate steps, and wakes the coordinator only at a gate, a failure, a check that is not OK or a worker's question.",
+    "developerName": "Dima Krest",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": "Use $flows:flow-run to run or continue a flow of inner PRs through the router."
+  },
+  "repository": "https://github.com/dimakrest/context-engineering"
+}

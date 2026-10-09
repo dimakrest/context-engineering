@@ -1,0 +1,10 @@
+{
+ "dispatch": "ctx_a1_review",
+ "task": "task_a1_review",
+ "pr": "A1",
+ "step": "review",
+ "title": "A1 review",
+ "started": "2026-01-12T10:45:40Z",
+ "settled": "2026-01-12T10:55:40Z",
+ "outcome": "succeeded"
+}

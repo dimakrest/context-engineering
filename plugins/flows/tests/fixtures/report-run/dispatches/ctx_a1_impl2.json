@@ -1,0 +1,10 @@
+{
+ "dispatch": "ctx_a1_impl2",
+ "task": "task_a1_impl2",
+ "pr": "A1",
+ "step": "implement",
+ "title": "A1 implement",
+ "started": "2026-01-12T10:15:30Z",
+ "settled": "2026-01-12T10:35:30Z",
+ "outcome": "succeeded"
+}

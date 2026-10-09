@@ -31,7 +31,7 @@ Every item of the intent's goal and "Done means" for this PR maps to at least on
 
 ## Gates
 
-| command (through the limiter) | result on base |
+| command (as the profile's TEST_CMD runs it) | result on base |
 |---|---|
 
 ## Fixed and Free

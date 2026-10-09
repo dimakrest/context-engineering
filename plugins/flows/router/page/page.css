@@ -1,0 +1,85 @@
+/* The colours, cards, chips and banners are progress.html's (router/progress.py, CSS); the graph and edit mode are new. */
+:root{--bg:#f5f6f8;--card:#fff;--ink:#1b2230;--mute:#667085;--line:#e2e5eb;--ok:#17794a;--okbg:#e2f4e9;--run:#1b5bcc;
+--runbg:#e3ecfc;--wait:#8f5400;--waitbg:#fdefd2;--bad:#b3261e;--badbg:#fbe3e1;--idle:#8a94a6;--idlebg:#eceef2;--lane:#f8f9fb}
+@media (prefers-color-scheme:dark){:root{--bg:#11141a;--card:#191e27;--ink:#e6e9ef;--mute:#98a2b3;--line:#2a3140;
+--ok:#63d394;--okbg:#163423;--run:#82b1ff;--runbg:#16284a;--wait:#f2b95f;--waitbg:#3a2b0f;--bad:#ff8f85;--badbg:#42201d;
+--idle:#6b7588;--idlebg:#222834;--lane:#151a22}}
+*{box-sizing:border-box}
+body{margin:0;padding:20px 24px 40px;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+h1{font-size:20px;margin:0 0 2px}h2{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:26px 0 8px}
+.sub{color:var(--mute);font-size:12.5px}code,.mono{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+.top{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:flex-start;justify-content:space-between}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:14px}
+.kpi,.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.kpi .lab{font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--mute)}
+.kpi .big{font-size:22px;font-weight:650;margin:2px 0}.kpi .big.small{font-size:16px}
+.kpi.wait{border-color:var(--wait);background:var(--waitbg)}.kpi.bad{border-color:var(--bad);background:var(--badbg)}
+.bar{height:6px;border-radius:3px;background:var(--idlebg);overflow:hidden;margin-top:6px}.bar i{display:block;height:100%;background:var(--ok)}
+.banner{margin-top:12px;padding:10px 14px;border-radius:10px;border:1px solid var(--bad);background:var(--badbg);color:var(--bad);font-weight:600}
+.banner.wait{border-color:var(--wait);background:var(--waitbg);color:var(--wait)}
+.banner.note{border-color:var(--run);background:var(--runbg);color:var(--run)}.banner.okay{border-color:var(--ok);background:var(--okbg);color:var(--ok)}
+.ok{background:var(--okbg);color:var(--ok)}.run{background:var(--runbg);color:var(--run)}.wait{background:var(--waitbg);color:var(--wait)}
+.bad{background:var(--badbg);color:var(--bad)}.idle,.skip{background:var(--idlebg);color:var(--idle)}
+.badge{font-size:11.5px;font-weight:650;padding:2px 8px;border-radius:999px;white-space:nowrap}
+table{border-collapse:collapse;width:100%;margin-top:8px}th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);text-align:left;font-weight:600}
+th,td{padding:5px 10px 5px 0;border-bottom:1px solid var(--line);vertical-align:top}tr:last-child td{border-bottom:0}
+.late{color:var(--bad);font-weight:650}a{color:var(--run)}.foot{margin-top:26px;color:var(--mute);font-size:12px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--mute);margin-top:8px}.legend i{font-style:normal;padding:1px 7px;border-radius:6px}
+.card table{margin-top:0}
+
+/* buttons and the mode switch */
+button,select,input,textarea{font:inherit;color:inherit}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:5px 12px;cursor:pointer;font-size:13px}
+.btn:hover{border-color:var(--run)}.btn.primary{background:var(--run);border-color:var(--run);color:var(--card);font-weight:600}
+.btn:disabled{opacity:.45;cursor:default;border-color:var(--line)}.btn.small{padding:2px 8px;font-size:12px}
+.mode{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--card)}
+.mode button{border:0;background:transparent;padding:6px 14px;cursor:pointer;font-size:13px}.mode button[aria-pressed=true]{background:var(--runbg);color:var(--run);font-weight:650}
+.mode button:disabled{cursor:default;opacity:.5}
+
+/* the PR graph: one lane per part, a column per depth of "after" */
+.graph-wrap{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;overflow:auto}
+.graph{display:grid;gap:0 44px;position:relative;align-items:start;min-width:max-content}
+.lane{grid-column:1/-1;border-radius:8px;background:var(--lane);border:1px solid var(--line);margin:5px 0;align-self:stretch}
+.lane-lab{position:relative;z-index:1;padding:14px 4px 10px 12px;font-size:12px;font-weight:600;color:var(--mute);width:150px}
+.cell{position:relative;z-index:1;display:flex;flex-direction:column;gap:10px;padding:12px 0}
+.edges{position:absolute;left:0;top:0;pointer-events:none;overflow:visible;z-index:2;color:var(--mute)}
+.edges path{fill:none;stroke:currentColor;stroke-width:1.6}
+.node{width:300px;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--idle);border-radius:10px;padding:8px 10px 9px;color:var(--ink)}
+.node.ok{border-left-color:var(--ok)}.node.run{border-left-color:var(--run)}.node.wait{border-left-color:var(--wait)}.node.bad{border-left-color:var(--bad)}
+.node.new{border-style:dashed}
+.nhead{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.nhead .nid{font-size:15px}
+.ntitle{font-size:12.5px;color:var(--mute);margin-top:1px}.nmeta{font-size:12px;margin-top:3px}
+.steps{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px;min-height:24px;padding:2px;border-radius:7px;align-items:flex-start}
+.grp{display:flex;flex-wrap:wrap;gap:4px;padding:2px;border:1px dashed var(--mute);border-radius:7px}
+.sc{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;line-height:1.3;padding:2px 6px;border-radius:6px;border:1px solid transparent;white-space:nowrap;user-select:none}
+.sc.run{border-color:var(--run)}.sc.wait{border-color:var(--wait)}.sc.bad{border-color:var(--bad)}.sc.skip{text-decoration:line-through}
+.why{margin-top:7px;padding:6px 8px;border-radius:7px;font-size:12px}
+.wline{margin-top:6px;font-size:12px;padding-top:6px;border-top:1px solid var(--line)}
+.nfoot{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+
+/* edit mode */
+.editbar{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin:0 0 10px;padding:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:10px}
+.editbar label{font-size:12.5px;color:var(--mute);display:inline-flex;gap:6px;align-items:center}
+.editbar input[type=number]{width:60px}
+input,select,textarea{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:3px 6px}
+.palette{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin:0 0 10px}
+.palette .lab{font-size:12px;color:var(--mute);margin-right:4px}
+.role{font-size:11.5px;padding:3px 8px;border-radius:999px;border:1px solid var(--run);color:var(--run);background:var(--runbg);cursor:grab;user-select:none;touch-action:none}
+.role.kind{border-color:var(--wait);color:var(--wait);background:var(--waitbg)}
+.sc.drag{cursor:grab;touch-action:none;border-color:var(--line)}.sc.drag.run,.sc.drag.wait,.sc.drag.bad{border-color:inherit}
+.sc.locked{opacity:.72;cursor:not-allowed}.sc .lock{font-size:9px;opacity:.8}
+.sc .x{border:0;background:transparent;padding:0 0 0 2px;cursor:pointer;font-size:12px;line-height:1;color:inherit;opacity:.7}.sc .x:hover{opacity:1}
+.sc.edited{box-shadow:inset 0 -2px 0 var(--run)}
+.drop-before{box-shadow:-4px 0 0 var(--run)!important}.drop-after{box-shadow:4px 0 0 var(--run)!important}
+.drop-end{outline:2px dashed var(--run);outline-offset:1px}.no-drop{outline:2px solid var(--bad);outline-offset:1px}
+.dragging,.dragging *{cursor:grabbing!important}.src{opacity:.4}
+.ghost{position:fixed;z-index:50;pointer-events:none;padding:3px 9px;border-radius:7px;background:var(--run);color:var(--card);font-size:12px;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:0 0 10px}
+.panel.bad{border-color:var(--bad);background:var(--badbg);color:var(--bad)}.panel h3{margin:0 0 6px;font-size:14px}
+.panel ul{margin:6px 0 10px;padding-left:20px}.panel li{margin:2px 0}
+.form{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 10px;align-items:center;max-width:620px}
+.form label{font-size:12.5px;color:var(--mute)}.form input,.form select,.form textarea{width:100%}.form .row{grid-column:1/-1;display:flex;gap:8px;margin-top:4px}
+.dirty{color:var(--run);font-weight:650}
+
+/* a narrow window (Orca's side tab): three columns of PRs still fit at 900 px */
+@media (max-width:1000px){body{padding:16px 16px 32px}.graph{gap:0 26px}.lane-lab{width:84px;padding-left:8px}.node{width:226px}}

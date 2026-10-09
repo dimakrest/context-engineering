@@ -650,19 +650,13 @@ class Collector:
             try:
                 since = lockdir.stat().st_mtime
             except FileNotFoundError:   # its owner removed it between our mkdir and the stat: one more try, then it is ours
-                lockdir.mkdir()
+                try:
+                    lockdir.mkdir()
+                except FileExistsError:   # unless a third collector took it in that gap: held, like any lock
+                    return self.held(info, lockdir)
             else:
                 if time.time() - since < LOCK_EXPIRY_S:
-                    seen = lockdir / "reported"   # journaled once per lock, not on every collect that meets it
-                    if not seen.exists():
-                        with contextlib.suppress(OSError):
-                            seen.write_text(now() + "\n")
-                            os.utime(lockdir, (since, since))   # the marker must not make the lock look younger
-                            journal(self.state, info["pr"], info["step"], info["task"], d,
-                                    f"collector: {d}: locked by another collector since "
-                                    f"{datetime.datetime.fromtimestamp(since, datetime.timezone.utc):%Y-%m-%dT%H:%M:%SZ}; "
-                                    f"skipped (a lock older than {LOCK_EXPIRY_S // 3600} h is taken over)")
-                    return LOCKED
+                    return self.held(info, lockdir, since)
                 shutil.rmtree(lockdir, ignore_errors=True)   # left by a collector that died
                 lockdir.mkdir()
         try:
@@ -672,6 +666,21 @@ class Collector:
             return self._collect(info, final)
         finally:
             shutil.rmtree(lockdir, ignore_errors=True)
+
+    def held(self, info: dict, lockdir: Path, since: "float | None" = None) -> str:
+        """Another collector holds the dispatch's lock: journaled once per lock, not on every collect that meets it."""
+        d = info["dispatch"]
+        with contextlib.suppress(OSError):
+            since = lockdir.stat().st_mtime if since is None else since
+            seen = lockdir / "reported"
+            if not seen.exists():
+                seen.write_text(now() + "\n")
+                os.utime(lockdir, (since, since))   # the marker must not make the lock look younger
+                journal(self.state, info["pr"], info["step"], info["task"], d,
+                        f"collector: {d}: locked by another collector since "
+                        f"{datetime.datetime.fromtimestamp(since, datetime.timezone.utc):%Y-%m-%dT%H:%M:%SZ}; "
+                        f"skipped (a lock older than {LOCK_EXPIRY_S // 3600} h is taken over)")
+        return LOCKED
 
     def _collect(self, info: dict, final: Path) -> str:
         tmp = final.with_name(f".{final.name}.{os.getpid()}.tmp")

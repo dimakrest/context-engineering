@@ -521,15 +521,29 @@ class Daemons(RouterCase):
         (self.kit / "specs" / "s.md").write_text("Use ${HOME} and $SCRATCH as they are; the label is {LABEL}.\n")
         self.scenario({"match": "t1 a", "events": [self.done(0.1)]})
         self.R("init", ok=True)
-        evil = f"a b; touch {self.out}/pwned $(touch {self.out}/pwned2)"
+        evil = "a b; touch pwned $(touch pwned2)"                      # short and fixed: a long one is cut on the screen
         rc, out = self.chain([self.worker("a", spec="s.md", checks=["echo OK label: {LABEL}"]),
                               {"id": "accept", "type": "gate", "show": ["echo ${HOME:+home is set} {LABEL}"]}], LABEL=evil)
         self.assertEqual(rc, 0, out)
         text = self.bell()
         self.assertIn(f"home is set {evil}", text)                     # ${HOME} is the shell's, {LABEL} is one quoted word
-        self.assertFalse((self.out / "pwned").exists() or (self.out / "pwned2").exists())
+        cwd = Path(self.chain_state()["def_dir"])                      # where the checks and the gate's show lines run
+        self.assertEqual(cwd, self.kit.resolve())
+        self.assertFalse((cwd / "pwned").exists() or (cwd / "pwned2").exists())
         self.assertIn(f"check: OK label: {evil}", self.journal())
         self.assertEqual(self.starts()[0]["spec"], f"Use ${{HOME}} and $SCRATCH as they are; the label is {evil}.\n")
+
+    def test_quoting_holds_under_a_120_character_tmpdir(self):
+        """A sandbox gives a long TMPDIR: the quoting test, run with one, must not depend on how long its paths are."""
+        name = "test_values_are_quoted_in_commands_and_shell_variables_are_left_alone"
+        long_tmp = self.tmp / "t"
+        long_tmp = long_tmp.with_name("t" * max(1, 120 - len(str(long_tmp)) + 1))
+        long_tmp.mkdir()
+        self.assertGreaterEqual(len(str(long_tmp)), 120)
+        p = subprocess.run([sys.executable, str(TESTS / "test_router.py"), "-k", name], capture_output=True, text=True,
+                           env=dict(os.environ, TMPDIR=str(long_tmp)), timeout=120)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("Ran 1 test", p.stderr)
 
     def test_a_word_no_command_takes_is_refused(self):
         rc, out = self.R("status", "--bogus")

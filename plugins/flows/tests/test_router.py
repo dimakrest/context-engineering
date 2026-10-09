@@ -22,6 +22,7 @@ TESTS = Path(__file__).resolve().parent
 KIT = TESTS.parent / "router"
 ROUTER = str(KIT / "router.py")
 CHECKS = KIT / "checks"
+TEMPLATES = KIT / "templates"
 
 
 class RouterCase(unittest.TestCase):
@@ -936,6 +937,26 @@ class Progress(RouterCase):
         self.assertNotIn("Which base?", self.page())                            # the reply rewrote the page
         self.assertIn("WAKE done · ad hoc worker arbiter B3.4", self.bell_for("WAKE done"))
         self.assertNotIn("workers outside a chain", self.R("progress")[1])
+
+
+class Templates(RouterCase):
+    def test_a_definition_in_a_subdirectory_finds_specs_and_checks_in_its_kit(self):
+        self.scenario({"match": "t1 a$", "events": [self.done(0.1)], "effect": f"echo OK > {self.out}/a.txt"})
+        self.R("init", ok=True)
+        (self.kit / "templates").mkdir()
+        path = self.kit / "templates" / "c.json"
+        path.write_text(json.dumps({"name": "t1", "kit": "..", "steps": [
+            self.worker("a", checks=["{CHECKS}/file-exists.sh {OUT}/a.txt", "echo OK kit: {KIT}"])]}))
+        rc, out = self.R("chain", "t1", "--def", str(path), f"OUT={self.out}")
+        self.assertEqual(rc, 0, out)
+        self.until(lambda: self.chain_state()["status"] == "done", what="the chain to finish")
+        self.assertEqual(self.starts()[0]["spec"], f"Target: {self.out}\nChange: write {self.out}/a.txt (attempt 1)\n")   # the kit's specs/w.md
+        self.assertEqual(self.chain_state()["kit_dir"], str(self.kit.resolve()))
+        self.assertIn(f"check: OK kit: {self.kit.resolve()}", self.journal())
+        path.write_text(json.dumps({"name": "t2", "kit": "../nowhere", "steps": [self.worker("a")]}))
+        rc, out = self.R("chain", "t2", "--def", str(path), "--dry-run", f"OUT={self.out}")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("t2: the definition's kit '../nowhere' is not a directory", out)
 
 
 class ProgressView(unittest.TestCase):

@@ -1,6 +1,7 @@
 {
  "name": "smoke",
  "about": "Proves the router against real Orca on harmless work: two workers at once, a heartbeat, a question, a failure with a retry, a script step, a gate. Workers write only under {OUT}. Start it with OUT=<an empty scratch directory>.",
+ "kit": "..",
  "vars": {"MODEL": "claude-sonnet-5-5"},
  "steps": [
   {"id": "alpha", "group": "pair", "agent": "claude", "model": "{MODEL}", "spec": "smoke-write.md",

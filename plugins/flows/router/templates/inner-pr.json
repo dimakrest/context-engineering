@@ -1,6 +1,7 @@
 {
  "name": "inner-pr",
  "about": "One inner PR of the pipecat upgrade, as settled on 2026-10-04: contract, blind test writer, ledger r0 on the green-pinned PRs, implementer, ledger r1, validator, draft PR, /simplify, two reviews at once, triage, fixers, CI, merge. The coordinator is rung at the two gates (accept, merge) and on an exception.",
+ "kit": "..",
  "start": "router.py chain <pr> --def chain-inner-pr.json WT=<the PR's worktree> ISSUE=<the sub-issue's number> BASE_BRANCH=pipecat-1.11 TITLE='<pr>: <goal>' TESTS=1 LEDGER=1 GREEN_PINNED= IMPL_EFFORT=high",
  "variables": {
   "WT": "the PR's worktree, on the PR's branch, cut from the PR's base commit",
@@ -43,7 +44,7 @@
   {"id": "validator", "agent": "claude", "model": "claude-sonnet-5-5", "effort": "high", "worktree": "path:{WT}", "spec": "validator.md", "readonly": true,
    "checks": ["{CHECKS}/verdict-line.sh {SCRATCH}/reviews/{PR}/validator.md", "{CHECKS}/file-exists.sh {SCRATCH}/pr/{PR}.md 5"]},
 
-  {"id": "draft_pr", "type": "script", "exports": ["PR_URL"], "run": "{DEF_DIR}/draft-pr.sh {WT} {BASE_BRANCH} {TITLE} {SCRATCH}/pr/{PR}.md"},
+  {"id": "draft_pr", "type": "script", "exports": ["PR_URL"], "run": "{KIT}/draft-pr.sh {WT} {BASE_BRANCH} {TITLE} {SCRATCH}/pr/{PR}.md"},
   {"id": "simplify", "agent": "claude", "model": "claude-opus-5-5", "effort": "high", "worktree": "path:{WT}", "spec": "simplify.md",
    "checks": ["{CHECKS}/files-untouched.sh {WT} {HEAD_BEFORE} {HEAD_AFTER} tests/ pytest.ini", "{CHECKS}/pr-head.sh {WT} {PR_URL}"]},
   {"id": "review_codex", "group": "review", "agent": "codex", "worktree": "path:{WT}", "spec": "review-codex.md", "readonly": true,

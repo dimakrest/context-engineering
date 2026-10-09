@@ -1107,6 +1107,13 @@ class FlowValidation(FlowCase):
         self.assertEqual([l for l in lines if "NOPE" in l], ["profile mine: vars.X: {NOPE} is not a variable",   # its layer, once
                                                              "template one: vars.Y: {NOPE} is not a variable"])
 
+    def test_a_shared_value_that_fails_for_some_prs_only_names_them(self):
+        self.template("one", [self.worker("a")], vars={"Y": "{Z}/y"})
+        lines = self.refused(self.pr("A1", vars={"Z": "z"}), self.pr("C1"), self.pr("B1"))   # A1 gives Z itself
+        self.assertIn("template one: vars.Y: {Z} is not a variable for C1, B1", lines)
+        self.assertEqual(len([l for l in lines if "{Z}" in l]), 1)
+        self.assertIn("template one: vars.Y: {Z} is not a variable", self.refused(self.pr("C1"), self.pr("B1")))   # all of them
+
     def test_a_steps_override_the_definition_validator_rejects(self):
         lines = self.refused(self.pr("A1", steps=[{"id": "a", "spec": "w.md"}, self.worker("b", spec="gone.md")]))
         self.assertIn("A1: step a: a worker step needs an agent", lines)
@@ -1168,6 +1175,18 @@ class FlowVersions(FlowCase):
         self.assertEqual([p["id"] for p in self.copy()["prs"]], ["B1", "A1"])
         text = self.show()
         self.assertLess(text.index("  B1 · "), text.index("  A1 · "))
+
+    def test_a_permuted_after_or_a_respelled_profile_is_the_same_version(self):
+        (self.tmp / "prof").mkdir()
+        for name in ("p", "q"):
+            (self.tmp / "prof" / f"{name}.json").write_text(json.dumps({"name": name, "vars": {"Q": name}}))
+        self.apply(self.pr("A1"), self.pr("C1"), self.pr("B1", after=["A1", "C1"]), profile="prof/p.json")
+        rc, out = self.apply(self.pr("A1"), self.pr("C1"), self.pr("B1", after=["C1", "a1"]), profile="./prof/../prof/p.json")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("OK flow v1: no change", out)                    # the same set of PRs, the same file
+        rc, out = self.apply(self.pr("A1"), self.pr("C1"), self.pr("B1", after=["C1"]), profile="prof/q.json")
+        self.assertIn("  - profile prof/p.json -> prof/q.json\n", out)
+        self.assertIn("  - B1: after A1, C1 -> C1\n", out)
 
     def test_scratch_from_the_environment_fills_in_and_stays(self):
         self.template("one", [self.worker("a", worktree="path:{SCRATCH}")])

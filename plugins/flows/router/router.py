@@ -1841,7 +1841,8 @@ def flow_build(S: State, raw: object, base_dir: Path) -> "tuple[dict, list[str]]
         if len(names) > 1:
             problems.append(f"{names[0]}: the id is in the flow {len(names)} times ({', '.join(names)}); upper and lower case are the same")
     graph: "dict[str, list[str]]" = {}
-    seen_problems: "set[str]" = set()
+    shared: "dict[str, tuple[int, list[str]]]" = {}   # a line of a shared layer: its place in problems, the PRs it fails for
+    rendered: "list[str]" = []
     for p in prs:
         pid = p.get("id")
         if not isinstance(pid, str) or not pid:
@@ -1873,13 +1874,21 @@ def flow_build(S: State, raw: object, base_dir: Path) -> "tuple[dict, list[str]]
         if t not in resolved["templates"] or problems and any(x.startswith(f"{pid}: vars") for x in problems):
             continue
         eff = flow_effective(S, f, p)
+        rendered.append(pid)
         for line in eff["problems"]:   # a flow, template or profile value is named once, not once per PR
-            if line not in seen_problems:
-                seen_problems.add(line)
+            if line.startswith(f"{pid}: "):
                 problems.append(line)
+                continue
+            if line not in shared:
+                shared[line] = (len(problems), [])
+                problems.append(line)
+            shared[line][1].append(pid)
         st = read_json(chain_dir(S, pid) / "state.json") or {}
         settled = {s["id"] for s in st.get("steps") or [] if s.get("status") != "pending"}
         problems += [f"{pid}: {x}" for x in def_problems(eff, settled)[2]]
+    for line, (i, pids) in shared.items():   # it fails only where a PR's own vars do not give the name: say which
+        if len(pids) < len(rendered):
+            problems[i] = f"{line} for {', '.join(pids)}"
     problems += cycles(graph, {k: v[0] for k, v in ids.items()})
     return f, problems
 
@@ -1954,8 +1963,10 @@ def flow_changes(S: State, old: "dict | None", new: dict) -> "list[str]":
     """What a new version changes, in plain words, one line each. Empty: the file is the version it would replace."""
     if old is None:
         return [f"flow created: {len(new['prs'])} PRs · slots {new['slots']} · start {new['start']}"] + [pr_added(p) for p in new["prs"]]
-    out = [change(k, old.get(k), new.get(k)) for k in ("title", "slots", "start", "profile") if old.get(k) != new.get(k)]
+    out = [change(k, old.get(k), new.get(k)) for k in ("title", "slots", "start") if old.get(k) != new.get(k)]
     ro, rn = old["resolved"], new["resolved"]
+    if (ro.get("profile") or {}).get("path") != (rn.get("profile") or {}).get("path"):   # the file, not its spelling
+        out.append(change("profile", old.get("profile") if ro.get("profile") else None, new.get("profile") if rn.get("profile") else None))
     if (ro.get("env") or {}).get("SCRATCH") != (rn.get("env") or {}).get("SCRATCH"):
         out.append(change("SCRATCH from the environment", (ro.get("env") or {}).get("SCRATCH"), (rn.get("env") or {}).get("SCRATCH")))
     out += dict_changes("profile: vars.", (ro.get("profile") or {}).get("vars"), (rn.get("profile") or {}).get("vars"))
@@ -1981,7 +1992,7 @@ def flow_changes(S: State, old: "dict | None", new: dict) -> "list[str]":
         if q["id"] != pid:
             out.append(f"{q['id']} renamed {pid}")
         out += [change(f"{pid}: {k}", q.get(k), p.get(k)) for k in ("part", "title", "base", "template") if q.get(k) != p.get(k)]
-        if [x.lower() for x in q.get("after") or []] != [x.lower() for x in p.get("after") or []]:
+        if sorted(x.lower() for x in q.get("after") or []) != sorted(x.lower() for x in p.get("after") or []):   # a set
             out.append(change(f"{pid}: after", ", ".join(q.get("after") or []) or "-", ", ".join(p.get("after") or []) or "-"))
         out += dict_changes(f"{pid}: vars.", q.get("vars"), p.get("vars"))
         if isinstance(q.get("steps"), list) != isinstance(p.get("steps"), list):

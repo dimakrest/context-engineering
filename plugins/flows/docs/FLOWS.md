@@ -624,11 +624,19 @@ A check prints `NOT OK …` and pauses its chain: the ring shows every check lin
   ready or switches the account, the getting-started page requests nothing. 12 mutants of the skills and docs,
   each killed by its named test.
 - Review round 1: `Skills` grows to 17 (207 tests). The command check reads `flow <sub>` against `router.py flow
-  --help` and every flag of a mention, past its placeholders (167 mentions, 86 flags); the env table's "Read by"
-  column equals the files that read each variable; the eval's `three-prs-in-order` grader checks the order and the
-  `after` edges (the reference flow holds; B1 and C1 swapped are refused); the getting-started page shows only the
-  commands in `tests/fixtures/page-commands.txt`, and with `FLOWS_PILOT_LOG=<the pilot's commands.log>` each is
-  matched to a line of that log (skipped without it). 5 mutants, each killed by its named test.
+  --help` and every flag of a mention, past its placeholders, in every skill, doc and the README, each wrong one a
+  line of its own; the env table's "Read by" column equals the files that read each variable; the eval's
+  `three-prs-in-order` grader checks the order and the `after` edges (the reference flow holds; B1 and C1 swapped are
+  refused); the getting-started page shows only the commands in `tests/fixtures/page-commands.txt`, and with
+  `FLOWS_PILOT_LOG=<the pilot's commands.log>` each is matched to a line of that log (skipped without it). 5 mutants,
+  each killed by its named test.
+- Review round 2: the page-command check reads every `<pre>` line and every `<code>` on the page, whatever the
+  program. A line is a command unless it is an assignment, JSON, a name or path alone, a placeholder alone, an inline
+  fragment of a listed command (`flow apply`, `collect --all`, `router.py wait`), or marked `class="out"`, which the
+  page puts on what was printed or recorded. The skills `/flows:flow-report` and `/flows:flow-plan` are marked "not
+  run in the pilot" on the page, at each place it names them, and in the list. 4 mutants (a `python3` line and
+  another program's line in a `<pre>`, a command in a prose `<code>`, the mark taken off flow-plan in the list), each
+  killed with one line naming the command.
 - `python3 tests/test_page.py`: 11 skipped under the system python3; 11 tests, green, with Playwright 1.63 in a scratch venv.
 - `claude plugin eval` (2.1.295) cannot run the flow-plan case here: it refuses a Bash-granting case while
   `~/.aws/config` has a `credential_process`. The case stays in `evals/flow-plan/`.

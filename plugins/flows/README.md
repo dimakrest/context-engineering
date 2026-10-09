@@ -331,10 +331,10 @@ write in the history, and asks for a note. Then the apply. The answers:
 | `POST /flow` | `{"base": <version>, "by", "note", "flow": {...}, "dry_run": false}`. `200 {"ok": true, "version", "changes", "started", "dry_run"}`; `409 {"ok": false, "reason", "current": <the copy>}`; `422 {"ok": false, "problems": [...]}`, nothing changed |
 
 Anything else is a 404. The server answers only a `Host` of `127.0.0.1:<port>` or `localhost:<port>`, and a `POST`
-only from that origin with a JSON body (403 and 415 otherwise; 400 for a `Content-Length` that is not a number), so another site open in the same browser can neither
-read the run nor apply a flow. Each request has its own thread with a 30 s socket timeout, and the body is read before
-`flow.lock` is taken, so a slow client holds nothing. A handler that raises answers 500 and writes the traceback in
-`mailbox.log`; the mail loop never waits for the server.
+only from that origin with a JSON body (403 and 415 otherwise; 400 for a `Content-Length` that is not a number), so
+another site open in the same browser can neither read the run nor apply a flow. Each request has its own thread with
+a 30 s socket timeout, and the body is read before `flow.lock` is taken, so a slow client holds nothing. A handler that
+raises answers 500 and writes the traceback in `mailbox.log`; the mail loop never waits for the server.
 
 A poll draws the page again only when the run changed, and then in place: a PR, a step chip and a palette role stay
 the same elements wherever they move, and so does every element whose place did not change. A click, a drag or an

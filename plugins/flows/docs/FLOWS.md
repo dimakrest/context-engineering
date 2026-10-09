@@ -38,7 +38,7 @@ versioned file, the flow, that says which PRs run, in what order, with which ste
 | You want to know afterwards where the time, the tokens and the interruptions went | Nobody will read the numbers |
 | You are in Orca, with its orchestration CLI | No Orca: the router speaks only to `orca orchestration` |
 
-A [mission](../../missions/docs/MISSIONS.md) and a flow answer different questions. A mission pins down what
+A mission (the `missions` plugin of the same marketplace, and its guide MISSIONS.md) and a flow answer different questions. A mission pins down what
 "done" means before the code and grades it blind. A flow carries many PRs through a fixed chain of roles on Orca
 workers. A flow's PR can follow a mission's contract.
 
@@ -594,6 +594,35 @@ A check prints `NOT OK …` and pauses its chain: the ring shows every check lin
 - A reboot is untested; the recovery is by construction (state on disk) and by the killed-process tests.
 
 ## Tested how (history)
+
+2026-10-09, the product surface and the smoke pilot on real Orca (M5).
+
+- The pilot, Orca 1.4.223, from a worker terminal with a Run of its own: one PR on `router/templates/smoke.json`
+  with the `python` profile, its workers in a throwaway worktree (`path:{WT}`), slots 1, start auto. Five Sonnet
+  workers: alpha and beta at once, a question answered with `reply`, a script step, flaky failed and retried with a
+  note, the gate passed with `resume`; the chain took 2 min 37 s. In the Orca tab (`orca snapshot`, `click`, `drag`,
+  `fill`), with no reload: a pending chip dragged and applied as v2, then a second drag applied as v3; the header
+  showed each version and `flow history` lists both `by page`. Every click reached the page.
+- The pilot found a collector miss: five workers one after another in one worktree began within 3 min of each
+  other, so `collect --all` after the run matched 1 of 5 sessions (4 ambiguous). Each session's first message is
+  Orca's preamble naming its dispatch; that id now singles the file out (`Collector`, 4 mutants, each killed). After
+  the fix: 5 of 5 unique, `OK collected 5 · skipped 0 · locked 0 · not settled 0 · failed 0`, and the report read
+  5 collected sessions: 157 s wall clock, 143 workers, 7 at the gate, 6 paused, 1 the rest.
+- The report's gate lesson is labelled `longest wait at a gate (raw)` on the page and in the metrics (#43 R6);
+  `metrics.golden.json` changes in that label only (`Report`, 1 mutant, killed).
+- `python3 tests/test_router.py` in a `git archive HEAD` export: 204 tests, green (188 before). The export's first run failed one: FLOWS.md
+  linked the missions guide by a path outside the plugin, which neither an export nor an installed copy has; the
+  link is text now. The new
+  class `Skills` (14) checks the skills and the docs against the code: frontmatter and length, every `router.py`
+  command and flag named is in `--help`, every path named exists, the env table equals what `router/*.py` reads,
+  the troubleshooting lines are the code's, flow-plan never writes a file the dry run rejects (the eval's reference
+  flow passes, the same with `base: main` is refused and writes nothing), flow-report says when it collected first,
+  flow-status reports the page's URL and collected of settled (as `status` prints them), no skill merges, marks
+  ready or switches the account, the getting-started page requests nothing. 12 mutants of the skills and docs,
+  each killed by its named test.
+- `python3 tests/test_page.py`: 11 skipped under the system python3; 11 tests, green, with Playwright 1.63 in a scratch venv.
+- `claude plugin eval` (2.1.295) cannot run the flow-plan case here: it refuses a Bash-granting case while
+  `~/.aws/config` has a `credential_process`. The case stays in `evals/flow-plan/`.
 
 2026-10-09, the run report (M4) with the page (M2) merged in, #42's round-2 lows, and review round 1 of the report.
 

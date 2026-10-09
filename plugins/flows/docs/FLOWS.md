@@ -623,6 +623,12 @@ A check prints `NOT OK …` and pauses its chain: the ring shows every check lin
   flow-status reports the page's URL and collected of settled (as `status` prints them), no skill merges, marks
   ready or switches the account, the getting-started page requests nothing. 12 mutants of the skills and docs,
   each killed by its named test.
+- Review round 1: `Skills` grows to 17 (207 tests). The command check reads `flow <sub>` against `router.py flow
+  --help` and every flag of a mention, past its placeholders (167 mentions, 86 flags); the env table's "Read by"
+  column equals the files that read each variable; the eval's `three-prs-in-order` grader checks the order and the
+  `after` edges (the reference flow holds; B1 and C1 swapped are refused); the getting-started page shows only the
+  commands in `tests/fixtures/page-commands.txt`, and with `FLOWS_PILOT_LOG=<the pilot's commands.log>` each is
+  matched to a line of that log (skipped without it). 5 mutants, each killed by its named test.
 - `python3 tests/test_page.py`: 11 skipped under the system python3; 11 tests, green, with Playwright 1.63 in a scratch venv.
 - `claude plugin eval` (2.1.295) cannot run the flow-plan case here: it refuses a Bash-granting case while
   `~/.aws/config` has a `credential_process`. The case stays in `evals/flow-plan/`.

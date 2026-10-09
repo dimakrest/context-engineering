@@ -56,6 +56,8 @@ claude plugin eval plugins/flows --allow-tools Bash Write Edit --runs 1   # the 
 The eval grants Bash, and `claude plugin eval` refuses a Bash-granting case on a machine whose credential files it
 cannot fence off (an AWS `credential_process`, for one). There, `python3 tests/test_router.py -k Skills` checks the
 skills instead, and `evals/flow-plan/verify.sh <run dir>` re-runs the dry run on a kept run's flow file.
+Each eval run writes `plugins/flows/evals/results/<time>/` (`aggregate-result.json`, `report.html`); the plugin's
+`.gitignore` keeps that directory out of git.
 
 Python 3.9+, standard library only. The suites need no network and no real Orca. Every assertion's history, and
 what is not tested yet, is in [FLOWS.md](docs/FLOWS.md#tested-how-history).

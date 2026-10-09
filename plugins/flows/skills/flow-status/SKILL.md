@@ -14,10 +14,11 @@ R=${CLAUDE_PLUGIN_ROOT}/router/router.py
 
 | Command | Shows | For |
 |---|---|---|
-| `$R status` | One screen: daemons, chains, the running worker's last heartbeat or the running script step, unanswered questions, the last three journal lines. | The coordinator. Start here. |
+| `$R status` | One screen: daemons, chains, the running worker's last heartbeat or the running script step, unanswered questions, how many settled workers' logs are collected, the last three journal lines. | The coordinator. Start here. |
 | `$R last [n]` | The last n rings again (default 1). | A screen lost to a compaction. |
 | `$R workers` | Orca's own view: one line per worker that is live or still owes something. | Deciding whether a silent worker is gone (`fail` needs Orca to say so). |
 | `$R progress` | Every inner PR of the plan (done, running, at a gate, paused, stopped, not started), each open PR's steps with their times and second attempts, what runs now, what waits for the coordinator. | The owner. |
+| `$R collect [--all \| --pr <pr> \| --dispatch <id>] [--dry-run]` | Gathers settled workers' logs and their session files into `logs/` (the daemon does it after each release); `--dry-run` only prints each match. | A run whose daemon was not collecting, or a `collector:` line in the journal. |
 | `open $ROUTER_STATE/progress.html` | The same view as a page that reloads itself every 15 s. | The owner, in a browser. |
 
 `$R plan <plan.json>` once makes `progress` list the PRs not started yet too:

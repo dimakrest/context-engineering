@@ -15,7 +15,7 @@ journal line and started the next worker by hand. The router does those steps. T
 something needs a decision.
 
 Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-coordinators-loop) ·
-[The flow file](#the-flow-file) · [Seeing progress](#seeing-progress) · [What rings](#what-rings) ·
+[The flow file](#the-flow-file) · [Seeing progress](#seeing-progress) · [Every worker's logs](#every-workers-logs) · [What rings](#what-rings) ·
 [A chain definition](#a-chain-definition) · [Repository profiles](#repository-profiles) ·
 [What the run provides](#what-the-run-provides) · [Checks](#checks) · [After a restart](#after-a-restart) ·
 [Tested how](#tested-how) · [Not tested, and limits](#not-tested-and-limits)
@@ -25,6 +25,7 @@ Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-
 | File | What it is |
 |---|---|
 | `router/router.py` | The mailbox daemon, the chain runner, the doorbell and the coordinator's commands. `router.py --help` prints all of it. Python 3.9+, standard library only. |
+| `router/collector.py` | Gathers each settled worker's logs whole: Orca's archive of it, its events, and the agent session file that ran it, matched and copied, with its token usage summed. See [Every worker's logs](#every-workers-logs). |
 | `router/progress.py` | Renders the owner's view: the text of `router.py progress` and `progress.html`. It reads nothing itself. |
 | `router/templates/inner-pr.json` | One inner PR of a larger change as a chain: 17 steps, two gates (contract acceptance, merge). `--dry-run` lists the steps and names anything missing. |
 | `router/specs/*.md`, `router/contract-template.md` | The 12 role specs the chain names, one per worker step, in Orca's shape (target, change, constraints, ownership, observable acceptance); `arbiter.md`, a template the coordinator fills for a test dispute; and the template every contract follows. |
@@ -32,7 +33,7 @@ Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-
 | `router/templates/smoke.json`, `router/specs/smoke-*.md` | A harmless chain that proves the router against real Orca: two workers at once, a question, a failure with a retry, a script step, a gate. |
 | `router/checks/*` | Checks that print one line, `OK …` or `NOT OK …`, and exit 0 or 1. |
 | `router/draft-pr.sh` | Opens the inner PR as a draft, so that step needs no model. Refuses `main` as the base. |
-| `tests/` | `test_router.py` (127 tests) and `fake-orca`, a stand-in for the Orca CLI. |
+| `tests/` | `test_router.py` (137 tests), `fake-orca`, a stand-in for the Orca CLI, and synthetic session files under `fixtures/collector/`. |
 | `skills/flow-run`, `skills/flow-status` | The two skills. |
 
 State lives in `$ROUTER_STATE` (default `$SCRATCH/router`, where `SCRATCH` is the run directory). `router.py --help`
@@ -269,6 +270,50 @@ plan does not name is listed last, as "not in the plan". A chain is "done" when 
 `progress.py` only renders, and `router.py` catches whatever it raises: a mistake in the view does not stop a
 daemon. The daemon's log then says `progress.html was not rewritten`.
 
+## Every worker's logs
+
+The report on a run has to say where its time and tokens went without anyone reading a transcript. Orca's archive
+of a worker is bounded (`contentComplete` false, older messages clipped); the agent's own session file is the whole
+log. So once a worker is released, the mailbox daemon starts `router/collector.py` for that dispatch in a process of
+its own. It waits for the chain to record the attempt's end and checks, then writes, under the state directory only:
+
+```
+logs/<pr>/<step>/<dispatch>/       (an ad hoc worker: logs/<pr or _none>/_adhoc/<dispatch>/)
+  meta.json        ids, attempt n, agent/model/effort (and what the start receipt said, when it differed), started,
+                   ended, outcome, flow_version, cause, worktree, head_before..head_after, the check lines, the
+                   release result, and where each file below came from
+  orca-read.json   every `worker-read --source transcript` page, cursor followed until none or a page repeats
+  events/          the dispatch's events/*.json and its liveness file
+  session.jsonl    the matched Claude Code or Codex session file, byte for byte (absent, and meta.json says why,
+                   unless exactly one file matches)
+  tokens.json      input, output, cache_creation, cache_read, by model; turns; first and last timestamp
+logs/index.jsonl   one row per dispatch, for the report: ids, agent, model, effort, times, duration_s, outcome,
+                   tokens, the session match, head range, checks_ok, Orca's contentComplete and clipping
+```
+
+| Session match | When |
+|---|---|
+| `unique` | Exactly one session file ran in the dispatch's worktree (Claude: the project directory named after it, and the `cwd` inside the file; Codex: `session_meta.cwd`) and overlaps [started − 2 min, ended + 2 min]. Of several, the only one that began within 3 min after the start. |
+| `ambiguous` | Several, and not exactly one began within 3 min of the start: the paths are recorded, nothing is copied. |
+| `none` | No such file, the worktree is unknown, or the agent is neither Claude nor Codex. |
+
+A file whose lines are all sidechain lines is never a candidate: a sidechain belongs to its parent file and is kept
+there. Nothing is guessed. `index.jsonl` and `meta.json` hold ids, paths, timestamps and counts, never transcript
+text; the copies stay in the state directory, never in a repository.
+
+```sh
+$R collect --all             # a run whose daemon was not collecting, or after a fix; a collected dispatch is skipped
+$R collect --dispatch <id> --force   # collect one again
+$R collect --dry-run         # the session match per dispatch and the counts; copies and writes nothing
+$R status                    # "logs N/M settled dispatches collected"
+```
+
+A collector that fails journals `collector: <dispatch>: <why>`; the daemon never waits for one. `ROUTER_COLLECT=0`
+turns the automatic collection off; `FLOWS_CLAUDE_PROJECTS` (default `~/.claude/projects`) and
+`FLOWS_CODEX_SESSIONS` (default `~/.codex/sessions`) say where the session files are. When Orca's archive answers
+`archive_not_ready` (the code the fake uses: the real CLI's is not known yet) the first page is asked for again three
+times, two seconds apart; then `orca-read.json` says `"status": "not available"`, never an empty transcript.
+
 ## What rings
 
 | Event | Handled by | The coordinator sees |
@@ -437,6 +482,22 @@ Every script prints its header with `--help` and exits 2 on bad usage.
 
 ## Tested how
 
+2026-10-09, the collector (M3).
+
+- `cd plugins/flows && python3 tests/test_router.py`: 137 tests, green (127 before). The 10 new ones are the class
+  `Collector`: a 3-page Orca archive kept whole and in order, and a cursor that names itself ends the read;
+  `archive_not_ready` asked again 3 times, then "not available"; the overlapping Claude file copied byte for byte
+  (the decoy two hours earlier, a sidechain-only file and a file with another `cwd` are no candidates) and its
+  tokens equal to the sums worked out by hand from the fixture, a Codex rollout with and without token counts; two
+  candidates ambiguous with nothing copied, no candidate, no worktree, an unsupported agent, and a second
+  candidate that began late leaving the match unique; collecting twice, and again with `--force`, gives the same
+  bytes; no sentinel from the fixture transcripts in `index.jsonl` or any `meta.json`; `--dry-run` writes
+  nothing; and on the daemon: a released worker collected once with its check lines, a failing collector
+  journaled while the second worker still settles, and `ROUTER_COLLECT=0`.
+- The matcher over a real run's records (the group-B run, read-only, `--dry-run`): 258 settled dispatches, 152
+  unique, 10 ambiguous, 96 none, 8 not settled. All 96 are ad hoc workers started with `--worktree current`, whose
+  worktree the router did not record before this change; it records it now.
+
 2026-10-09, the flow file (M1a), review round 1.
 
 - `cd plugins/flows && python3 tests/test_router.py`: 127 tests, green (121 before). The 6 new ones:
@@ -534,8 +595,12 @@ The entries below predate the move: `chain-inner-pr.json` and `chain-smoke.json`
 
 ## Not tested, and limits
 
-- No flow has run on real Orca. The page that edits a flow (M2), creating the worktrees a flow names, and the
-  collector are not part of the flow file yet.
+- No flow has run on real Orca. The page that edits a flow (M2) and creating the worktrees a flow names are not
+  part of the flow file yet.
+- The collector has not read a real Orca archive: `worker-read` is answered by the fake, in the shape documented
+  above. A Claude session's subagent files (`<session>/subagents/`) are counted in `meta.json`, not copied, and
+  their tokens are not in `tokens.json`. Codex reports no cache writes, and older Codex clients no token counts:
+  those fields say "not recorded". No token prices: the report (M4) does that.
 - The progress page has never shown a real Orca run.
 - The view is local: a file and a command. Nothing is posted on the epic and nobody is notified.
 - `stop <pr>` does not end a script step: the runner finishes the script first (a CI wait can take 90 minutes),

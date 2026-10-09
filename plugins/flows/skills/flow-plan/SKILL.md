@@ -27,13 +27,15 @@ Ask for what is missing in one message, not one question at a time.
 
 ## 1. Read the lessons of the last run, if there is one
 
-When the owner names an earlier run's state directory, read its report without writing into it:
+When the owner names an earlier run's state directory, build its report into a fresh directory, without writing into
+the old state:
 
 ```sh
-python3 ${CLAUDE_PLUGIN_ROOT}/router/report.py --state <old state> --out /tmp/last-run.html --metrics /tmp/last-run.json
+OUT=$(mktemp -d)
+ROUTER_STATE=<old state> $R report --out $OUT/last-run.html --metrics $OUT/last-run.json
 ```
 
-and read `lessons` in the JSON: the slowest step, the most-retried step, the
+and read `lessons` in `$OUT/last-run.json`: the slowest step, the most-retried step, the
 role that asked the most questions and the longest wait at a gate, each with the record it comes from. The gate lesson
 is the raw wait, from `paused: blocked` to the coordinator's line; the time split's "at gates" is that wait less the
 time workers ran. Say which lesson changes this plan (a step that always needs a retry gets a higher effort; a role

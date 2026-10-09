@@ -41,7 +41,9 @@ $R chain <pr> --def $T/inner-pr.json WT=<worktree> ISSUE=<n> BASE_BRANCH=<branch
 
 Dry-run first: it lists the steps and names every variable with no value. `BASE_BRANCH` has no default on
 purpose, so a chain never merges into the last run's branch. `"variables"` in the template says what each
-one means (`RUN_CONTEXT`, `TESTS`, `LEDGER`, `GREEN_PINNED`, `IMPL_EFFORT`, `EXTRA_SUITE`, `GOLDENS`). At most
+one means (`RUN_CONTEXT`, `TESTS`, `LEDGER`, `GREEN_PINNED`, `IMPL_EFFORT`). The repository's commands and
+guarded paths come from a profile, `${CLAUDE_PLUGIN_ROOT}/router/profiles/<name>.json`: give its `vars` as `K=V` too (the
+README's "Repository profiles"); without them the dry run names `{TEST_CMD}` and the rest. At most
 `ROUTER_MAX_CHAINS` (default 2) chains run at once; a chain holds its slot until its last step, also at a
 gate. `$T/smoke.json` with `OUT=<empty dir>` proves the router against real Orca on harmless work.
 

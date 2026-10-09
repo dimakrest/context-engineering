@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 import unittest
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
 TESTS = Path(__file__).resolve().parent
@@ -24,6 +25,13 @@ KIT = TESTS.parent / "router"
 ROUTER = str(KIT / "router.py")
 CHECKS = KIT / "checks"
 TEMPLATES = KIT / "templates"
+PROFILES = KIT / "profiles"
+PROFILE_VARS = ("RULES", "TEST_CMD", "UNIT_DIRS", "TEST_PATHS", "TEST_CONFIG", "COPY_SETUP", "LINT_CMD", "FROZEN_PATHS",
+                "EXTRA_SUITE", "COMMIT_CMD")
+
+
+def profile(name):
+    return json.loads((PROFILES / f"{name}.json").read_text())
 
 
 class RouterCase(unittest.TestCase):
@@ -958,7 +966,7 @@ class Templates(RouterCase):
     def test_inner_pr_without_a_base_branch_is_refused_before_anything_starts(self):
         self.scenario({"match": ".", "events": [self.done(0.1)], "repeat": True})
         self.R("init", ok=True)
-        given = [f"WT={self.repo()}", "ISSUE=1", "TITLE=t", f"SCRATCH={self.out}"]
+        given = [f"WT={self.repo()}", "ISSUE=1", "TITLE=t", f"SCRATCH={self.out}"] + [f"{k}={v}" for k, v in profile("python")["vars"].items()]
         rc, out = self.R("chain", "demo", "--def", str(TEMPLATES / "inner-pr.json"), *given)
         self.assertEqual(rc, 1, out)
         self.assertIn("NOT OK demo:", out)
@@ -999,13 +1007,213 @@ class Sweep(unittest.TestCase):
         for fine in ("claude-opus-5-5", "ledger-r1.md", "(B3) a group", "M01", "--tb=line"):
             self.assertFalse(self.FORBIDDEN.search(fine), fine)
 
+    # One repository's tools and paths: the specs and templates reach them through a profile's variables. "make" is
+    # also an English verb ("make every row true"), so it counts only where a command starts.
+    TOOLS = re.compile(r"pytest|\bruff\b|pyright|tests/unit|tests/integration|\bnpm\b|eslint|\btsc\b|(?:^|[`$(;&|]\s*)make\s|"
+                       r"\.venv|locked-commit|rules-worker|snapshots/", re.IGNORECASE)
+    # (file, text on the line): why that line may name a tool.
+    ALLOWED = {("specs/test-writer.md", "@pytest.mark.xfail(strict=True"):
+               "the blind test writer and the xfail-only check are pytest-only today (README); a flow for another test "
+               "runner sets TESTS= and the step is skipped"}
+
+    def test_the_tool_pattern_catches_one_repositorys_commands(self):
+        for bad in ("Pyright", "run pytest", "pytest.ini", "ruff check", "tests/unit/x", "tests/integration/bot", "npm test",
+                    "npx eslint", "npx tsc", "`make test`", "make lint", ".venv/bin/python", "locked-commit.sh",
+                    "briefs/rules-worker.md", "snapshots/a.txt"):
+            self.assertTrue(self.TOOLS.search(bad), bad)
+        for fine in ("Change: make every row of the contract true", "to make it pass", "{TEST_CMD} {UNIT_DIRS}", "tests/",
+                     "the test runner's settings", "rustc", "a ruffle"):
+            self.assertFalse(self.TOOLS.search(fine), fine)
+
+    def files(self):
+        return sorted(p for d in (KIT / "specs", TEMPLATES) for p in d.rglob("*") if p.is_file()) + [KIT / "contract-template.md"]
+
     def test_specs_and_templates_name_no_project_version_or_pr_of_a_past_run(self):
-        files = sorted(p for d in (KIT / "specs", TEMPLATES) for p in d.rglob("*") if p.is_file()) + [KIT / "contract-template.md"]
+        files = self.files()
         self.assertGreater(len(files), 15)
         hits = [f"{p.relative_to(KIT)}:{n}: {m.group(0)}" for p in files
                 for n, line in enumerate(p.read_text().splitlines(), 1) for m in self.FORBIDDEN.finditer(line)]
         hits += [f"{p.relative_to(KIT)}: in the name" for p in files if self.FORBIDDEN.search(p.name)]
         self.assertEqual(hits, [])
+
+    def test_specs_and_templates_name_no_test_runner_linter_or_script_of_one_repository(self):
+        hits, used = [], set()
+        for p in self.files():
+            rel = str(p.relative_to(KIT))
+            for n, line in enumerate(p.read_text().splitlines(), 1):
+                allowed = [key for key in self.ALLOWED if key[0] == rel and key[1] in line]
+                used.update(allowed)
+                hits += [] if allowed else [f"{rel}:{n}: {m.group(0)}" for m in self.TOOLS.finditer(line)]
+        self.assertEqual(hits, [])
+        self.assertEqual(used, set(self.ALLOWED))                     # an allowance nothing needs any more goes
+
+
+class Profiles(RouterCase):
+    """A profile carries what differs between repositories; the specs read it through variables."""
+    RUN = {"PR": "p1", "WT": "/wt", "SCRATCH": "/s", "ISSUE": "7", "TITLE": "p1: t", "BASE_BRANCH": "dev", "RUN_CONTEXT": "Ctx.",
+           "STATE": "/st", "DEF_DIR": "/k/templates", "KIT": "/k", "CHECKS": "/k/checks", "STEP": "step", "ATTEMPT": "1",
+           "HEAD_BEFORE": "hb", "NOTE": "", "CONTRACT_SHA": "sha", "PR_URL": "https://example.invalid/pr/1", "OUT": "/out",
+           "ANSWER": "PASS"}
+    NAMES = ("python", "typescript", "bell")
+    SNAPSHOTS = TESTS / "fixtures" / "profiles"
+
+    @classmethod
+    def setUpClass(cls):
+        spec = spec_from_file_location("router_under_test", ROUTER)
+        cls.rt = module_from_spec(spec)
+        spec.loader.exec_module(cls.rt)
+
+    def vars_of(self, name, **override):
+        """The profile's values as a run sees them: its {SCRATCH}, {WT} and {PR} filled in first."""
+        own = {k: self.RUN[k] for k in ("SCRATCH", "WT", "PR")}
+        return {k: self.rt.render(v, own) for k, v in dict(profile(name)["vars"], **override).items()}
+
+    def variables(self, defn, name, **override):
+        """What a step of the template sees: the run's values, the template's defaults, the profile's vars."""
+        variables = dict(self.RUN, **{k: str(v) for k, v in defn.get("vars", {}).items()})
+        variables.update(self.vars_of(name, **override))
+        for s in defn["steps"]:
+            sid = self.rt.step_var(s["id"])
+            variables.update({f"HEAD_BEFORE_{sid}": f"b-{s['id']}", f"HEAD_AFTER_{sid}": f"a-{s['id']}"})
+        return variables
+
+    def rendered(self, template, name, **override):
+        """Every worker spec of the template, rendered as the runner would: {spec name: text}."""
+        defn = json.loads((TEMPLATES / template).read_text())
+        variables = self.variables(defn, name, **override)
+        self.assertTrue(set(self.rt.STEP_VARS_EARLY) <= set(variables))
+        out = {}
+        for s in defn["steps"]:
+            if s.get("type", "worker") == "worker":
+                missing = set()
+                out[s["spec"]] = self.rt.render((KIT / "specs" / s["spec"]).read_text(), variables, missing)
+                self.assertEqual(missing, set(), f"{name}: {s['spec']}")
+        return out
+
+    def test_each_profile_has_a_name_an_about_and_every_profile_variable(self):
+        self.assertEqual(sorted(p.stem for p in PROFILES.glob("*.json")), sorted(self.NAMES))
+        for name in self.NAMES:
+            p = profile(name)
+            self.assertEqual(sorted(p), ["about", "name", "vars"], name)
+            self.assertEqual(p["name"], name)
+            self.assertGreaterEqual(p["about"].count(". "), 1, name)  # two sentences: the repository shape it fits
+            self.assertEqual(sorted(p["vars"]), sorted(PROFILE_VARS), name)
+            for k, v in p["vars"].items():
+                self.assertTrue(isinstance(v, str) and v.strip(), f"{name}: {k} is empty; write none to skip a gate")
+                self.assertTrue(set(re.findall(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", v)) <= {"SCRATCH", "WT", "PR"}, f"{name}: {k}={v}")
+                self.assertNotRegex(v, r"/Users/|/home/", f"{name}: {k} names a path of one machine")
+            for k in ("TEST_PATHS", "TEST_CONFIG"):               # a script step gets each as one shell word
+                self.assertNotIn(" ", p["vars"][k], f"{name}: {k}")
+
+    def test_the_template_documents_every_profile_variable_and_defaults_none(self):
+        defn = json.loads((TEMPLATES / "inner-pr.json").read_text())
+        self.assertEqual([k for k in PROFILE_VARS if k in defn["vars"]], [])   # a default would hide a missing profile
+        self.assertEqual([k for k in PROFILE_VARS if k not in defn["variables"]], [])
+        self.assertNotIn("GOLDENS", json.dumps(defn))                         # FROZEN_PATHS replaced it
+
+    def test_every_spec_renders_with_each_profile_and_leaves_no_placeholder(self):
+        for name in self.NAMES:
+            for template in ("inner-pr.json", "smoke.json"):
+                for spec, text in self.rendered(template, name).items():
+                    self.assertEqual(self.rt.VAR_RE.findall(text), [], f"{name}: {spec}")
+
+    def test_the_validator_and_the_implementer_carry_the_profiles_commands(self):
+        for name in self.NAMES:
+            v, specs = self.vars_of(name), self.rendered("inner-pr.json", name)
+            for spec in ("validator.md", "implementer.md"):
+                self.assertIn(f"`{v['TEST_CMD']}", specs[spec], f"{name}: {spec}")
+                for k in ("LINT_CMD", "FROZEN_PATHS"):
+                    if v[k] != "none":
+                        self.assertIn(v[k], specs[spec], f"{name}: {spec}: {k}")
+            self.assertIn(f"{v['TEST_CMD']} {v['UNIT_DIRS']}", specs["implementer.md"])
+            if v["RULES"] == "none":
+                self.assertIn("Rules file: none. When that is a path, read it", specs["validator.md"])
+            else:
+                self.assertIn(f"Rules file: {v['RULES']}. When that is a path, read it", specs["validator.md"])
+
+    def test_a_gate_set_to_none_is_skipped_and_reported_never_run(self):
+        specs = self.rendered("inner-pr.json", "python", LINT_CMD="none", FROZEN_PATHS="none", EXTRA_SUITE="none")
+        validator, implementer = specs["validator.md"], specs["implementer.md"]
+        self.assertIn('(3) the extra suite, `none`: when that is none, skip the gate and write "skipped: no extra suite"', validator)
+        self.assertIn('(4) the lint gate, `none`: when that is none, skip the gate and write "skipped: no lint command"', validator)
+        self.assertIn('(5) the frozen paths, none: when that is none, skip the gate and write "skipped: no frozen paths"', validator)
+        self.assertIn("the lint gate the validator runs, `none`, unless that is none", implementer)
+        self.assertIn("Frozen paths: none. When that is not none, leave them unchanged", implementer)
+        for text in (validator, implementer):                         # every `none` stands right before its guard
+            for m in re.finditer(r"`none`", text):
+                around = text[m.start() - 7:m.end() + 30]
+                self.assertRegex(around, r"`none`(?::|,) (?:when|unless) that is none", around)
+
+    # A profile may set these to none. A spec that names one must guard it where it stands ("`X`: when that is none,
+    # skip", "Rules file: X. When that is a path, read it"), or the worker is told to run, read or edit "none".
+    NONEABLE = ("RULES", "COPY_SETUP", "LINT_CMD", "FROZEN_PATHS", "EXTRA_SUITE")
+    GUARD = re.compile(r"`?[:,.;] (?:when|When|unless) that is (?:none|not none|a path)\b")
+
+    def test_no_spec_tells_the_worker_to_run_read_or_edit_a_variable_set_to_none(self):
+        mark = "\x00none\x00"                                       # where a none was put in, unlike a "none" of prose
+        cases = [(name, {}) for name in self.NAMES] + [("python", {k: "none" for k in self.NONEABLE})]
+        for name, override in cases:
+            v = self.vars_of(name, **override)
+            nones = {k: mark for k in self.NONEABLE if v[k] == "none"}
+            seen = 0
+            for template in ("inner-pr.json", "smoke.json"):
+                for spec, text in self.rendered(template, name, **dict(override, **nones)).items():
+                    for m in re.finditer(mark, text):
+                        seen += 1
+                        around = text[m.start() - 60:m.end() + 40].replace(mark, "none")
+                        self.assertRegex(text[m.end():m.end() + 40].replace(mark, "none"), "^" + self.GUARD.pattern,
+                                         f"{name}: {spec}: an unguarded none: ...{around}...")
+                    plain = text.replace(mark, "none")
+                    rules = f"Rules file: {v['RULES']}. When that is a path, read it before anything else"
+                    self.assertEqual(plain.count("Rules file:"), plain.count(rules), f"{name}: {spec}")
+            self.assertGreater(seen, 0, name)                             # each case puts at least one none in
+
+    def test_the_template_checks_guard_the_profiles_test_files(self):
+        defn = json.loads((TEMPLATES / "inner-pr.json").read_text())
+        steps = {s["id"]: s for s in defn["steps"]}
+        before = {"simplify": "{CHECKS}/files-untouched.sh {WT} {HEAD_BEFORE} {HEAD_AFTER} tests/ pytest.ini",
+                  "fix_code": "{CHECKS}/files-untouched.sh {WT} {HEAD_BEFORE} {HEAD_AFTER} tests/ pytest.ini",
+                  "implement": "{CHECKS}/files-untouched.sh {WT} {HEAD_BEFORE} {HEAD_AFTER} pytest.ini"}
+        typescript = {"simplify": " hb ha ':(glob)**/*.test.ts' vitest.config.ts",
+                      "fix_code": " hb ha ':(glob)**/*.test.ts' vitest.config.ts", "implement": " hb ha vitest.config.ts"}
+        for name in self.NAMES:
+            variables = dict(self.variables(defn, name), HEAD_AFTER="ha")
+            for sid in before:
+                missing = set()
+                untouched = [self.rt.render(c, variables, missing, shell=True) for c in steps[sid]["checks"]
+                             if "files-untouched.sh" in c]
+                self.assertEqual((len(untouched), missing), (1, set()), f"{name}: {sid}")
+                if name == "typescript":
+                    self.assertTrue(untouched[0].endswith(typescript[sid]), f"{name}: {sid}: {untouched[0]}")
+                else:                                                 # byte for byte the check before profiles
+                    self.assertEqual(untouched[0], self.rt.render(before[sid], variables, shell=True), f"{name}: {sid}")
+
+    def test_rendered_validator_and_implementer_match_their_snapshots(self):
+        update = os.environ.get("FLOWS_UPDATE_SNAPSHOTS") == "1"
+        for name in self.NAMES:
+            specs = self.rendered("inner-pr.json", name)
+            for spec in ("validator.md", "implementer.md"):
+                path = self.SNAPSHOTS / name / spec
+                if update:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(specs[spec].encode())
+                self.assertEqual(specs[spec].encode(), path.read_bytes(),
+                                 f"{path} differs: FLOWS_UPDATE_SNAPSHOTS=1 python3 tests/test_router.py -k snapshots")
+
+    def test_a_chain_without_a_profile_is_refused_naming_test_cmd_and_passes_with_one(self):
+        given = [f"WT={self.repo()}", "ISSUE=1", "TITLE=t", "BASE_BRANCH=dev", f"SCRATCH={self.out}"]
+        rc, out = self.R("chain", "demo", "--def", str(TEMPLATES / "inner-pr.json"), "--dry-run", *given)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NOT OK demo:", out)
+        self.assertIn("no value for {TEST_CMD}", out)
+        named = set(re.findall(r"no value for \{([A-Z_]+)\}", out))
+        self.assertTrue(named <= set(PROFILE_VARS), named)              # nothing but the profile is missing
+        self.assertGreaterEqual(len(named), 8, named)                   # router.py prints the first 20 problems only
+        rc, out = self.R("chain", "demo", "--def", str(TEMPLATES / "inner-pr.json"), "--dry-run", *given,
+                         *[f"{k}={v}" for k, v in profile("python")["vars"].items()])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("OK demo: 17 steps, dry run, nothing created", out)
+        self.assertFalse((self.state / "chains" / "demo").exists())
 
 
 class ProgressView(unittest.TestCase):

@@ -1,0 +1,16 @@
+{
+ "name": "bell",
+ "about": "The Python service the router was first written for: pytest under a shared test lock, ruff and Pyright through a lint script, a rules file every worker reads, and golden snapshots no PR may change unless its contract says so. The run directory's bin/ holds its scripts (locked-commit.sh, pytest-limited.sh, bounded.sh, ci-lint-changed.sh), copied there by the coordinator before the first chain.",
+ "vars": {
+  "RULES": "{SCRATCH}/briefs/rules-worker.md",
+  "TEST_CMD": "PYTEST_PY={WT}/.venv/bin/python {SCRATCH}/bin/bounded.sh 600 {SCRATCH}/bin/pytest-limited.sh -q",
+  "UNIT_DIRS": "tests/unit",
+  "TEST_PATHS": "tests/",
+  "TEST_CONFIG": "pytest.ini",
+  "COPY_SETUP": "none",
+  "LINT_CMD": "{SCRATCH}/bin/ci-lint-changed.sh \"$BASE\"",
+  "FROZEN_PATHS": "tests/integration/bot/snapshots/",
+  "EXTRA_SUITE": "PYTEST_PY={WT}/.venv/bin/python {SCRATCH}/bin/bounded.sh 600 {SCRATCH}/bin/pytest-limited.sh .claude/skills/pipecat-upgrade/abi/ -n 0 -q -rfE --tb=line -p no:cacheprovider",
+  "COMMIT_CMD": "{SCRATCH}/bin/locked-commit.sh"
+ }
+}

@@ -24,6 +24,9 @@ from pathlib import Path
 TESTS = Path(__file__).resolve().parent
 KIT = TESTS.parent / "router"
 ROUTER = str(KIT / "router.py")
+COLLECTOR = str(KIT / "collector.py")
+FIXTURES = TESTS / "fixtures" / "collector"
+SENTINEL = "SENTINEL-c0ffee-not-for-the-index"   # in every fixture transcript; never in index.jsonl or a meta.json
 CHECKS = KIT / "checks"
 TEMPLATES = KIT / "templates"
 PROFILES = KIT / "profiles"
@@ -48,11 +51,15 @@ class RouterCase(unittest.TestCase):
         self.env = dict(os.environ, ROUTER_STATE=str(self.state), FAKE_ORCA_DIR=str(self.fake),
                         ORCA_CLI_COMMAND=str(TESTS / "fake-orca"), ROUTER_WAIT_MS="300", ROUTER_POLL_S="0.05",
                         ROUTER_SILENT_MIN=self.silent_min, ROUTER_REGISTRY_WAIT_S="0.3",
-                        ORCA_TERMINAL_HANDLE="term_fake", ORCA_PANE_KEY="pane_fake")
+                        ORCA_TERMINAL_HANDLE="term_fake", ORCA_PANE_KEY="pane_fake",
+                        # a released worker's logs are collected in every test: never from this machine's sessions
+                        FLOWS_CLAUDE_PROJECTS=str(self.tmp / "sessions" / "claude"),
+                        FLOWS_CODEX_SESSIONS=str(self.tmp / "sessions" / "codex"), FLOWS_ORCA_RETRY_S="0.05")
         self.env.pop("SCRATCH", None)
 
     def tearDown(self):
         self.R("stop", "--all")
+        subprocess.run(["pkill", "-f", f"collector.py collect --state {self.state}"], capture_output=True)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     # -- helpers
@@ -1805,6 +1812,213 @@ class Profiles(RouterCase):
         self.assertEqual(rc, 0, out)
         self.assertIn("OK demo: 17 steps, dry run, nothing created", out)
         self.assertFalse((self.state / "chains" / "demo").exists())
+
+
+class Collector(RouterCase):
+    """collector.py: a settled dispatch's logs, its Orca archive and its agent session file, under logs/."""
+    CLAUDE_WT, CODEX_WT = "/work/wt-fixture", "/work/wt-codex"
+    MAIN = "claude/-work-wt-fixture/11111111-aaaa-4aaa-8aaa-000000000001.jsonl"
+    CODEX = "codex/2026/01/10/rollout-2026-01-10T11-00-05-55555555-eeee-4eee-8eee-000000000005.jsonl"
+
+    def setUp(self):
+        super().setUp()
+        self.sessions = self.tmp / "sessions"
+        shutil.copytree(FIXTURES, self.sessions)
+        self.state.mkdir()
+        self.scenario()
+
+    def seed(self, dispatch, pr="p1", step="implement", wt=CLAUDE_WT, agent="claude", model="claude-opus-5-5",
+             started="2026-01-10T10:00:00Z", ended="2026-01-10T10:30:00Z", outcome="succeeded", checks=("OK tests pass",)):
+        """The files the router leaves for one settled worker step, as router.py writes them."""
+        st_path = self.state / "chains" / pr / "state.json"
+        st = json.loads(st_path.read_text()) if st_path.exists() else {"pr": pr, "status": "running", "vars": {"WT": wt}, "steps": []}
+        att = {"n": 1, "started": started, "head_before": "a" * 40, "head_at_start": "a" * 40, "flow_version": 2, "cause": "first",
+               "title": f"{pr} {step}", "task": f"task_{dispatch}", "dispatch": dispatch, "ended": ended, "outcome": outcome,
+               "report": "", "head_after": "b" * 40, "subject": f"done {SENTINEL}", "summary": f"I did it. {SENTINEL}",
+               "release": "released (closed_agent_terminal)", "checks": list(checks)}
+        st["steps"].append({"id": step, "status": "done", "attempts": [att],
+                            "def": {"id": step, "agent": agent, "model": model, "effort": "high", "worktree": "path:{WT}", "spec": "w.md"}})
+        st_path.parent.mkdir(parents=True, exist_ok=True)
+        st_path.write_text(json.dumps(st))
+        (self.state / "dispatches").mkdir(exist_ok=True)
+        (self.state / "dispatches" / f"{dispatch}.json").write_text(json.dumps(
+            {"dispatch": dispatch, "task": f"task_{dispatch}", "pr": pr, "step": step, "title": f"{pr} {step}", "started": started,
+             "settled": ended, "outcome": outcome}))
+        ev = self.state / "events" / dispatch
+        ev.mkdir(parents=True)
+        (ev / f"{re.sub('[^0-9]', '', ended)}-worker_done-msg_{dispatch}.json").write_text(json.dumps(
+            {"message": {"id": f"msg_{dispatch}", "type": "worker_done", "subject": "done", "body": f"Summary. {SENTINEL}",
+                         "created_at": ended}, "payload": {"outcome": outcome}, "received": ended, "release": "released (closed_agent_terminal)"}))
+        (self.state / "liveness").mkdir(exist_ok=True)
+        (self.state / "liveness" / dispatch).write_text(f"{started}\timplementing\n")
+
+    def collect(self, *args):
+        p = subprocess.run([sys.executable, COLLECTOR, "collect", "--state", str(self.state), "--claude-projects",
+                            str(self.sessions / "claude"), "--codex-sessions", str(self.sessions / "codex"),
+                            "--orca", str(TESTS / "fake-orca")] + list(args), capture_output=True, text=True, env=self.env, timeout=60)
+        return p.returncode, p.stdout + p.stderr
+
+    def logs(self, dispatch, pr="p1", step="implement"):
+        return self.state / "logs" / pr / step / dispatch
+
+    def meta(self, dispatch, **kw):
+        return json.loads((self.logs(dispatch, **kw) / "meta.json").read_text())
+
+    def index(self):
+        return [json.loads(l) for l in (self.state / "logs" / "index.jsonl").read_text().splitlines()]
+
+    def reads(self):
+        return (self.fake / "reads.log").read_text().splitlines()
+
+    def test_a_three_page_transcript_is_collected_whole_and_in_order(self):
+        msgs = lambda *ids: [{"id": i, "role": "assistant", "blocks": [{"type": "text", "text": SENTINEL}]} for i in ids]
+        (self.fake / "scenario.json").write_text(json.dumps({"rules": [], "reads": [
+            {"match": "ctx_three", "pages": [{"messages": msgs("m1", "m2")}, {"messages": msgs("m3", "m4")},
+                                             {"messages": msgs("m5"), "clipping": ["message_limit_or_scan_window", "transcript_payload"]}]},
+            {"match": "ctx_loop", "loop": True, "pages": [{"messages": msgs("m1")}, {"messages": msgs("m2")}]}]}))
+        self.seed("ctx_three")
+        self.seed("ctx_loop", step="validator")
+        rc, out = self.collect("--all")
+        self.assertEqual(rc, 0, out)
+        read = json.loads((self.logs("ctx_three") / "orca-read.json").read_text())
+        self.assertEqual([[m["id"] for m in p["transcript"]["messages"]] for p in read["pages"]], [["m1", "m2"], ["m3", "m4"], ["m5"]])
+        self.assertEqual((read["status"], read["messages"], read["contentComplete"]), ("ok", 5, False))
+        self.assertEqual(read["clipping"], ["message_limit_or_scan_window", "transcript_payload"])
+        self.assertEqual([l for l in self.reads() if l.startswith("ctx_three")], ["ctx_three -", "ctx_three cur1", "ctx_three cur2"])
+        loop = json.loads((self.logs("ctx_loop", step="validator") / "orca-read.json").read_text())
+        self.assertEqual((len(loop["pages"]), loop["stopped"]), (2, "a cursor repeated"))   # a cursor that names itself ends it
+        self.assertEqual(next(r for r in self.index() if r["dispatch"] == "ctx_three")["orca"], {"contentComplete": False, "clipping": ["message_limit_or_scan_window", "transcript_payload"]})
+
+    def test_an_archive_not_ready_is_asked_again_then_recorded_as_not_available(self):
+        (self.fake / "scenario.json").write_text(json.dumps({"rules": [], "reads": [
+            {"match": "ctx_late", "not_ready": 2, "pages": [{"messages": [{"id": "m1", "role": "user", "blocks": []}]}]},
+            {"match": "ctx_never", "not_ready": 99}]}))
+        self.seed("ctx_late")
+        self.seed("ctx_never", step="validator")
+        rc, out = self.collect("--all")
+        self.assertEqual(rc, 0, out)
+        late = json.loads((self.logs("ctx_late") / "orca-read.json").read_text())
+        self.assertEqual((late["status"], late["messages"]), ("ok", 1))
+        self.assertEqual(len([l for l in self.reads() if l.startswith("ctx_late")]), 3)
+        never = json.loads((self.logs("ctx_never", step="validator") / "orca-read.json").read_text())
+        self.assertEqual((never["status"], never["error"], never["pages"]), ("not available", "archive_not_ready", []))
+        self.assertEqual(len([l for l in self.reads() if l.startswith("ctx_never")]), 4)       # the first try and 3 more
+        meta = self.meta("ctx_never", step="validator")
+        self.assertEqual(meta["files"]["orca-read.json"]["note"], "orca-read: not available (archive_not_ready)")
+        self.assertEqual(meta["orca"]["status"], "not available")
+        self.assertEqual(meta["session"]["match"], "unique")        # the session file does not depend on the archive
+
+    def test_the_session_that_overlaps_the_dispatch_is_copied_byte_for_byte_and_its_tokens_summed(self):
+        self.seed("ctx_cl", checks=("OK tests pass", "OK read-only: HEAD aaaaaaaaa and the working tree are unchanged"))
+        self.seed("ctx_cx", pr="p2", step="review_codex", wt=self.CODEX_WT, agent="codex", model="",
+                  started="2026-01-10T11:00:00Z", ended="2026-01-10T11:20:00Z", checks=("OK verdict", "NOT OK no ledger"))
+        self.seed("ctx_cx2", pr="p3", step="review_codex", wt=self.CODEX_WT, agent="codex", model="",
+                  started="2026-01-10T12:00:00Z", ended="2026-01-10T12:10:00Z")
+        rc, out = self.collect("--all")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("OK collected 3 · skipped 0", out)
+        d = self.logs("ctx_cl")
+        self.assertEqual((d / "session.jsonl").read_bytes(), (self.sessions / self.MAIN).read_bytes())
+        meta = self.meta("ctx_cl")
+        # the decoy is two hours earlier, the sidechain-only file and the file whose cwd is another worktree are no candidates
+        self.assertEqual((meta["session"]["match"], meta["session"]["candidates"], meta["session"]["path"]),
+                         ("unique", 1, str(self.sessions / self.MAIN)))
+        self.assertEqual(meta["session"]["subagent_files_not_copied"], 1)
+        self.assertEqual((meta["n"], meta["agent"], meta["model"], meta["effort"], meta["worktree"], meta["flow_version"], meta["cause"]),
+                         (1, "claude", "claude-opus-5-5", "high", self.CLAUDE_WT, 2, "first"))
+        self.assertEqual(sorted(p.name for p in (d / "events").iterdir()), ["20260110103000-worker_done-msg_ctx_cl.json", "liveness"])
+        # by hand from the fixture: msg_01's two lines are one response (its last usage counts), msg_03 is a sidechain
+        tok = json.loads((d / "tokens.json").read_text())
+        self.assertEqual({k: tok[k] for k in ("input", "output", "cache_creation", "cache_read", "turns", "sidechain_turns")},
+                         {"input": 167, "output": 95, "cache_creation": 1300, "cache_read": 2100, "turns": 4, "sidechain_turns": 1})
+        self.assertEqual(tok["by_model"], {
+            "claude-opus-5-5": {"input": 157, "output": 90, "cache_creation": 1100, "cache_read": 2100, "turns": 3},
+            "claude-haiku-5-5": {"input": 10, "output": 5, "cache_creation": 200, "cache_read": 0, "turns": 1}})
+        self.assertEqual((tok["first"], tok["last"]), ("2026-01-10T10:00:40.000Z", "2026-01-10T10:29:10.000Z"))
+        cx = json.loads((self.logs("ctx_cx", pr="p2", step="review_codex") / "tokens.json").read_text())
+        self.assertEqual({k: cx[k] for k in ("input", "output", "cache_creation", "cache_read", "turns")},
+                         {"input": 3000, "output": 700, "cache_creation": "not recorded", "cache_read": 2000, "turns": 2})
+        self.assertEqual((self.logs("ctx_cx", pr="p2", step="review_codex") / "session.jsonl").read_bytes(),
+                         (self.sessions / self.CODEX).read_bytes())
+        cx2 = json.loads((self.logs("ctx_cx2", pr="p3", step="review_codex") / "tokens.json").read_text())
+        self.assertEqual({k: cx2[k] for k in ("input", "output", "cache_creation", "cache_read", "turns")},
+                         {"input": "not recorded", "output": "not recorded", "cache_creation": "not recorded",
+                          "cache_read": "not recorded", "turns": 1})
+        rows = {r["dispatch"]: r for r in self.index()}
+        self.assertEqual(rows["ctx_cl"]["tokens"]["input"], 167)
+        self.assertEqual((rows["ctx_cl"]["duration_s"], rows["ctx_cl"]["checks_ok"], rows["ctx_cx"]["checks_ok"]), (1800, True, False))
+        self.assertEqual(rows["ctx_cx"]["session"], {"provider": "codex", "path": str(self.sessions / self.CODEX), "match": "unique", "candidates": 1})
+        self.assertEqual((rows["ctx_cl"]["head_before"], rows["ctx_cl"]["head_after"], rows["ctx_cl"]["step"]), ("a" * 40, "b" * 40, "implement"))
+
+    def test_two_overlapping_candidates_are_ambiguous_and_nothing_is_copied(self):
+        twin = self.sessions / "claude" / "-work-wt-fixture" / "77777777-aaaa-4aaa-8aaa-000000000007.jsonl"
+        shutil.copy(self.sessions / self.MAIN, twin)
+        self.seed("ctx_amb")
+        self.seed("ctx_none", pr="p2", started="2026-02-01T10:00:00Z", ended="2026-02-01T10:30:00Z")
+        self.seed("ctx_nowt", pr="p3", wt="")
+        self.seed("ctx_gem", pr="p4", agent="gemini")
+        rc, out = self.collect("--all")
+        self.assertEqual(rc, 0, out)
+        meta = self.meta("ctx_amb")
+        self.assertEqual((meta["session"]["match"], meta["session"]["why"]), ("ambiguous", "ambiguous: 2 candidates"))
+        self.assertEqual(sorted(meta["session"]["paths"]), sorted([str(self.sessions / self.MAIN), str(twin)]))
+        self.assertFalse((self.logs("ctx_amb") / "session.jsonl").exists())
+        self.assertFalse((self.logs("ctx_amb") / "tokens.json").exists())
+        self.assertEqual(self.index()[0]["tokens"], "not recorded")
+        self.assertEqual(self.meta("ctx_none", pr="p2")["session"]["why"], "no candidate")
+        self.assertEqual(self.meta("ctx_nowt", pr="p3")["session"]["match"], "none")
+        self.assertIn("worktree unknown", self.meta("ctx_nowt", pr="p3")["session"]["why"])
+        self.assertEqual(self.meta("ctx_gem", pr="p4")["session"]["why"], "provider not supported: gemini")
+        # a second candidate that began well after the start does not make the match ambiguous
+        twin.write_text(twin.read_text().replace("2026-01-10T10:00:40.000Z", "2026-01-10T10:12:00.000Z"))
+        rc, out = self.collect("--dispatch", "ctx_amb", "--force")
+        self.assertEqual(rc, 0, out)
+        meta = self.meta("ctx_amb")
+        self.assertEqual((meta["session"]["match"], meta["session"]["candidates"], meta["session"]["path"]),
+                         ("unique", 2, str(self.sessions / self.MAIN)))
+        self.assertEqual([r["session"]["match"] for r in self.index() if r["dispatch"] == "ctx_amb"], ["unique"])   # replaced, not added
+
+    def test_collecting_twice_changes_nothing(self):
+        self.seed("ctx_a")
+        self.seed("ctx_b", pr="p2", step="review_codex", wt=self.CODEX_WT, agent="codex", model="",
+                  started="2026-01-10T11:00:00Z", ended="2026-01-10T11:20:00Z")
+        tree = lambda: {str(p.relative_to(self.state / "logs")): p.read_bytes()
+                        for p in sorted((self.state / "logs").rglob("*")) if p.is_file() and not p.name.startswith(".")}
+        self.assertEqual(self.collect("--all")[0], 0)
+        first = tree()
+        self.assertEqual(len([k for k in first if k.endswith("meta.json")]), 2)
+        rc, out = self.collect("--all")
+        self.assertEqual((rc, tree()), (0, first))
+        self.assertIn("skipped 2", out)
+        rc, out = self.collect("--all", "--force")                       # collected again from the same sources: the same bytes
+        self.assertEqual((rc, tree()), (0, first))
+        (self.state / "logs" / "index.jsonl").unlink()                   # a row lost between the tree and the index comes back
+        self.assertEqual(self.collect("--all")[0], 0)
+        self.assertEqual(tree(), first)
+        rc, out = self.collect("--all", "--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("dry run: 2 settled dispatches · unique 2 · ambiguous 0 · none 0", out)
+
+    def test_index_and_meta_hold_no_transcript_text(self):
+        self.seed("ctx_a")
+        self.seed("ctx_b", pr="p2", step="review_codex", wt=self.CODEX_WT, agent="codex", model="",
+                  started="2026-01-10T11:00:00Z", ended="2026-01-10T11:20:00Z")
+        (self.fake / "scenario.json").write_text(json.dumps({"rules": [], "reads": [
+            {"match": ".", "pages": [{"messages": [{"id": "m1", "role": "user", "blocks": [{"type": "text", "text": SENTINEL}]}]}]}]}))
+        self.assertEqual(self.collect("--all")[0], 0)
+        self.assertIn(SENTINEL, (self.logs("ctx_a") / "session.jsonl").read_text())          # the copies are whole
+        self.assertIn(SENTINEL, (self.logs("ctx_a") / "orca-read.json").read_text())
+        files = [self.state / "logs" / "index.jsonl"] + sorted((self.state / "logs").rglob("meta.json"))
+        self.assertEqual(len(files), 3)
+        self.assertEqual([str(f) for f in files if SENTINEL in f.read_text()], [])
+
+    def test_dry_run_copies_nothing(self):
+        self.seed("ctx_a")
+        rc, out = self.collect("--all", "--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("ctx_a · p1 implement · claude · unique", out)
+        self.assertFalse((self.state / "logs").exists())
+        self.assertFalse((self.fake / "reads.log").exists())
 
 
 class ProgressView(unittest.TestCase):

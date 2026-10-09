@@ -1461,6 +1461,23 @@ class FlowCompat(FlowCase):
         f.write_text(json.dumps({"prs": [{"id": i} for i in ids]}))
         return self.R("plan", str(f))
 
+    def test_progress_lists_the_flow(self):
+        self.env["ROUTER_WAIT_MS"] = "20000"
+        self.template("one", [self.worker("a", worktree="path:{WT}")])
+        self.scenario({"match": ".", "events": [], "repeat": True})
+        self.R("init", ok=True)
+        self.apply(self.pr("A1", vars={"WT": str(self.out)}), self.pr("A2", after=["A1"], vars={"WT": str(self.out)}), self.pr("B1"))
+        self.until(lambda: self.chains() == ["A1"])
+        text = self.R("progress", ok=True)[1]
+        self.assertIn("the run · run_fake · flow v1", text)
+        self.assertIn("0 of 3 inner PRs done (1 running · 2 not started)", text)
+        self.assertRegex(text, r"· A2\s+not started · after A1 · what A2 does")
+        self.assertRegex(text, r"· B1\s+not started · waiting for: WT · what B1 does")
+        self.assertLess(text.index("Part A"), text.index("Part B"))
+        self.assertNotIn("no plan recorded", text)
+        page = (self.state / "progress.html").read_text()
+        self.assertIn("flow v1", page)
+        self.assertIn("not started · waiting for: WT", page)
 
 
 class Sweep(unittest.TestCase):

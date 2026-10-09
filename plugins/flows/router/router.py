@@ -1438,7 +1438,7 @@ def step_view(st: dict, s: dict) -> dict:
 def pr_row(S: State, item: dict, st: "dict | None") -> dict:
     row = {"id": str(item.get("id") or ""), "title": str(item.get("title") or ""), "part": str(item.get("part") or ""),
            "state": "not started", "created": "", "ended": "", "done": 0, "total": 0, "at": [], "why": "", "since": "",
-           "picked_up": True, "url": "", "steps": []}
+           "picked_up": True, "url": "", "steps": [], "waits": ""}
     if st is None:
         return row
     steps = [step_view(st, s) for s in st.get("steps") or []]
@@ -1464,7 +1464,11 @@ def progress_data(S: State, mailbox_stopped: bool = False) -> dict:
     """What the owner's view shows. It reads the state directory and asks Orca nothing, so a daemon can afford it
     at every change."""
     run = read_json(S / "run.json") or {}
-    plan = read_json(S / "plan.json") or {}
+    try:
+        flow = load_flow(S)
+    except RouterError:
+        flow = None   # the daemon rings for it; the view falls back to the plan
+    plan = flow or read_json(S / "plan.json") or {}   # with a flow, the flow is the plan
     planned = [p for p in plan.get("prs") or [] if isinstance(p, dict)]
     chains = {}
     for p in (S / "chains").glob("*/state.json"):
@@ -1472,8 +1476,12 @@ def progress_data(S: State, mailbox_stopped: bool = False) -> dict:
         if st and st.get("pr"):
             chains[st["pr"].lower()] = st
     rows = [pr_row(S, item, chains.pop(str(item.get("id") or "").lower(), None)) for item in planned]
+    if flow:
+        for r, p in zip(rows, planned):
+            if r["state"] == "not started":
+                r["waits"] = flow_waits(S, flow, p) or "ready"
     for st in sorted(chains.values(), key=lambda c: c.get("created") or ""):
-        rows.append(pr_row(S, {"id": st["pr"], "part": "not in the plan" if planned else ""}, st))
+        rows.append(pr_row(S, {"id": st["pr"], "part": ("not in the flow" if flow else "not in the plan") if planned else ""}, st))
 
     rang: "dict[str, tuple[str, bool]]" = {}   # the newest ring a paused chain rang with, and whether it was picked up
     for seen in (True, False):
@@ -1514,6 +1522,7 @@ def progress_data(S: State, mailbox_stopped: bool = False) -> dict:
     last = (S / "mailbox.last").read_text().strip() if (S / "mailbox.last").exists() else ""
     return {"written": now(), "run": run.get("run") or "", "objective": run.get("objective") or "",
             "title": str(plan.get("title") or ""), "has_plan": bool(planned), "state_dir": str(S.root),
+            "flow": {"version": flow["version"], "slots": flow.get("slots"), "start": flow.get("start")} if flow else None,
             "page": str(S / "progress.html"), "refresh_s": WAIT_MS / 1000, "mailbox": {"alive": 0 if mailbox_stopped else pid_alive(S / "mailbox.pid"), "last": last},
             "rows": rows, "workers": workers, "questions": questions, "events": events,
             "rings": [{"rang": when, "pr": pr, "kind": kind, "line": oneline(f.read_text().splitlines()[0] if f.exists() and f.read_text() else "", 200)}

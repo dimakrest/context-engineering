@@ -7,10 +7,12 @@ a daemon.
 
 The data. Every time is UTC, "%Y-%m-%dT%H:%M:%SZ", or "" when there is none:
   written, run, objective, title, state_dir, page, refresh_s, has_plan
+  flow       {version, slots, start} when a flow is loaded, else None; its PRs are then the plan
   mailbox    {alive, last}                 the daemon's pid or 0, and its last delivery
-  rows       one per inner PR, the plan's first, then chains the plan does not name:
-             {id, title, part, state, created, ended, done, total, at, why, since, picked_up, url, steps}
+  rows       one per inner PR, the plan's (or the flow's) first, then chains it does not name:
+             {id, title, part, state, created, ended, done, total, at, why, since, picked_up, url, steps, waits}
              state: not started | running | at a gate | paused | stopped | runner gone | done
+             waits: what a flow PR that is not started waits for ("after A1", "waiting for: WT", "ready"), else ""
              steps: [{id, type, status, group, n, started, ended, who, note}]
   workers    what runs now: {kind (worker | script | ad hoc), pr, step, title, who, n, started, dispatch,
              heartbeat, phase}
@@ -90,7 +92,8 @@ def owner_action(r: dict) -> str:
 def text(d: dict) -> str:
     now = time.time()
     rows = d["rows"]
-    out = [f"{d.get('title') or d.get('objective') or 'router run'} · {d.get('run') or 'no run'}",
+    out = [f"{d.get('title') or d.get('objective') or 'router run'} · {d.get('run') or 'no run'}"
+           + (f" · flow v{d['flow']['version']}" if d.get("flow") else ""),
            f"{sum(1 for r in rows if r['state'] == 'done')} of {len(rows)} inner PRs done"
            + (f" ({counts(rows)})" if rows else "")
            + ("" if d.get("has_plan") else " · no plan recorded, so only started PRs are listed: router.py plan <file>"),
@@ -107,6 +110,8 @@ def text(d: dict) -> str:
             line += f" · took {took(r['created'], r['ended']) or '?'}"
         elif r["state"] != "not started":
             line += f" · step {min(r['done'] + 1, r['total'])} of {r['total']}: {at_text(r)} · {dur(now - epoch(r['created']))} so far"
+        elif r.get("waits"):
+            line += f" · {r['waits']}"
         out.append(line + (f" · {r['title']}" if r["title"] else ""))
         if r["state"] in ("done", "not started"):
             continue
@@ -336,6 +341,7 @@ def html_page(d: dict) -> str:
          f'data-stale-after="{int(max(300, 3 * d.get("refresh_s", 120)))}">',
          f'<h1>{esc(title)}</h1><div class="sub">Run <span class="mono">{esc(d.get("run") or "none")}</span>'
          + (f' · {esc(d["objective"])}' if d.get("objective") and d.get("objective") != title else "")
+         + (f' · flow v{esc(d["flow"]["version"])}' if d.get("flow") else "")
          + f' · state <span class="mono">{esc(d["state_dir"])}</span></div>']
     if not alive:
         o.append('<div class="banner">The mailbox daemon is not running, so no worker message is being routed and this '
@@ -366,6 +372,8 @@ def html_page(d: dict) -> str:
             opened = True
         cls = ROW_CLASS.get(r["state"], "bad")
         state = r["state"] if r["state"] in ("done", "not started") else f"{r['state']}: {at_text(r)}"
+        if r.get("waits"):
+            state += f" · {r['waits']}"
         bar = f'<div class="bar"><i style="width:{int(100 * r["done"] / r["total"])}%"></i></div>' if r["total"] and r["state"] != "done" else ""
         href = f' href="#{anchor(r["id"])}"' if r["state"] not in ("done", "not started") else ""
         o.append(f'<a class="chip {cls}"{href} title="{esc(r["title"])}"><b>{ROW_GLYPH.get(r["state"], "?")} {esc(r["id"])}</b>'

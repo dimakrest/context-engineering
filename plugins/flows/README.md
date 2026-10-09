@@ -445,7 +445,10 @@ from a worker's summary it takes only the number after `FINDINGS:` and the word 
 | g. Lessons | sections a to c | the slowest step, the most-retried step, the role that asked the most questions, the longest single wait at a gate, each with its pr, step and dispatch |
 
 A run whose collector never ran (no `logs/`) still gets its page: time, steps and interruptions come from
-`state.json` and `journal.md`, and the token section says not recorded. A prices file:
+`state.json` and `journal.md`, and the token section says not recorded. Without `journal.md`, what only it records
+says not recorded (gate waits, pauses, the rest, open waits, every ring kind but silent, checks not OK, questions and
+their answers), while the wall clock and the worker time still come from `state.json`; an empty `journal.md` is a
+real zero. A prices file:
 `{"claude-opus-5-5": {"input": 15, "output": 75, "cache_creation": 18.75, "cache_read": 1.5}}`; none ships with the
 plugin, because prices change and belong to the owner.
 

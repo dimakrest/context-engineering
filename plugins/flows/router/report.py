@@ -3,7 +3,9 @@
 
 Why: the run is over and the planner of the next one asks where the time, the tokens and the interruptions went.
 Every number on the page comes from a record named next to it; a number whose record is missing prints "not
-recorded". Nothing is interpolated or estimated, and no transcript text is shown.
+recorded". Nothing is interpolated or estimated, and no transcript text is shown. Without journal.md, what only it
+records is "not recorded" (gate waits, pauses, the rest, open waits, the rings but the silent ones, NOT OK checks,
+questions and their answers); an empty journal.md is a real 0.
 
 Usage:
   report.py --state <dir> --out <file.html> [--metrics <file.json>] [--prices <file.json>] [--pr <pr>]
@@ -154,6 +156,7 @@ class Run:
         self.run = read_json(state / "run.json") or {}
         self.flow = read_json(state / "flow.json")
         self.plan = read_json(state / "plan.json")
+        self.has_journal = (state / "journal.md").is_file()   # absent: what only it records is "not recorded", never 0
         self.journal = journal_lines(state)
         for ln in self.journal:
             ln["kind"], ln["detail"] = classify(ln["text"])
@@ -332,9 +335,12 @@ def time_split(run: Run, pr: str) -> dict:
     pauses = minus(minus(within("paused"), covered), gates)
     split = {"worker_covered_s": seconds(covered), "gate_s": seconds(gates), "paused_s": seconds(pauses)}
     split["rest_s"] = NR if wall is None else wall - sum(split.values())
+    if not run.has_journal:
+        split.update(gate_s=NR, paused_s=NR, rest_s=NR)
     adhoc = [r["duration_s"] for r in run.dispatches if r["adhoc"] and r["pr"] == pr and r["duration_s"] is not None]
     return {"created": st.get("created") or NR, "done": done or NR, "wall_s": NR if wall is None else wall,
-            "worker_s": worker, **split, "open_waits": sum(1 for w in ws if w["s"] is None), "adhoc_s": sum(adhoc)}
+            "worker_s": worker, **split, "open_waits": sum(1 for w in ws if w["s"] is None) if run.has_journal else NR,
+            "adhoc_s": sum(adhoc)}
 
 
 def step_instances(run: Run, prs: "list[str]") -> "list[dict]":
@@ -383,8 +389,8 @@ def steps_metrics(run: Run) -> dict:
                     "median_s": median([d for d, _ in durs]) if durs else NR, "max_s": mx[0] if mx else NR,
                     "max_pr": mx[1] if mx else NR, "attempts": sum(len(i["attempts"]) for i in g["items"]),
                     "by_cause": dict(sorted(causes.items())),
-                    "check_not_ok": sum(n for (p, s), n in bad.items() if s == sid),
-                    "check_not_ok_prs": sorted({p for (p, s) in bad if s == sid})}
+                    "check_not_ok": sum(n for (p, s), n in bad.items() if s == sid) if run.has_journal else NR,
+                    "check_not_ok_prs": sorted({p for (p, s) in bad if s == sid}) if run.has_journal else NR}
     return res
 
 
@@ -418,8 +424,9 @@ def questions(run: Run) -> "list[dict]":
 
 
 def rings(run: Run) -> "dict[str, dict[str, int]]":
-    """{kind: {pr: n}} from the journal, plus the silent rings from the wake files' names."""
-    out: "dict[str, dict[str, int]]" = {k: {} for k in RING_KINDS}
+    """{kind: {pr: n}} from the journal, plus the silent rings from the wake files' names. Without a journal, the kinds
+    it records are "not recorded"; the silent rings still come from the wake files."""
+    out: "dict[str, dict[str, int] | str]" = {k: {} if run.has_journal or k == "silent" else NR for k in RING_KINDS}
 
     def count(kind: str, pr: str) -> None:
         out.setdefault(kind, {})
@@ -574,7 +581,8 @@ def lessons(run: Run, steps: dict, qs: "list[dict]", labels: "dict[str, str]") -
                     "model": model([rq[0]["dispatch"]]), "record": "journal.md question lines"})
     else:
         out.append({"lesson": "role that asked the most questions", "value": NR, "unit": "", "role": "-", "pr": "-",
-                    "step": "-", "dispatch": "-", "model": "-", "record": "no question in journal.md"})
+                    "step": "-", "dispatch": "-", "model": "-",
+                    "record": "no question in journal.md" if run.has_journal else "no journal.md"})
     gates = [(w, pr) for pr in run.prs for w in waits(run, pr) if w["kind"] == "gate" and w["s"] is not None]
     if gates:
         w, pr = max(gates, key=lambda x: x[0]["s"])
@@ -582,16 +590,17 @@ def lessons(run: Run, steps: dict, qs: "list[dict]", labels: "dict[str, str]") -
                     "dispatch": "-", "model": "-", "record": f"journal.md paused: blocked at {w['from']} .. coordinator at {w['to']}"})
     else:
         out.append({"lesson": "longest wait at a gate", "value": NR, "unit": "", "pr": "-", "step": "-", "dispatch": "-",
-                    "model": "-", "record": "no gate wait with an end in journal.md"})
+                    "model": "-", "record": "no gate wait with an end in journal.md" if run.has_journal else "no journal.md"})
     return out
 
 
 def per_pr(run: Run, pr: str, ring_table: dict, qs: "list[dict]") -> dict:
     bad = not_ok_checks(run, [pr])
     steps = {i["step"]: {"duration_s": NR if i["duration_s"] is None else i["duration_s"], "attempts": len(i["attempts"]),
-                         "check_not_ok": bad.get((pr, i["step"]), 0)} for i in step_instances(run, [pr])}
-    return {"steps": steps, "rings": {k: v.get(pr, 0) for k, v in ring_table.items()},
-            "questions": sum(1 for q in qs if q["pr"] == pr)}
+                         "check_not_ok": bad.get((pr, i["step"]), 0) if run.has_journal else NR}
+             for i in step_instances(run, [pr])}
+    return {"steps": steps, "rings": {k: v.get(pr, 0) if isinstance(v, dict) else v for k, v in ring_table.items()},
+            "questions": sum(1 for q in qs if q["pr"] == pr) if run.has_journal else NR}
 
 
 def metrics(run: Run, prices: "dict | None" = None) -> dict:
@@ -625,11 +634,13 @@ def metrics(run: Run, prices: "dict | None" = None) -> dict:
         "outside": {"adhoc_s": sum(r["duration_s"] for r in outside if r["duration_s"] is not None),
                     "dispatches": [r["dispatch"] for r in outside]},
         "steps": steps,
-        "interruptions": {"rings": {k: dict(v, total=sum(v.values())) for k, v in ring_table.items()},
-                          "questions": qs, "questions_by_role": by_role,
+        "interruptions": {"rings": {k: dict(v, total=sum(v.values())) if isinstance(v, dict) else v
+                                    for k, v in ring_table.items()},
+                          "questions": qs if run.has_journal else NR,
+                          "questions_by_role": by_role if run.has_journal else NR,
                           "answer_median_s": median(answered) if answered else NR,
                           "answer_max_s": max(answered) if answered else NR,
-                          "unanswered": sum(1 for q in qs if q["answer_s"] == NR)},
+                          "unanswered": sum(1 for q in qs if q["answer_s"] == NR) if run.has_journal else NR},
         "tokens": tokens_metrics(run, prices) if run.logs else {"by_label": NR, "by_model": NR, "dispatches": NR,
                                                                "cost": NR, "no_session": NR},
         "review": review_metrics(run),
@@ -759,13 +770,13 @@ def bars_of_time(times: dict, prs: "list[str]") -> str:
     rows = []
     for pr in prs:
         t = times[pr]
-        rest = t["rest_s"] if isinstance(t["rest_s"], int) else 0
-        rows.append((pr, [t["worker_covered_s"], t["gate_s"], t["paused_s"], max(0, rest)]))
+        rows.append((pr, [t[k] if isinstance(t[k], int) else 0 for k in ("worker_covered_s", "gate_s", "paused_s", "rest_s")]))
     return hbars(rows, ["workers (covered)", "at gates", "paused", "the rest"], " s")
 
 
 def rings_table(ring_table: dict, cols: "list[str]") -> str:
-    rows = [[esc(k)] + [num(v.get(c, 0)) for c in cols] + [num(v.get("total", sum(v.values())))] for k, v in ring_table.items()]
+    rows = [[esc(k)] + ([num(v.get(c, 0)) for c in cols] + [num(v.get("total", sum(v.values())))] if isinstance(v, dict)
+                        else [cell(v)] * (len(cols) + 1)) for k, v in ring_table.items()]
     return table(["ring"] + cols + ["total"], rows, "journal.md (paused, question, message and collector lines), wake/ file names (silent)")
 
 
@@ -793,18 +804,21 @@ def page(m: dict, run: Run, state_label: str, only_pr: "str | None" = None) -> s
                       ["median duration"], " s")
         rows = [[esc(sid), esc(v["type"]), num(v["instances"]), dur(v["median_s"]), dur(v["max_s"]), esc(v["max_pr"]),
                  num(v["attempts"]), esc(", ".join(f"{k} {n}" for k, n in v["by_cause"].items())), num(v["check_not_ok"]),
-                 esc(", ".join(v["check_not_ok_prs"]))] for sid, v in s.items()]
+                 esc(", ".join(v["check_not_ok_prs"]) if isinstance(v["check_not_ok_prs"], list) else v["check_not_ok_prs"])]
+                for sid, v in s.items()]
         out.append("<section><h2>b · Steps across PRs</h2>" + chart + table(
             ["step", "type", "PRs", "median", "max", "max in", "attempts", "by cause", "checks NOT OK", "in PRs"], rows,
             "chains/<pr>/state.json attempts (started, ended, cause), journal.md check lines") + "</section>")
     if "c" in sections:
         i = m["interruptions"]
-        chart = hbars([(k, [v["total"]]) for k, v in i["rings"].items()], ["rings"])
+        chart = hbars([(k, [v["total"] if isinstance(v, dict) else 0]) for k, v in i["rings"].items()], ["rings"])
         q_rows = [[esc(q["pr"]), esc(q["step"]), esc(q["role"]), f"<code>{esc(q['dispatch'])}</code>", esc(q["asked"]),
-                   esc(q["answered"]), cell(q["answer_s"]) if q["answer_s"] == NR else dur(q["answer_s"])] for q in i["questions"]]
+                   esc(q["answered"]), cell(q["answer_s"]) if q["answer_s"] == NR else dur(q["answer_s"])]
+                  for q in (i["questions"] if isinstance(i["questions"], list) else [])]
+        by_role = i["questions_by_role"] if isinstance(i["questions_by_role"], dict) else {NR: NR}
         out.append("<section><h2>c · Interruptions</h2>" + chart + rings_table(i["rings"], run.prs + [OUTSIDE])
                    + "<h3>Questions per role</h3>" + table(["role (spec)", "questions"],
-                                                           [[esc(k), num(v)] for k, v in i["questions_by_role"].items()], "journal.md question lines")
+                                                           [[esc(k), num(v)] for k, v in by_role.items()], "journal.md question lines")
                    + f'<p class="note">Time to the coordinator\'s answer: median {dur(i["answer_median_s"])}, max {dur(i["answer_max_s"])}, '
                    f'unanswered {i["unanswered"]}.</p>'
                    + table(["PR", "step", "role", "dispatch", "asked", "answered", "time to answer"], q_rows,
@@ -897,7 +911,7 @@ def pr_section(m: dict, run: Run, pr: str) -> str:
     adhoc = [x for x in run.dispatches if x["adhoc"] and x["pr"] == pr]
     ad = [[f"<code>{esc(x['dispatch'])}</code>", esc(x["label"]), dur(x["duration_s"]) if x["duration_s"] is not None else cell(NR),
            cell(x["match"])] for x in adhoc]
-    rings = {k: {pr: v} for k, v in p["rings"].items()}
+    rings = {k: {pr: v} if isinstance(v, int) else v for k, v in p["rings"].items()}
     return (f'<section class="pr" id="pr-{esc(pr)}"><h2>PR {esc(pr)}</h2>' + timeline(run, pr)
             + "<h3>a · time</h3>" + bars_of_time(t, [pr]) + table(TIME_HEAD, time_rows(t, [pr]), TIME_SRC)
             + "<h3>b · steps</h3>" + table(["step", "duration (all attempts)", "attempts", "checks NOT OK"], steps,

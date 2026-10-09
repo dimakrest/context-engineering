@@ -2834,6 +2834,36 @@ class Report(unittest.TestCase):
         self.assertIn("not recorded: there is no logs/ directory", page)
         self.assertIn("no logs/: tokens not recorded", out)
 
+    def test_a_run_without_a_journal_says_not_recorded_for_what_only_the_journal_records(self):
+        state = self.copy()
+        (state / "journal.md").unlink()
+        page, m, _ = self.report(state)
+        nr = "not recorded"
+        a1 = m["time"]["A1"]
+        self.assertEqual((a1["wall_s"], a1["worker_s"], a1["worker_covered_s"]), (7200, 4200, 4200))   # from state.json
+        self.assertEqual([a1[k] for k in ("gate_s", "paused_s", "rest_s", "open_waits")], [nr] * 4)
+        self.assertEqual([m["time"]["total"][k] for k in ("gate_s", "paused_s", "rest_s", "open_waits")], [nr] * 4)
+        i = m["interruptions"]
+        self.assertEqual({k: v for k, v in i["rings"].items() if k != "silent"},
+                         dict.fromkeys(("gate", "question", "failed", "check", "runner"), nr))
+        self.assertEqual(i["rings"]["silent"], {"A2": 1, "total": 1})          # from the wake files' names, still there
+        self.assertEqual([i[k] for k in ("questions", "questions_by_role", "answer_median_s", "answer_max_s", "unanswered")],
+                         [nr] * 5)
+        self.assertEqual((m["steps"]["implement"]["check_not_ok"], m["steps"]["implement"]["check_not_ok_prs"]), (nr, nr))
+        self.assertEqual((m["per_pr"]["B1"]["steps"]["implement"]["check_not_ok"], m["per_pr"]["B1"]["rings"]["gate"],
+                          m["per_pr"]["B1"]["questions"]), (nr, nr, nr))
+        a1_row = page.split('id="pr-A1"')[1].split("<tr><td>A1</td>")[1].split("</tr>")[0]   # its time table
+        cells = re.findall(r"<td[^>]*>(.*?)</td>", a1_row)
+        self.assertTrue(cells[2].startswith("7200 s") and cells[3].startswith("4200 s"), cells)
+        self.assertEqual(cells[5:9], [nr] * 4)                                 # at gates, paused, the rest, open waits
+        self.assertIn('<tr><td>gate</td><td class="nr">not recorded</td>', page)
+        shutil.rmtree(state)
+        empty = self.copy()                                                     # a journal with no line is a real zero
+        (empty / "journal.md").write_text("")
+        _page, m, _ = self.report(empty)
+        self.assertEqual((m["time"]["A1"]["gate_s"], m["time"]["A1"]["rest_s"], m["interruptions"]["rings"]["gate"]["total"]),
+                         (0, 7200 - 4200, 0))
+
     def test_router_report_writes_report_html_in_the_state_by_default(self):
         state = self.copy()
         env = dict(os.environ, ROUTER_STATE=str(state))

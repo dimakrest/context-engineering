@@ -254,12 +254,13 @@ removal of those markers. A chain for another test runner sets `TESTS=` (empty):
 xfail check says `OK xfail-only: no test writer on this PR`, and the contract names every test the implementer
 writes. The `typescript` profile is meant to be run that way.
 
-Until the flow file (milestone M1a) merges a profile into a chain's variables, give its `vars` as `K=V`:
+Until the flow file (milestone M1a) merges a profile into a chain's variables, give its `vars` as `K=V`. Each pair
+is read into an array, NUL-separated, so a value with spaces or quotes stays one argument (bash and zsh):
 
 ```sh
 P=$FLOWS/router/profiles/python.json
-$R chain <pr> --def $FLOWS/router/templates/inner-pr.json WT=… ISSUE=… BASE_BRANCH=… TITLE=… \
-   $(python3 -c 'import json,shlex,sys; print(" ".join(shlex.quote(f"{k}={v}") for k, v in json.load(open(sys.argv[1]))["vars"].items()))' $P)
+args=(); while IFS= read -r -d '' kv; do args+=("$kv"); done < <(python3 -c 'import json,sys; sys.stdout.write("".join(f"{k}={v}\0" for k, v in json.load(open(sys.argv[1]))["vars"].items()))' "$P")
+$R chain <pr> --def $FLOWS/router/templates/inner-pr.json WT=… ISSUE=… BASE_BRANCH=… TITLE=… "${args[@]}"
 ```
 
 On the command line a value is taken as it is: a `{SCRATCH}` or `{WT}` inside it reaches the worker unfilled. The

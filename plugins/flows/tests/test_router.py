@@ -1995,7 +1995,7 @@ class Collector(RouterCase):
         (self.state / "logs" / "index.jsonl").unlink()                   # a row lost between the tree and the index comes back
         self.assertEqual(self.collect("--all")[0], 0)
         self.assertEqual(tree(), first)
-        rc, out = self.collect("--all", "--dry-run")
+        rc, out = self.R("collect", "--dry-run")
         self.assertEqual(rc, 0, out)
         self.assertIn("dry run: 2 settled dispatches · unique 2 · ambiguous 0 · none 0", out)
 
@@ -2019,6 +2019,64 @@ class Collector(RouterCase):
         self.assertIn("ctx_a · p1 implement · claude · unique", out)
         self.assertFalse((self.state / "logs").exists())
         self.assertFalse((self.fake / "reads.log").exists())
+
+    # -- the daemon's hook
+    def session_for(self, wt, sid="99999999-aaaa-4aaa-8aaa-000000000009"):
+        """A Claude session that ran in wt from now on, with the sentinel in it."""
+        t = lambda s: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + s))
+        line = lambda typ, ts, **kw: json.dumps(dict({"type": typ, "timestamp": ts, "cwd": str(wt), "sessionId": sid,
+                                                      "isSidechain": False}, **kw))
+        path = self.tmp / "live-claude" / str(wt).replace("/", "-") / f"{sid}.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_text(line("user", t(1), message={"role": "user", "content": SENTINEL}) + "\n" + line(
+            "assistant", t(2), message={"id": "msg_1", "model": "m-sonnet", "usage": {"input_tokens": 3, "output_tokens": 4}}) + "\n")
+        return path
+
+    def test_a_released_worker_is_collected_once_after_its_checks(self):
+        wt = self.tmp / "wt"
+        wt.mkdir()
+        session = self.session_for(wt)
+        self.env["FLOWS_CLAUDE_PROJECTS"] = str(self.tmp / "live-claude")
+        self.scenario({"match": "t1 a", "events": [self.done(0.2)]})
+        self.R("init", ok=True)
+        self.chain([self.worker("a", worktree="path:{WT}", checks=["echo OK the check ran"])], WT=str(wt))
+        self.until(lambda: self.chain_state()["status"] == "done")
+        dispatch = self.chain_state()["steps"][0]["attempts"][0]["dispatch"]
+        meta = self.state / "logs" / "t1" / "a" / dispatch / "meta.json"
+        self.until(meta.exists, what="the collector's meta.json")
+        m = json.loads(meta.read_text())
+        self.assertEqual((m["session"]["match"], m["session"]["path"]), ("unique", str(session)))
+        self.assertEqual((m["checks"], m["worktree"], m["agent"], m["model"]), (["OK the check ran"], str(wt), "claude", "m-sonnet"))
+        self.assertEqual(json.loads((meta.parent / "tokens.json").read_text())["output"], 4)
+        time.sleep(1.0)
+        self.assertEqual([r["dispatch"] for r in self.index()], [dispatch])                 # exactly one collection
+        self.assertEqual((self.fake / "reads.log").read_text().split(), [dispatch, "-"])
+        self.assertIn("logs    1/1 settled dispatches collected", self.R("status")[1])
+
+    def test_a_collector_that_fails_is_journaled_and_the_daemon_goes_on(self):
+        not_a_dir = self.tmp / "projects-file"
+        not_a_dir.write_text("")
+        self.env["FLOWS_CLAUDE_PROJECTS"] = str(not_a_dir)
+        wt = self.tmp / "wt"
+        wt.mkdir()
+        self.scenario({"match": "t1 a", "events": [self.done(0.2)]}, {"match": "t1 b", "events": [self.done(0.2)]})
+        self.R("init", ok=True)
+        self.chain([self.worker("a", worktree="path:{WT}"), self.worker("b", worktree="path:{WT}")], WT=str(wt))
+        self.until(lambda: self.chain_state()["status"] == "done", what="the second worker to settle")
+        first = self.chain_state()["steps"][0]["attempts"][0]["dispatch"]
+        self.until(lambda: f"collector: {first}: the Claude projects root is not a directory" in self.journal(), what="the journal line")
+        self.assertTrue(self.R("status")[1].startswith("router  run_fake · mailbox alive"))
+        self.assertIn("logs    0/2 settled dispatches collected · router.py collect --all", self.R("status")[1])
+
+    def test_collection_can_be_turned_off(self):
+        self.env["ROUTER_COLLECT"] = "0"
+        self.scenario({"match": "t1 a", "events": [self.done(0.2)]})
+        self.R("init", ok=True)
+        self.chain([self.worker("a")])
+        self.until(lambda: self.chain_state()["status"] == "done")
+        time.sleep(0.5)
+        self.assertFalse((self.state / "logs").exists())
+        self.assertIn("(ROUTER_COLLECT=0: nothing is collected by itself)", self.R("status")[1])
 
 
 class ProgressView(unittest.TestCase):

@@ -605,10 +605,12 @@ A check prints `NOT OK …` and pauses its chain: the ring shows every check lin
   `fill`), with no reload: a pending chip dragged and applied as v2, then a second drag applied as v3; the header
   showed each version and `flow history` lists both `by page`. Every click reached the page.
 - The pilot found a collector miss: five workers one after another in one worktree began within 3 min of each
-  other, so `collect --all` after the run matched 1 of 5 sessions (4 ambiguous). Each session's first message is
-  Orca's preamble naming its dispatch; that id now singles the file out (`Collector`, 4 mutants, each killed). After
-  the fix: 5 of 5 unique, `OK collected 5 · skipped 0 · locked 0 · not settled 0 · failed 0`, and the report read
-  5 collected sessions: 157 s wall clock, 143 workers, 7 at the gate, 6 paused, 1 the rest.
+  other. The daemon, collecting each worker as it was released, matched 4 unique and 1 ambiguous; after the run
+  `collect --all` only skipped (`skipped 5`: already collected), and `collect --dry-run` matched 1 of 5 (4
+  ambiguous): a match that depended on when it ran. Each session's first message is Orca's preamble naming its
+  dispatch; that id now singles the file out (`Collector`, 4 mutants, each killed). After the fix: `collect
+  --dry-run` 5 of 5 unique, `collect --all --force` `OK collected 5 · skipped 0 · locked 0 · not settled 0 · failed
+  0`, and the report read 5 collected sessions: 157 s wall clock, 143 workers, 7 at the gate, 6 paused, 1 the rest.
 - The report's gate lesson is labelled `longest wait at a gate (raw)` on the page and in the metrics (#43 R6);
   `metrics.golden.json` changes in that label only (`Report`, 1 mutant, killed).
 - `python3 tests/test_router.py` in a `git archive HEAD` export: 204 tests, green (188 before). The export's first run failed one: FLOWS.md

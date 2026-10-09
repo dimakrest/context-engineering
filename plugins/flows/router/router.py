@@ -43,13 +43,24 @@ Usage (the coordinator's whole interface; every command but progress prints a fe
                                                   those not started: {"title": "…", "prs": [{"id", "title", "part"}]}
   router.py stop [<pr> | --all]                   stop a chain's runner, or every daemon
 
+The flow (one versioned file that is the run's plan: its PR graph, each PR's steps, the variables):
+  router.py flow apply <file> [--base <version>] [--by <who>] [--note "<text>"]
+                                                  the only way a flow enters or changes a run: v1, then v+1 with one
+                                                  history row. Refused, nothing changed, when --base is not the
+                                                  current version, or a change touches a settled step, a started PR's
+                                                  after, or a variable a settled step used
+  router.py flow show                             the graph: one line per PR, with its state or what it waits for
+  router.py flow start <pr>                       start a PR now (under "start": "manual"); refused unless it is ready
+  router.py flow history [<n>]                    the last n versions: who, when, why, what changed (default 10)
+  With a flow, chain refuses the PRs the flow names and plan is refused: the flow is the plan.
+
 Env:
   ROUTER_STATE          state directory (default $SCRATCH/router)
   ORCA_CLI_COMMAND      the Orca CLI (default orca)
   ROUTER_WAIT_MS        one mailbox long-poll (default 120000)
   ROUTER_SILENT_MIN     minutes without a heartbeat before a live worker rings as silent (default 20)
   ROUTER_START_TIMEOUT_MS  worker-start --timeout-ms (default 300000)
-  ROUTER_MAX_CHAINS     chains allowed to run at once (default 2)
+  ROUTER_MAX_CHAINS     chains allowed to run at once (default 2); a flow's "slots" replaces it
   ROUTER_POLL_S         file poll interval (default 3)
   ROUTER_REGISTRY_WAIT_S   how long a message waits for its worker's start receipt to be recorded (default 10)
 
@@ -66,12 +77,18 @@ Files under the state directory:
   wake/*.txt, wake/seen/      what the doorbell prints, then what it has printed
   journal.md                  one line per settled event, append-only
   plan.json                   the run's inner PRs, from `router.py plan`
+  flow.json                   the flow, the router's copy: the latest version, its history, the templates and the
+                              profile as they were read when it was applied
+  flow.lock                   taken by flow apply, a scheduler pass and a runner's re-read, so they take turns
+  chains/<pr>/def.json        a flow PR's own steps, when it overrides its template's
   progress.html               the owner's view. Rewritten at every change, and it reloads itself in the browser
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
+import fcntl
 import hashlib
 import json
 import os
@@ -396,6 +413,7 @@ def cmd_mailbox(S: State, _a: argparse.Namespace) -> int:
     print(f"{now()} mailbox daemon started for {run or 'the bound Run'} (pid {os.getpid()})", flush=True)
     ack, lost, unreadable = "", 0, 0
     while not _stop:
+        flow_tick(S)          # a PR of the flow that became ready starts here, at the latest one long-poll later
         refresh_progress(S)   # at least once per long-poll: heartbeats and ages on the page stay current
         args = ["orchestration", "check"] + (["--run", run] if run else []) + (["--ack", ack] if ack else [])
         d, raw = orca(S, args + ["--wait", "--timeout-ms", str(WAIT_MS)], timeout=WAIT_MS / 1000 + 90)
@@ -478,6 +496,7 @@ def validate(defn: dict, kit: Path, variables: "dict[str, str]") -> "list[str]":
     problems: "list[str]" = []
     ids: "list[str]" = []
     known = set(variables)
+    checkout: "bool | None" = None   # is WT a git checkout; asked once, the scheduler validates often
     for s in defn["steps"]:
         sid, typ = s.get("id", ""), s.get("type", "worker")
         if not re.fullmatch(r"[a-z][a-z0-9_]*", sid or ""):
@@ -504,8 +523,10 @@ def validate(defn: dict, kit: Path, variables: "dict[str, str]") -> "list[str]":
             texts += [(k, s.get(k, ""), early) for k in ("worktree", "model", "effort")]
             if s.get("readonly") and "WT" not in variables:
                 problems.append(f"step {sid}: readonly needs the WT variable (the PR's worktree)")
-            elif s.get("readonly") and not git_head(variables["WT"])[0]:
-                problems.append(f"step {sid}: readonly needs WT to be a git checkout, and {variables['WT']} is not one")
+            elif s.get("readonly"):
+                checkout = bool(git_head(variables["WT"])[0]) if checkout is None else checkout
+                if not checkout:
+                    problems.append(f"step {sid}: readonly needs WT to be a git checkout, and {variables['WT']} is not one")
             texts += [(f"check {i + 1}", c, late) for i, c in enumerate(s.get("checks") or [])]
         elif typ == "script":
             if not s.get("run"):
@@ -559,6 +580,11 @@ def start_runner(S: State, pr: str) -> int:
 
 
 def cmd_chain(S: State, a: argparse.Namespace) -> int:
+    if pr_id_problem(a.pr):
+        die(pr_id_problem(a.pr), 2)
+    flow = load_flow(S)
+    if flow_pr(flow, a.pr) is not None:
+        die(f"the flow owns {a.pr}: router.py flow start {a.pr}")
     def_path = Path(a.definition).resolve()
     defn = load_def(def_path)
     variables = {str(k): str(v) for k, v in (defn.get("vars") or {}).items()}
@@ -590,8 +616,10 @@ def cmd_chain(S: State, a: argparse.Namespace) -> int:
     cdir = chain_dir(S, a.pr)
     if (cdir / "state.json").exists():
         die(f"{a.pr}: a chain already exists ({cdir}); use resume or retry")
-    if len(open_chains(S)) >= MAX_CHAINS:
-        die(f"{len(open_chains(S))} chains are open ({', '.join(open_chains(S))}) and ROUTER_MAX_CHAINS is {MAX_CHAINS}: {a.pr} was not started")
+    cap = flow["slots"] if flow else MAX_CHAINS
+    if len(open_chains(S)) >= cap:
+        die(f"{len(open_chains(S))} chains are open ({', '.join(open_chains(S))}) and "
+            + (f"the flow has {cap} slots" if flow else f"ROUTER_MAX_CHAINS is {MAX_CHAINS}") + f": {a.pr} was not started")
     if not pid_alive(S / "mailbox.pid"):
         die("the mailbox daemon is not running: router.py init")
     st = {"pr": a.pr, "def": str(def_path), "def_dir": str(def_path.parent), "kit_dir": str(kit), "created": now(), "status": "running",
@@ -661,6 +689,7 @@ def start_worker(S: State, st: dict, step: dict) -> bool:
     # first attempt should not have made would fall outside the range its checks look at.
     base = step.setdefault("base", {"head": head, "dirty": dirty})
     attempt = {"n": n, "started": now(), "head_before": base["head"], "dirty_before": base["dirty"], "head_at_start": head}
+    flow_stamp(st, step, attempt)
     step["attempts"].append(attempt)
     try:
         v = step_vars(st, step)
@@ -671,6 +700,7 @@ def start_worker(S: State, st: dict, step: dict) -> bool:
     except (RouterError, OSError):
         step["attempts"].pop()
         raise
+    step.pop("cause", None)
     if step.get("note"):
         spec += f"\n\nNote from the coordinator (attempt {n}): {step['note']}"
     title = f"{st['pr']} {step['id']}" + (f" (attempt {n})" if n > 1 else "")
@@ -835,20 +865,35 @@ def cmd_run(S: State, a: argparse.Namespace) -> int:
     print(f"{now()} runner started for {a.pr}", flush=True)
     while not _stop:
         flush_progress(S)   # the last step's result is on the page before the next start, which can take minutes
-        steps = st["steps"]
-        idx = next((i for i, s in enumerate(steps) if s["status"] not in DONE), None)
-        if idx is None:
-            st.update(status="done", ended=now())
-            save_chain(S, st)
-            journal(S, a.pr, "", "", "", "chain complete")
-            break
-        group = [steps[idx]]
-        if steps[idx]["def"].get("group"):
-            g = steps[idx]["def"]["group"]
-            j = idx + 1
-            while j < len(steps) and steps[j]["def"].get("group") == g:
-                group.append(steps[j])
-                j += 1
+        # A flow chain follows the flow's latest version here, between two steps. Under the flow lock, and the steps
+        # it is about to start are claimed in the same breath: an apply cannot edit them while they start.
+        with flow_lock(S) if st.get("flow") else contextlib.nullcontext():
+            if st.get("flow"):
+                try:
+                    flow_reread(S, st)
+                except RouterError as e:
+                    journal(S, a.pr, "", "", "", f"paused: {e}")
+                    pause(S, st, "runner", [f"WAKE runner · {a.pr}: {oneline(e, 300)}",
+                                            "the chain paused rather than guess: nothing was started or passed",
+                                            f"next: router.py flow show, a router.py flow apply that fixes the flow, then router.py resume {a.pr}"])
+                    break
+            steps = st["steps"]
+            idx = next((i for i, s in enumerate(steps) if s["status"] not in DONE), None)
+            if idx is None:
+                st.update(status="done", ended=now())
+                save_chain(S, st)
+                journal(S, a.pr, "", "", "", "chain complete")
+                break
+            group = [steps[idx]]
+            if steps[idx]["def"].get("group"):
+                g = steps[idx]["def"]["group"]
+                j = idx + 1
+                while j < len(steps) and steps[j]["def"].get("group") == g:
+                    group.append(steps[j])
+                    j += 1
+            if st.get("flow"):
+                st["flow"]["claimed"] = [s["id"] for s in group if s["status"] == "pending"]
+                save_chain(S, st)
 
         try:
             for step in group:
@@ -867,7 +912,10 @@ def cmd_run(S: State, a: argparse.Namespace) -> int:
                     step.pop("rung", None)
                 elif typ == "script":
                     cmd = render(step["def"]["run"], step_vars(st, step), shell=True)
-                    step["attempts"].append({"n": len(step["attempts"]) + 1, "started": now()})
+                    attempt = {"n": len(step["attempts"]) + 1, "started": now()}
+                    flow_stamp(st, step, attempt)
+                    step.pop("cause", None)
+                    step["attempts"].append(attempt)
                     step["status"] = "script"   # saved, so status and progress show it: a CI wait can take an hour
                     save_chain(S, st)
                     flush_progress(S)
@@ -875,11 +923,16 @@ def cmd_run(S: State, a: argparse.Namespace) -> int:
                     for kv in exports:
                         k, val = kv.split("=", 1)
                         st["vars"][k.strip()] = val.strip()
+                        if k.strip() in (st.get("flow") or {}).get("vars_keys", []):   # the run's value now, not the flow's
+                            st["flow"]["vars_keys"].remove(k.strip())
                     step["attempts"][-1].update(ended=now(), rc=rc, line=line)
                     step["status"] = "done" if rc == 0 else "script_failed"
                     journal(S, a.pr, step["id"], "", "", f"script exit {rc}: {line}")
                 else:
                     start_worker(S, st, step)
+                save_chain(S, st)
+            if st.get("flow"):   # every step of the group has left pending, or is left for the next boundary
+                st["flow"]["claimed"] = []
                 save_chain(S, st)
 
             # A start that failed or is unknown rings now; it does not wait for the group's other workers.
@@ -904,6 +957,8 @@ def cmd_run(S: State, a: argparse.Namespace) -> int:
                     st["vars"][f"HEAD_AFTER_{step_var(step['id'])}"] = head
                     results = run_checks(S, st, step)
                     step["attempts"][-1]["checks"] = [line for _ok, line in results]
+                    if st.get("flow"):   # a recheck is no new attempt: the attempt records it
+                        step["attempts"][-1].setdefault("rechecks", []).append({"at": now(), "flow_version": st["flow"].get("version"), "cause": "recheck"})
                     step["status"] = "done" if all(ok for ok, _ in results) else "check_failed"
                     save_chain(S, st)
 
@@ -928,6 +983,8 @@ def cmd_run(S: State, a: argparse.Namespace) -> int:
                 journal(S, a.pr, stuck[0]["id"], "", "", f"paused: {stuck[0]['status']}")
                 break
         except Exception as e:  # a variable with no value, a file that cannot be read: ring, never die in a loop
+            if st.get("flow"):
+                st["flow"]["claimed"] = []
             cur = next((s for s in group if s["status"] not in DONE), group[0])
             text = oneline(str(e) or repr(e), 300)
             journal(S, a.pr, cur["id"], "", "", f"paused: the runner could not go on: {text}")
@@ -940,6 +997,8 @@ def cmd_run(S: State, a: argparse.Namespace) -> int:
     if _stop and st["status"] == "running":
         st["status"] = "stopped"
         save_chain(S, st)
+    if st.get("flow") and st["status"] == "done":
+        flow_tick(S)    # its slot is free and PRs after it may be ready: they start now, not at the daemon's next tick
     flush_progress(S)   # before the pid file goes: `stop` waits for that, and nothing is written after it
     (cdir / "runner.pid").unlink(missing_ok=True)
     print(f"{now()} runner for {a.pr} ended: {st['status']}", flush=True)
@@ -974,6 +1033,8 @@ def cmd_resume(S: State, a: argparse.Namespace) -> int:
         if "=" not in kv:
             die(f"{kv!r}: --set takes NAME=value", 2)
         k, v = kv.split("=", 1)
+        if k in ((st.get("flow") or {}).get("vars_keys") or []):
+            die(f"{a.pr}: the flow sets {k}, and its runner takes the flow's value at the next step: change it with router.py flow apply")
         st["vars"][k] = v
         journal(S, a.pr, "", "", "", f"coordinator: set {k}={oneline(v, 200)}")
     if a.from_step:
@@ -987,6 +1048,8 @@ def cmd_resume(S: State, a: argparse.Namespace) -> int:
             s["status"] = "pending"
             s.pop("note", None)
             s.pop("rung", None)
+            if st.get("flow") and s["attempts"]:
+                s["cause"] = "resume_from"
         if a.note:
             st["steps"][ids.index(a.from_step)]["note"] = a.note
         journal(S, a.pr, a.from_step, "", "", f"coordinator: re-run from {a.from_step}" + (f"; note: {a.note}" if a.note else ""))
@@ -1246,6 +1309,13 @@ def status_line(S: State) -> str:
 
 def cmd_status(S: State, _a: argparse.Namespace) -> int:
     print("router  " + status_line(S))
+    try:
+        flow = load_flow(S)
+    except RouterError as e:
+        print(f"flow    {e}")
+        flow = None
+    if flow:
+        print(f"flow    v{flow['version']} · slots {len(open_chains(S))}/{flow['slots']} · start {flow['start']} · router.py flow show")
     for p in sorted((S / "chains").glob("*/state.json")):
         alive = pid_alive(p.parent / "runner.pid")
         st = read_json(p) or {}
@@ -1483,6 +1553,8 @@ def cmd_progress(S: State, _a: argparse.Namespace) -> int:
 
 
 def cmd_plan(S: State, a: argparse.Namespace) -> int:
+    if load_flow(S) is not None:
+        die("the flow is the plan: router.py flow apply <file> changes it, router.py flow show shows it")
     plan = read_json(Path(a.file)) or {}
     prs = plan.get("prs")
     if not isinstance(prs, list) or not prs or not all(isinstance(p, dict) and p.get("id") for p in prs):
@@ -1521,6 +1593,720 @@ def cmd_stop(S: State, a: argparse.Namespace) -> int:
     return 1 if left else 0
 
 
+# ---------------------------------------------------------------- the flow
+
+ROUTER_VARS = ("PR", "STATE", "DEF_DIR", "KIT", "CHECKS", "BASE_BRANCH")   # the router sets these for a flow PR
+FLOW_OWN = ("version", "history", "dir", "resolved", "removed")             # written by the router in its copy only
+PR_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")                        # what safe() leaves as it is
+STARTS = ("auto", "manual")
+
+
+def pr_id_problem(pr: str) -> str:
+    if PR_ID_RE.fullmatch(pr or ""):
+        return ""
+    return f"{pr!r}: a PR id is letters, digits, '.', '_' and '-', and starts with a letter or digit"
+
+
+_lock_fd = None
+_lock_depth = 0
+
+
+@contextlib.contextmanager
+def flow_lock(S: State):
+    """flow apply, a scheduler pass and a runner's re-read take turns: none sees another half done, and two passes
+    that race (the daemon's tick, a runner that just finished) cannot start one PR twice or overfill the slots."""
+    global _lock_fd, _lock_depth
+    if not _lock_depth:
+        _lock_fd = open(S / "flow.lock", "a")
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX)
+    _lock_depth += 1
+    try:
+        yield
+    finally:
+        _lock_depth -= 1
+        if not _lock_depth:
+            _lock_fd.close()   # closing it releases the lock
+            _lock_fd = None
+
+
+def load_flow(S: State) -> "dict | None":
+    """The router's copy of the flow; None before the first apply. Raises RouterError when it cannot be read."""
+    path = S / "flow.json"
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        raise RouterError(f"the flow could not be read: {e}")
+    try:
+        f = json.loads(text)
+    except ValueError as e:
+        raise RouterError(f"the flow could not be read: {path.name}: {e}")
+    if not isinstance(f, dict) or not isinstance(f.get("prs"), list) or not isinstance(f.get("resolved"), dict) \
+            or not isinstance(f.get("version"), int):
+        raise RouterError(f"the flow could not be read: {path.name} is not the router's copy of a flow")
+    return f
+
+
+def flow_pr(f: "dict | None", pr: str) -> "dict | None":
+    return next((p for p in (f or {}).get("prs") or [] if isinstance(p, dict) and str(p.get("id", "")).lower() == pr.lower()), None)
+
+
+def def_sha(d: dict) -> str:
+    return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def fill_values(layers: "dict[str, str]", own: "dict[str, str]", declared: "set[str]") -> "tuple[dict[str, str], set[str], list[tuple[str, str]]]":
+    """Fill the {NAME}s inside variable values ("WT": "{SCRATCH}/wt/{PR}"). Returns (values, the names a value waits
+    for: declared by the template and given by nobody, [(variable, problem)] for a name nobody declares or a loop)."""
+    raw = dict(layers, **own)
+    done: "dict[str, str]" = dict(own)
+    waits: "set[str]" = set()
+    problems: "list[tuple[str, str]]" = []
+
+    def fill(k: str, seen: "list[str]") -> str:
+        if k in done:
+            return done[k]
+        if k in seen:
+            problems.append((seen[0], f"vars.{seen[0]}: its value names itself: {' -> '.join(seen + [k])}"))
+            return raw[k]
+
+        def sub(m: "re.Match[str]") -> str:
+            n = m.group(1)
+            if n in raw:
+                return fill(n, seen + [k])
+            if n in declared:
+                waits.add(n)
+            else:
+                problems.append((k, f"vars.{k}: {{{n}}} is not a variable"))
+            return m.group(0)
+        done[k] = VAR_RE.sub(sub, raw[k])
+        return done[k]
+    for k in layers:
+        fill(k, [])
+    return done, waits, problems
+
+
+def flow_effective(S: State, f: dict, p: dict) -> dict:
+    """One PR as the flow defines it: the definition (the template's, with the PR's own steps when it has them), the
+    kit, and the variables. Variables, lowest first: SCRATCH from the environment of the apply, the profile's, the
+    template's, the flow's, the PR's, then the router's own. Everything comes from the copy: no file is read."""
+    t = f["resolved"]["templates"][p["template"]]
+    tdef, kit = t["def"], Path(t["kit"])
+    layers: "dict[str, str]" = {}
+    for layer in (f["resolved"].get("env"), (f["resolved"].get("profile") or {}).get("vars"), tdef.get("vars"), f.get("vars"), p.get("vars")):
+        layers.update({str(k): str(v) for k, v in (layer or {}).items() if k not in ROUTER_VARS})
+    own = {"PR": p["id"], "STATE": str(S.root), "DEF_DIR": str(Path(t["path"]).parent), "KIT": str(kit), "CHECKS": str(kit / "checks")}
+    if p.get("base"):
+        own["BASE_BRANCH"] = str(p["base"])
+    values, waits, problems = fill_values(layers, own, set(tdef.get("variables") or {}))
+    override = isinstance(p.get("steps"), list)
+    return {"def": dict(tdef, steps=p["steps"] if override else tdef["steps"]), "kit": str(kit), "def_path": t["path"],
+            "def_dir": str(Path(t["path"]).parent), "override": override, "vars": values, "waits": waits, "problems": problems}
+
+
+def def_problems(eff: dict, skip: "set[str]" = frozenset()) -> "tuple[set[str], list[str], list[str]]":
+    """validate() on a flow PR, sorted: (variables nobody gives, other things it waits for, problems that refuse it).
+    Problems of the steps in skip (settled ones) are left out: they ran, and nothing will render them again."""
+    missing, other, hard = set(eff["waits"]), [], []
+    for prob in validate(eff["def"], Path(eff["kit"]), eff["vars"]):
+        if any(prob.startswith((f"step {sid}:", f"step {sid},")) for sid in skip):
+            continue
+        m = re.search(r"no value for \{([A-Z][A-Z0-9_]*)\}$", prob)
+        if m:
+            missing.add(m.group(1))
+        elif "readonly needs the WT variable" in prob:
+            missing.add("WT")
+        elif "readonly needs WT to be a git checkout" in prob:
+            if "WT to be a git checkout" not in other:
+                other.append("WT to be a git checkout")
+        else:
+            hard.append(prob)
+    return missing, other, hard
+
+
+def flow_waits(S: State, f: dict, p: dict) -> str:
+    """What a PR that has no chain waits for, in one phrase; "" when it can start (a free slot aside)."""
+    try:
+        missing, other, hard = def_problems(flow_effective(S, f, p))
+    except Exception as e:   # a copy the router cannot read: the scheduler rings for it
+        return f"cannot start: {e!r}"
+    ids = {str(q.get("id", "")).lower(): q.get("id") for q in f["prs"]}
+    after = [ids.get(a.lower(), a) for a in p.get("after") or []]
+    parts = []
+    if missing or other:
+        parts.append("waiting for: " + ", ".join(sorted(missing) + other))
+    pending = [a for a in after if (read_json(chain_dir(S, a) / "state.json") or {}).get("status") != "done"]
+    if pending:
+        parts.append("after " + ", ".join(pending))
+    if hard:
+        parts.append("cannot start: " + hard[0])
+    return " · ".join(parts)
+
+
+def vars_problems(where: str, obj: object) -> "list[str]":
+    if obj is None:
+        return []
+    if not isinstance(obj, dict):
+        return [f"{where}: an object of NAME: value"]
+    out = []
+    for k, v in obj.items():
+        if k == "BASE_BRANCH":
+            out.append(f"{where}.BASE_BRANCH: the router sets it from the PR's base")
+        elif k in ROUTER_VARS:
+            out.append(f"{where}.{k}: the router sets it")
+        elif isinstance(v, bool) or not isinstance(v, (str, int, float)):
+            out.append(f"{where}.{k}: the value must be a string or a number")
+    return out
+
+
+def flow_build(S: State, raw: object, base_dir: Path) -> "tuple[dict, list[str]]":
+    """The router's copy of a flow given to apply (without version and history), and every problem that refuses it,
+    one line each. Templates and the profile are read here, once: the copy holds them, so a version never changes."""
+    if not isinstance(raw, dict):
+        return {}, ["not a flow: a JSON object with templates and a prs list"]
+    f = {k: v for k, v in raw.items() if k not in FLOW_OWN}
+    f.setdefault("slots", MAX_CHAINS)
+    f.setdefault("start", "auto")
+    f["dir"] = str(base_dir)
+    problems: "list[str]" = []
+    if isinstance(f["slots"], bool) or not isinstance(f["slots"], int) or f["slots"] < 1:
+        problems.append(f"slots: {f['slots']!r} is not a positive integer")
+    if f["start"] not in STARTS:
+        problems.append(f"start: {f['start']!r} is not auto or manual")
+    resolved: dict = {"templates": {}, "profile": None, "env": {"SCRATCH": os.environ["SCRATCH"]} if os.environ.get("SCRATCH") else {}}
+    f["resolved"] = resolved
+    templates = f.get("templates")
+    if not isinstance(templates, dict) or not templates:
+        problems.append("templates: an object of name -> chain definition file")
+        templates = {}
+    for name, rel in templates.items():
+        path = (base_dir / str(rel)).resolve()
+        if not isinstance(rel, str) or not path.is_file():
+            problems.append(f"templates.{name}: not a file: {path}")
+            continue
+        d = read_json(path)
+        if not isinstance(d, dict) or not isinstance(d.get("steps"), list) or not all(isinstance(s, dict) for s in d["steps"]):
+            problems.append(f"templates.{name}: {path} is not a chain definition (a JSON object with a steps list)")
+            continue
+        kit = kit_of(path, d)
+        if not kit.is_dir():
+            problems.append(f"templates.{name}: its kit {d.get('kit')!r} is not a directory: {kit}")
+            continue
+        problems += vars_problems(f"templates.{name}: vars", d.get("vars"))
+        resolved["templates"][name] = {"path": str(path), "kit": str(kit), "def": d}
+    if f.get("profile"):
+        path = (base_dir / str(f["profile"])).resolve()
+        d = read_json(path) if path.is_file() else None
+        if not path.is_file():
+            problems.append(f"profile: not a file: {path}")
+        elif not isinstance(d, dict) or not isinstance(d.get("vars", {}), dict):
+            problems.append(f"profile: {path} is not a profile (a JSON object with a vars object)")
+        else:
+            problems += vars_problems("profile: vars", d.get("vars"))
+            resolved["profile"] = {"path": str(path), "name": str(d.get("name") or ""), "vars": d.get("vars") or {}}
+    problems += vars_problems("vars", f.get("vars"))
+
+    prs = f.get("prs")
+    if not isinstance(prs, list) or not prs or not all(isinstance(p, dict) for p in prs):
+        return f, problems + ["prs: a list of objects, each with an id"]
+    ids: "dict[str, list[str]]" = {}
+    for i, p in enumerate(prs):
+        pid = p.get("id")
+        if not isinstance(pid, str) or not pid:
+            problems.append(f"prs[{i}]: no id")
+            continue
+        if pr_id_problem(pid):
+            problems.append(pr_id_problem(pid))
+        ids.setdefault(pid.lower(), []).append(pid)
+    for names in ids.values():
+        if len(names) > 1:
+            problems.append(f"{names[0]}: the id is in the flow {len(names)} times ({', '.join(names)}); upper and lower case are the same")
+    graph: "dict[str, list[str]]" = {}
+    seen_problems: "set[str]" = set()
+    for p in prs:
+        pid = p.get("id")
+        if not isinstance(pid, str) or not pid:
+            continue
+        after = p.get("after", [])
+        if not isinstance(after, list) or not all(isinstance(x, str) for x in after):
+            problems.append(f"{pid}: after must be a list of PR ids")
+            after = []
+        for x in after:
+            if x.lower() not in ids:
+                problems.append(f"{pid}: after names {x}, which is not in the flow")
+        graph[pid.lower()] = [x.lower() for x in after if x.lower() in ids]
+        base = p.get("base")
+        if base is not None and not isinstance(base, str):
+            problems.append(f"{pid}: base must be a branch name")
+        elif isinstance(base, str) and base.strip().lower() in ("main", "master"):
+            problems.append(f"{pid}: base {base}: inner PRs go into the integration branch, never main or master")
+        problems += vars_problems(f"{pid}: vars", p.get("vars"))
+        if "steps" in p and (not isinstance(p["steps"], list) or not all(isinstance(s, dict) for s in p["steps"])):
+            problems.append(f"{pid}: steps must be a list of steps (objects)")
+            continue
+        t = p.get("template")
+        if t is None:
+            problems.append(f"{pid}: no template; the flow's templates: {', '.join(sorted(templates)) or 'none'}")
+            continue
+        if t not in templates:
+            problems.append(f"{pid}: template {t!r} is not one of the flow's templates ({', '.join(sorted(templates)) or 'none'})")
+            continue
+        if t not in resolved["templates"] or problems and any(x.startswith(f"{pid}: vars") for x in problems):
+            continue
+        eff = flow_effective(S, f, p)
+        for k, prob in eff["problems"]:
+            line = f"{pid}: {prob}" if k in (p.get("vars") or {}) else prob
+            if line not in seen_problems:
+                seen_problems.add(line)
+                problems.append(line)
+        st = read_json(chain_dir(S, pid) / "state.json") or {}
+        settled = {s["id"] for s in st.get("steps") or [] if s.get("status") != "pending"}
+        problems += [f"{pid}: {x}" for x in def_problems(eff, settled)[2]]
+    problems += cycles(graph, {k: v[0] for k, v in ids.items()})
+    return f, problems
+
+
+def cycles(graph: "dict[str, list[str]]", name: "dict[str, str]") -> "list[str]":
+    """One line per cycle in "after", as the ids that make it."""
+    out, state = [], {}
+
+    def visit(n: str, path: "list[str]") -> None:
+        state[n] = 1
+        for m in graph.get(n, []):
+            if state.get(m) == 1:
+                loop = path[path.index(m):] + [m]
+                out.append("after: a cycle: " + " -> ".join(name[x] for x in loop))
+            elif not state.get(m):
+                visit(m, path + [m])
+        state[n] = 2
+    for n in graph:
+        if not state.get(n):
+            visit(n, [n])
+    return out
+
+
+def shown(v: object) -> str:
+    """A value short enough for a change line, or "" when it is not."""
+    if v is None:
+        return "none"
+    s = v if isinstance(v, str) else json.dumps(v)
+    if s == "":
+        return "''"
+    return s if len(s) <= 48 and "\n" not in s else ""
+
+
+def change(label: str, a: object, b: object) -> str:
+    if a is None:
+        return f"{label} set to {shown(b)}" if shown(b) else f"{label} set"
+    if b is None:
+        return f"{label} removed"
+    return f"{label} {shown(a)} -> {shown(b)}" if shown(a) and shown(b) else f"{label} changed"
+
+
+def dict_changes(label: str, a: "dict | None", b: "dict | None") -> "list[str]":
+    a, b = a or {}, b or {}
+    return [change(f"{label}{k}", a.get(k), b.get(k)) for k in sorted(set(a) | set(b))
+            if (str(a[k]) if k in a else None) != (str(b[k]) if k in b else None)]
+
+
+def step_changes(a: dict, b: dict) -> "list[str]":
+    """One phrase per field of a step that differs: "effort high -> xhigh"."""
+    return [change(k, a.get(k), b.get(k)) for k in sorted(set(a) | set(b)) if k != "id" and a.get(k) != b.get(k)]
+
+
+def steps_changes(pid: str, old: "list[dict]", new: "list[dict]") -> "list[str]":
+    oi, ni = [s.get("id") for s in old], [s.get("id") for s in new]
+    od, nd = {s.get("id"): s for s in old}, {s.get("id"): s for s in new}
+    out = [f"{pid}: step {sid} removed" for sid in oi if sid not in nd]
+    for i, sid in enumerate(ni):
+        if sid not in od:
+            out.append(f"{pid}: step {sid} added " + (f"after {ni[i - 1]}" if i else "first"))
+        else:
+            out += [f"{pid}: {sid} {x}" for x in step_changes(od[sid], nd[sid])]
+    if [s for s in oi if s in nd] != [s for s in ni if s in od]:
+        out.append(f"{pid}: steps reordered: {', '.join(str(s) for s in ni)}")
+    return out
+
+
+def pr_added(p: dict) -> str:
+    return f"{p['id']} added" + (f" after {', '.join(p['after'])}" if p.get("after") else "")
+
+
+def flow_changes(S: State, old: "dict | None", new: dict) -> "list[str]":
+    """What a new version changes, in plain words, one line each. Empty: the file is the version it would replace."""
+    if old is None:
+        return [f"flow created: {len(new['prs'])} PRs · slots {new['slots']} · start {new['start']}"] + [pr_added(p) for p in new["prs"]]
+    out = [change(k, old.get(k), new.get(k)) for k in ("title", "slots", "start", "profile") if old.get(k) != new.get(k)]
+    ro, rn = old["resolved"], new["resolved"]
+    if (ro.get("env") or {}).get("SCRATCH") != (rn.get("env") or {}).get("SCRATCH"):
+        out.append(change("SCRATCH from the environment", (ro.get("env") or {}).get("SCRATCH"), (rn.get("env") or {}).get("SCRATCH")))
+    out += dict_changes("profile: vars.", (ro.get("profile") or {}).get("vars"), (rn.get("profile") or {}).get("vars"))
+    to, tn = ro.get("templates") or {}, rn.get("templates") or {}
+    for name in sorted(set(to) | set(tn)):
+        a, b = to.get(name), tn.get(name)
+        if a is None or b is None or a["path"] != b["path"]:
+            out.append(change(f"templates.{name}", (a or {}).get("path"), (b or {}).get("path")))
+        if a and b:
+            out += dict_changes(f"templates.{name}: vars.", a["def"].get("vars"), b["def"].get("vars"))
+            out += [f"templates.{name}: {x}" for x in step_changes({k: v for k, v in a["def"].items() if k not in ("steps", "vars")},
+                                                                    {k: v for k, v in b["def"].items() if k not in ("steps", "vars")})]
+    out += dict_changes("vars.", old.get("vars"), new.get("vars"))
+    before = {str(p["id"]).lower(): p for p in old["prs"]}
+    now_ids = {str(p["id"]).lower() for p in new["prs"]}
+    out += [f"{p['id']} removed (not started)" for p in old["prs"] if str(p["id"]).lower() not in now_ids]
+    for p in new["prs"]:
+        q = before.get(p["id"].lower())
+        if q is None:
+            out.append(pr_added(p))
+            continue
+        pid = p["id"]
+        if q["id"] != pid:
+            out.append(f"{q['id']} renamed {pid}")
+        out += [change(f"{pid}: {k}", q.get(k), p.get(k)) for k in ("part", "title", "base", "template") if q.get(k) != p.get(k)]
+        if [x.lower() for x in q.get("after") or []] != [x.lower() for x in p.get("after") or []]:
+            out.append(change(f"{pid}: after", ", ".join(q.get("after") or []) or "-", ", ".join(p.get("after") or []) or "-"))
+        out += dict_changes(f"{pid}: vars.", q.get("vars"), p.get("vars"))
+        if isinstance(q.get("steps"), list) != isinstance(p.get("steps"), list):
+            out.append(f"{pid}: " + ("its own steps now" if isinstance(p.get("steps"), list) else "the template's steps again"))
+        try:
+            old_steps = flow_effective(S, old, q)["def"]["steps"]
+        except Exception:
+            old_steps = []
+        out += steps_changes(pid, old_steps, flow_effective(S, new, p)["def"]["steps"])
+    return out
+
+
+def step_names(kit: Path, d: dict) -> "set[str]":
+    """The variables a step uses: the {NAME}s of its definition and of its spec, WT and KIT for a worker step (its
+    HEAD range is measured in WT, its spec comes from the kit), KIT for a step with a command (it runs there)."""
+    texts = [d.get(k) for k in ("agent", "model", "effort", "worktree", "when", "run", "title")]
+    texts += list(d.get("checks") or []) + list(d.get("show") or [])
+    names = {m.group(1) for x in texts if isinstance(x, str) for m in VAR_RE.finditer(x)}
+    if d.get("type", "worker") == "worker":
+        names |= {"WT", "KIT"}
+        spec = kit / "specs" / str(d.get("spec", ""))
+        if d.get("spec") and spec.is_file():
+            names |= {m.group(1) for m in VAR_RE.finditer(spec.read_text())}
+    if any(d.get(k) for k in ("when", "run", "checks", "show")):
+        names.add("KIT")
+    return names
+
+
+def settled_head(st: dict) -> int:
+    """How many of a chain's steps are fixed: up to its last step that is not pending, or that its runner has claimed
+    because it is about to start it. A pending step in between (a retried step of a group) keeps its place."""
+    claimed = set((st.get("flow") or {}).get("claimed") or [])
+    return 1 + max((i for i, s in enumerate(st["steps"]) if s["status"] != "pending" or s["id"] in claimed), default=-1)
+
+
+def flow_chain_problems(S: State, old: "dict | None", new: dict) -> "list[str]":
+    """What a new version may not do to PRs whose chain exists: one line per refused change."""
+    out = []
+    for path in sorted((S / "chains").glob("*/state.json")):
+        st = read_json(path)
+        if not st or not st.get("pr"):
+            continue
+        pid, p = st["pr"], flow_pr(new, st["pr"])
+        if not st.get("flow"):
+            if p is not None:
+                out.append(f"{pid}: its chain was started with router.py chain, so the flow cannot take it over; give the flow's PR another id")
+            continue
+        if p is None:
+            out.append(f"{pid}: its chain exists ({st.get('status')}), so it stays in the flow")
+            continue
+        if p["id"] != pid:
+            out.append(f"{pid}: its chain exists, so its id stays {pid} (not {p['id']})")
+        q = flow_pr(old, pid)
+        if q is not None and sorted(x.lower() for x in q.get("after") or []) != sorted(x.lower() for x in p.get("after") or []):
+            out.append(f"{pid}: its chain exists, so its after cannot change ({', '.join(q.get('after') or []) or '-'} -> {', '.join(p.get('after') or []) or '-'})")
+        if p.get("template") not in (new["resolved"].get("templates") or {}):
+            continue
+        eff = flow_effective(S, new, p)
+        steps, k = st["steps"], settled_head(st)
+        claimed = set(st["flow"].get("claimed") or [])
+        new_steps = eff["def"]["steps"]
+        new_ids = [s.get("id") for s in new_steps]
+        for i, s in enumerate(steps[:k]):
+            fixed = s["status"] != "pending" or s["id"] in claimed
+            what = f"step {s['id']} is {s['status'].replace('_', ' ') if s['status'] != 'pending' else 'about to start'}" if fixed \
+                else f"step {s['id']} comes before a settled step"
+            if s["id"] not in new_ids:
+                out.append(f"{pid}: {what}: it cannot be removed")
+            elif new_ids.index(s["id"]) != i:
+                out.append(f"{pid}: {what}: the steps up to it cannot be reordered, and no step can go before it")
+            elif fixed and new_steps[i] != s["def"]:
+                out.append(f"{pid}: {what}: its definition cannot change ({'; '.join(step_changes(s['def'], new_steps[i]))})")
+        keys = set(st["flow"].get("vars_keys") or [])
+        users: "dict[str, list[str]]" = {}
+        for s in steps[:k]:
+            if s["status"] != "pending" or s["id"] in claimed:
+                for n in step_names(Path(st.get("kit_dir") or st["def_dir"]), s["def"]):
+                    users.setdefault(n, []).append(s["id"])
+        for n in sorted(users):
+            if n not in keys and n in st["vars"] or n in STEP_VARS_EARLY + STEP_VARS_LATE + ("NOTE",) or n.startswith("HEAD_"):
+                continue   # an export, a HEAD_* or a step's own value: the run sets it, the flow cannot change it
+            a = st["vars"].get(n) if n in keys else None
+            b = eff["vars"].get(n)
+            if a != b:
+                out.append(f"{pid}: {change(n, a, b)}, and settled step(s) {', '.join(users[n])} used it")
+    return out
+
+
+def flow_apply(S: State, raw: object, base_dir: Path, base: "int | None" = None, by: str = "coordinator", note: str = "") -> dict:
+    """The only way a flow enters or changes a run. Accepted: v+1, one history row, one journal line, the page, and a
+    scheduler pass. Refused: one line per problem, and nothing changed. A file the same as the current version: no-op."""
+    result = {"ok": False, "version": 0, "changes": [], "problems": [], "started": []}
+    with flow_lock(S):
+        try:
+            old = load_flow(S)
+        except RouterError as e:
+            return dict(result, problems=[f"{e}; fix or remove {S / 'flow.json'}"])
+        cur = old["version"] if old else 0
+        result["version"] = cur
+        if base is not None and base != cur:
+            return dict(result, problems=[f"stale: the run is at v{cur}"])
+        new, problems = flow_build(S, raw, base_dir)
+        if old and new and not new["resolved"]["env"]:   # applied from a terminal without SCRATCH: the run keeps its own
+            new["resolved"]["env"] = dict(old["resolved"].get("env") or {})
+        if not problems:
+            problems = flow_chain_problems(S, old, new)
+        if problems:
+            return dict(result, problems=problems)
+        changes = flow_changes(S, old, new)
+        if not changes:
+            return dict(result, ok=True)
+        v = cur + 1
+        ids = {p["id"].lower() for p in new["prs"]}
+        new.update(version=v, history=list((old or {}).get("history") or []) + [{"v": v, "at": now(), "by": by, "note": note, "changes": changes}],
+                   removed=[x for x in (old or {}).get("removed") or [] if x["id"].lower() not in ids]
+                   + [{"id": p["id"], "part": p.get("part") or "", "title": p.get("title") or "", "v": v}
+                      for p in (old or {}).get("prs") or [] if p["id"].lower() not in ids])
+        write_json(S / "flow.json", new)
+        journal(S, "", "", "", "", f"flow v{v} by {by}: {len(changes)} changes" + (f"; {note}" if note else "") + " · " + "; ".join(changes))
+        try:
+            started = flow_schedule(S)
+        except Exception as e:
+            started = [f"the scheduler pass failed: {e!r}"]
+    refresh_progress(S)
+    return dict(result, ok=True, version=v, changes=changes, started=started)
+
+
+def flow_start_chain(S: State, f: dict, p: dict) -> int:
+    """Create a flow PR's chain exactly as `chain` would, and start its runner. Called under the flow lock."""
+    pid, cdir = p["id"], chain_dir(S, p["id"])
+    eff = flow_effective(S, f, p)
+    if pid_alive(cdir / "runner.pid"):
+        raise RouterError(f"{pid}: its runner is already running")
+    cdir.mkdir(parents=True, exist_ok=True)
+    def_path = Path(eff["def_path"])
+    if eff["override"]:   # the chain gets a file of its own steps; the kit stays the template's
+        def_path = cdir / "def.json"
+        write_json(def_path, dict(eff["def"], kit=eff["kit"]))
+    steps = eff["def"]["steps"]
+    st = {"pr": pid, "def": str(def_path), "def_dir": eff["def_dir"], "kit_dir": eff["kit"], "created": now(), "status": "running",
+          "vars": dict(eff["vars"]), "steps": [{"id": s["id"], "def": s, "status": "pending", "attempts": []} for s in steps],
+          "flow": {"version": f["version"], "started_at": f["version"], "vars_keys": sorted(eff["vars"]),
+                   "created": {s["id"]: def_sha(s) for s in steps}, "claimed": []}}
+    save_chain(S, st)
+    journal(S, pid, "", "", "", f"chain created from {def_path.name}: {len(steps)} steps")
+    journal(S, pid, "", "", "", f"flow: started {pid} (v{f['version']})")
+    runner = launch(S, ["run", pid], cdir / "runner.log")
+    atomic_write(cdir / "runner.pid", f"{runner}\n")
+    return runner
+
+
+def flow_schedule(S: State, only: str = "") -> "list[str]":
+    """One scheduler pass: under "start": "auto", start every PR that is ready, in the flow's order. Ready: no chain
+    yet, every PR it is after is done, a slot is free, and its definition has a value for every variable. With
+    only=<pr>, that PR alone and whatever "start" says; a PR that is not ready raises RouterError saying why."""
+    if not (S / "flow.json").exists():   # a run without a flow: not even the lock file
+        if only:
+            raise RouterError("no flow: router.py flow apply <file>")
+        return []
+    with flow_lock(S):
+        f = load_flow(S)
+        if f is None:
+            return []
+        if only and flow_pr(f, only) is None:
+            raise RouterError(f"{only}: the flow v{f['version']} does not name it")
+        if not only and f.get("start") != "auto":
+            return []
+        if not pid_alive(S / "mailbox.pid"):
+            if only:
+                raise RouterError("the mailbox daemon is not running: router.py init")
+            return ["nothing was started: the mailbox daemon is not running (router.py init)"]
+        lines = []
+        for p in f["prs"]:
+            pid = p["id"]
+            if only and pid.lower() != only.lower():
+                continue
+            st = read_json(chain_dir(S, pid) / "state.json")
+            if st is not None:
+                if only:
+                    raise RouterError(f"{pid}: its chain exists ({st.get('status')}): router.py status")
+                continue
+            why = flow_waits(S, f, p)
+            opened = open_chains(S)
+            if not why and len(opened) >= f["slots"]:
+                why = f"no free slot ({len(opened)} of {f['slots']} open: {', '.join(opened)})"
+            if why:
+                if only:
+                    raise RouterError(f"{pid} is not ready: {why}")
+                continue
+            try:
+                runner = flow_start_chain(S, f, p)
+            except (RouterError, OSError) as e:
+                key = f"flowstart-{pid}-{hashlib.sha1(str(e).encode()).hexdigest()[:10]}"
+                if not (S / "wake" / "keys" / safe(key)).exists():
+                    journal(S, pid, "", "", "", f"flow: could not start {pid}: {e}")
+                wake(S, "start", pid, [f"WAKE start · {pid}: the flow could not start its chain: {e}",
+                                       f"next: router.py flow show  |  router.py flow start {pid}"], key=key)
+                if only:
+                    raise RouterError(f"{pid}: the chain could not be started: {e}")
+                continue
+            lines.append(f"started {pid} (v{f['version']}), runner pid {runner}")
+        return lines
+
+
+def flow_tick(S: State) -> None:
+    """The daemon's scheduler pass. A flow it cannot read rings once per reason; the daemon goes on."""
+    try:
+        for line in flow_schedule(S):
+            if line.startswith("started"):
+                print(f"{now()} flow: {line}", flush=True)
+    except Exception as e:
+        print(f"{now()} flow: the scheduler pass failed: {e!r}", flush=True)
+        wake(S, "daemon", "", [f"WAKE daemon · {e}" if isinstance(e, RouterError) else f"WAKE daemon · the flow could not be read: {e!r}",
+                               "no PR of the flow is started until it can be read; running chains go on",
+                               "next: router.py flow show, then router.py flow apply <a fixed file>"],
+             key=f"flow-{hashlib.sha1(str(e).encode()).hexdigest()[:10]}")
+
+
+def flow_reread(S: State, st: dict) -> None:
+    """At a step boundary: the chain's steps that are not settled become the flow's latest ([settled steps as they
+    are] + [the flow's other steps, in its order, with its definitions]), and its variables the flow's, except those
+    a step exported and the router's HEAD_*. Raises RouterError("the flow could not be read: …")."""
+    try:
+        f = load_flow(S)
+        if f is None:
+            raise RouterError("the flow could not be read: there is no flow.json")
+        p = flow_pr(f, st["pr"])
+        if p is None:
+            raise RouterError(f"the flow could not be read: v{f['version']} does not name {st['pr']}")
+        eff = flow_effective(S, f, p)
+    except RouterError:
+        raise
+    except Exception as e:
+        raise RouterError(f"the flow could not be read: {e!r}")
+    fl, v, pr = st["flow"], f["version"], st["pr"]
+    steps = st["steps"]
+    k = settled_head(st)
+    defs = {d.get("id"): d for d in eff["def"]["steps"]}
+    head = steps[:k]
+    for s in head:
+        if s["status"] == "pending" and s["id"] in defs and s["def"] != defs[s["id"]]:
+            journal(S, pr, s["id"], "", "", f"flow v{v}: step edited: {'; '.join(step_changes(s['def'], defs[s['id']]))}")
+            s["def"] = defs[s["id"]]
+    rest = {s["id"]: s for s in steps[k:]}
+    order_before = [s["id"] for s in steps[k:]]
+    new = list(head)
+    for d in eff["def"]["steps"]:
+        if any(s["id"] == d.get("id") for s in head):
+            continue
+        s = rest.pop(d["id"], None)
+        if s is None:
+            s = {"id": d["id"], "def": d, "status": "pending", "attempts": []}
+            journal(S, pr, d["id"], "", "", f"flow v{v}: step added after {new[-1]['id'] if new else 'nothing (it is first)'}")
+        elif s["def"] != d:
+            journal(S, pr, d["id"], "", "", f"flow v{v}: step edited: {'; '.join(step_changes(s['def'], d))}")
+            s["def"] = d
+        new.append(s)
+    for s in rest.values():
+        journal(S, pr, s["id"], "", "", f"flow v{v}: step removed; it will not run")
+        if s["attempts"]:
+            fl.setdefault("removed_steps", []).append({"id": s["id"], "v": v, "attempts": s["attempts"]})
+    order_after = [s["id"] for s in new[k:] if s["id"] in order_before]
+    if order_after != [x for x in order_before if x in order_after]:
+        journal(S, pr, "", "", "", f"flow v{v}: steps reordered: {', '.join(s['id'] for s in new[k:])}")
+    st["steps"] = new
+    keys = set(fl.get("vars_keys") or [])
+    runtime = {n: val for n, val in st["vars"].items() if n not in keys or n.startswith(("HEAD_BEFORE_", "HEAD_AFTER_"))}
+    st["vars"] = dict(eff["vars"], **runtime)
+    fl["vars_keys"] = sorted(n for n in eff["vars"] if n not in runtime)
+    st.update({"kit_dir": eff["kit"], "def_dir": eff["def_dir"], "def": eff["def_path"]})
+    if eff["override"]:
+        own = dict(eff["def"], kit=eff["kit"])
+        st["def"] = str(chain_dir(S, pr) / "def.json")
+        if read_json(Path(st["def"])) != own:
+            write_json(Path(st["def"]), own)
+    fl["version"] = v
+
+
+def flow_stamp(st: dict, step: dict, att: dict) -> None:
+    """A flow chain's attempt records the flow version it ran under, why it ran, and whether its step was edited."""
+    fl = st.get("flow")
+    if fl:
+        att.update(flow_version=fl.get("version"), cause=step.get("cause") or ("first" if att["n"] == 1 else "retry"))
+        if def_sha(step["def"]) != (fl.get("created") or {}).get(step["id"]):
+            att["edited"] = True
+
+
+def flow_state(S: State, f: dict, p: dict, opened: "list[str]") -> str:
+    """A PR's state for flow show: its chain's, or what it waits for."""
+    st = read_json(chain_dir(S, p["id"]) / "state.json")
+    if st is not None:
+        row = pr_row(S, {"id": p["id"]}, st)
+        return f"running {' ∥ '.join(row['at'])}" if row["state"] == "running" else row["state"]
+    why = flow_waits(S, f, p)
+    if why:
+        return why if why.startswith(("waiting", "cannot")) else f"not started · {why}"
+    if f.get("start") != "auto":
+        return f"ready · start manual: router.py flow start {p['id']}"
+    return "ready" + ("" if len(opened) < f["slots"] else " · no free slot")
+
+
+def cmd_flow(S: State, a: argparse.Namespace) -> int:
+    if a.flow_cmd == "apply":
+        try:
+            raw = json.loads(Path(a.file).read_text())
+        except (OSError, ValueError) as e:
+            print(f"NOT OK flow: 1 problem(s), nothing changed\n  - {a.file} could not be read: {e}")
+            return 1
+        r = flow_apply(S, raw, Path(a.file).resolve().parent, base=a.base, by=a.by, note=a.note)
+        if not r["ok"]:
+            print(f"NOT OK flow: {len(r['problems'])} problem(s), nothing changed")
+            print("\n".join(f"  - {x}" for x in r["problems"]))
+            return 1
+        if not r["changes"]:
+            print(f"OK flow v{r['version']}: no change; the file is v{r['version']} as it is, so the version stays")
+            return 0
+        print(f"OK flow v{r['version']}: {len(r['changes'])} changes")
+        print("\n".join([f"  - {x}" for x in r["changes"]] + [f"  {x}" for x in r["started"]]))
+        return 0
+    f = load_flow(S)
+    if f is None:
+        die("no flow: router.py flow apply <file>")
+    if a.flow_cmd == "show":
+        opened = open_chains(S)
+        print(f"flow v{f['version']} · slots {len(opened)}/{f['slots']} · start {f['start']}" + (f" · {f['title']}" if f.get("title") else ""))
+        for p in f["prs"]:
+            print("  " + " · ".join([p["id"], str(p.get("part") or "-"), str(p.get("title") or "-"),
+                                     "after " + (", ".join(p.get("after") or []) or "-"), flow_state(S, f, p, opened)]))
+        for x in f.get("removed") or []:
+            print("  " + " · ".join([x["id"], x.get("part") or "-", x.get("title") or "-", f"removed in v{x['v']}"]))
+        return 0
+    if a.flow_cmd == "start":
+        lines = flow_schedule(S, only=a.pr)
+        refresh_progress(S)
+        print(f"OK {lines[0]}" if lines else f"NOT OK {a.pr}: nothing was started")
+        return 0 if lines else 1
+    for h in f.get("history", [])[-max(1, a.n):]:
+        print(f"v{h['v']} · {h['at']} · by {h['by']} · {len(h['changes'])} changes" + (f" · {h['note']}" if h.get("note") else ""))
+        print("\n".join(f"  - {x}" for x in h["changes"]))
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
         print(__doc__.strip())
@@ -1548,11 +2334,17 @@ def main() -> int:
     sub.add_parser("progress")
     p = sub.add_parser("plan"); p.add_argument("file")
     p = sub.add_parser("stop"); p.add_argument("pr", nargs="?"); p.add_argument("--all", action="store_true")
+    fs = sub.add_parser("flow").add_subparsers(dest="flow_cmd")
+    p = fs.add_parser("apply"); p.add_argument("file"); p.add_argument("--base", type=lambda x: int(x.lstrip("v")))
+    p.add_argument("--by", default="coordinator"); p.add_argument("--note", default="")
+    fs.add_parser("show")
+    p = fs.add_parser("start"); p.add_argument("pr")
+    p = fs.add_parser("history"); p.add_argument("n", nargs="?", type=int, default=10)
     try:
         a, extra = ap.parse_known_args()
     except SystemExit:
         return 2
-    if not a.cmd:
+    if not a.cmd or a.cmd == "flow" and not a.flow_cmd:
         print(__doc__.strip())
         return 2
     # argparse before Python 3.12 does not give `chain` the K=V words that follow --def: they arrive here.
@@ -1575,7 +2367,7 @@ def dispatch(S: State, a: argparse.Namespace) -> int:
     return {"init": cmd_init, "mailbox": cmd_mailbox, "chain": cmd_chain, "run": cmd_run, "wait": cmd_wait,
             "resume": cmd_resume, "retry": cmd_retry, "reply": cmd_reply, "worker": cmd_worker, "status": cmd_status,
             "workers": cmd_workers, "stop": cmd_stop, "last": cmd_last, "fail": cmd_fail, "progress": cmd_progress,
-            "plan": cmd_plan}[a.cmd](S, a)
+            "plan": cmd_plan, "flow": cmd_flow}[a.cmd](S, a)
 
 
 if __name__ == "__main__":

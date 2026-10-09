@@ -15,7 +15,7 @@ journal line and started the next worker by hand. The router does those steps. T
 something needs a decision.
 
 Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-coordinators-loop) ·
-[Seeing progress](#seeing-progress) · [What rings](#what-rings) ·
+[The flow file](#the-flow-file) · [Seeing progress](#seeing-progress) · [What rings](#what-rings) ·
 [A chain definition](#a-chain-definition) · [Checks](#checks) · [After a restart](#after-a-restart) ·
 [Tested how](#tested-how) · [Not tested, and limits](#not-tested-and-limits)
 
@@ -30,7 +30,7 @@ Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-
 | `router/templates/smoke.json`, `router/specs/smoke-*.md` | A harmless chain that proves the router against real Orca: two workers at once, a question, a failure with a retry, a script step, a gate. |
 | `router/checks/*` | Checks that print one line, `OK …` or `NOT OK …`, and exit 0 or 1. |
 | `router/draft-pr.sh` | Opens the inner PR as a draft, so that step needs no model. Refuses `main` as the base. |
-| `tests/` | `test_router.py` (76 tests) and `fake-orca`, a stand-in for the Orca CLI. |
+| `tests/` | `test_router.py` (109 tests) and `fake-orca`, a stand-in for the Orca CLI. |
 | `skills/flow-run`, `skills/flow-status` | The two skills. |
 
 State lives in `$ROUTER_STATE` (default `$SCRATCH/router`, where `SCRATCH` is the run directory). `router.py --help`
@@ -75,6 +75,9 @@ $R chain <pr> --def $FLOWS/router/templates/inner-pr.json WT=<worktree> ISSUE=<n
 $R wait                                                   # in the background, as the LAST action of every turn
 ```
 
+A run planned as a [flow file](#the-flow-file) replaces the `chain` lines: `$R flow apply <flow.json>` once, and
+the router starts each PR when it is ready.
+
 `/flows:flow-run` walks through the same loop.
 
 `wait` blocks until something needs the coordinator, prints one screen and exits; the harness then wakes the
@@ -96,12 +99,122 @@ coordinator. Every screen ends with a `next:` line. The answers:
 | `$R workers` | Orca's own view, one line per worker that is live or still owes something. |
 | `$R stop <pr>` / `$R stop --all` | Stops a runner or every daemon. Workers are untouched. |
 
+## The flow file
+
+One JSON file can plan the whole run: the PR graph, each PR's steps, the variables. `router.py flow apply` is the
+only way it enters or changes a run, and every accepted apply is a new version. Each PR's runner follows the latest
+version for the steps it has not started, and never touches work in flight. Without a flow, `plan` and one `chain`
+per PR work as above.
+
+```json
+{
+  "title": "Move the payments client to v3",
+  "slots": 2,
+  "start": "auto",
+  "templates": {"inner-pr": "templates/inner-pr.json"},
+  "profile": "profiles/python.json",
+  "vars": {"RUN_CONTEXT": "The payments client moves from v2 to v3."},
+  "prs": [
+    {"id": "p1", "part": "Part 1 · Dependencies", "title": "Pin the new client", "base": "payments-v3", "after": [],
+     "template": "inner-pr", "vars": {"WT": "{SCRATCH}/wt/{PR}", "ISSUE": "12", "TITLE": "p1: pin the new client"}},
+    {"id": "p2", "part": "Part 2 · Callers", "title": "Switch the checkout flow", "base": "payments-v3", "after": ["p1"],
+     "template": "inner-pr", "vars": {"ISSUE": "13", "TITLE": "p2: switch the checkout flow", "IMPL_EFFORT": "xhigh"}}
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `title` | Shown by `flow show` and the progress view. |
+| `slots` | Chains open at once (default `ROUTER_MAX_CHAINS`). With a flow it also caps chains started by hand. |
+| `start` | `auto`: the router starts a PR as soon as it is ready. `manual`: only `router.py flow start <pr>` does. Default `auto`. |
+| `templates` | Name → chain definition file, relative to the flow file (absolute allowed). |
+| `profile` | Optional: a JSON file `{"name", "vars"}`, relative to the flow file. Its `vars` are the lowest layer. |
+| `vars` | Variables for every PR. |
+| `prs[].id` | The `<pr>` of the chain: letters, digits, `.`, `_` and `-`, starting with a letter or digit. Upper and lower case are the same. |
+| `prs[].part`, `title` | The progress view's group and line. |
+| `prs[].base` | The branch the PR merges into. It becomes `BASE_BRANCH`. Never `main` or `master`. |
+| `prs[].after` | Ids of the PRs whose chain must be done before this one starts. |
+| `prs[].template` | A name from `templates`. |
+| `prs[].vars` | The PR's own variables. |
+| `prs[].steps` | Optional: the PR's full step list, in a template's `steps` shape. It replaces the template's steps; the template still gives the kit and its `vars`. The chain gets it as `chains/<pr>/def.json`. |
+
+Variables, lowest first: `SCRATCH` from the environment of `flow apply`, the profile's, the template's `vars`, the
+flow's, the PR's, then the router's own: `PR`, `STATE`, `DEF_DIR` (the template's directory), `KIT`, `CHECKS`, and
+`BASE_BRANCH` from `base`. None of the router's own can be given in `vars`. A value may name another variable:
+`"WT": "{SCRATCH}/wt/{PR}"` is filled in. A name that no layer gives and the template's `"variables"` does not declare
+is refused as a typo. A declared name that nobody gives (`WT` most often) makes the PR wait: `flow show` says
+`waiting for: WT`, and the PR does not start until an apply gives it.
+
+The router's copy is `$ROUTER_STATE/flow.json`: the file as applied, plus keys only the router writes. A file given to
+`apply` may carry them; they are ignored.
+
+| Key | Meaning |
+|---|---|
+| `version` | 1, then one more per accepted apply. |
+| `history` | One row per accepted apply: `{"v", "at", "by", "note", "changes": [one line per change]}`. |
+| `dir` | The directory the flow's relative paths were resolved from. |
+| `resolved` | What the apply read: each template (`path`, `kit`, its definition), the profile (`path`, `name`, `vars`), and `SCRATCH` from its environment. A version never changes after it is written. A template edited on disk counts only when the next apply reads it, and that apply lists the edit as step changes. |
+| `removed` | The PRs a version dropped before they started: `{"id", "part", "title", "v"}`. |
+
+### What `flow apply` refuses
+
+Each problem is one line, and a refusal changes nothing: no version, no history row, no journal line.
+
+- **In the file:** an unknown template name; a template or profile that is not a file; a cycle in `after`; an `after`
+  that names no PR; one id twice (upper and lower case are the same); an id `chain` would refuse; a `base` of `main`
+  or `master`; a value that names an unknown variable; a step list the chain validator rejects (the one `chain`
+  uses); `slots` that is not a positive integer; `start` that is not `auto` or `manual`; `vars` that set a variable
+  the router sets.
+- **Against the run:** `--base <v>` that is not the current version (`stale: the run is at v<N>`; the page will
+  send it). For a PR whose chain exists:
+  - a settled step (one that is not pending, or that its runner is about to start) edited, removed or moved, or a
+    step put before it;
+  - a changed value of a variable a settled step used: the `{NAME}`s of its definition and of its spec, `WT` and
+    `KIT` for a worker step, `KIT` for a step with a command;
+  - a changed `after`, or the PR removed.
+
+  A pending step may be edited, added, removed or reordered freely. A chain started with `router.py chain` cannot be
+  taken over by a flow that names it.
+
+### What runs
+
+- **The scheduler.** Under `"start": "auto"`, every PR that is ready starts, in the flow's order. Ready means it has
+  no chain yet, every PR it is `after` is done, a slot is free, and its definition has a value for every variable.
+  It starts as `chain` would start it, and the journal says `flow: started <pr> (v<N>)`. Three things run a
+  scheduler pass: the mailbox daemon once per long-poll, `flow apply`, and a runner whose chain just completed.
+  `flow start <pr>` runs one for that PR only, and is the only way under `manual`. A PR that is not ready is not
+  journaled at every tick: `flow show` and the progress view say what it waits for. The passes take turns under
+  `flow.lock`, so a PR starts once.
+- **The runner, at every step boundary.** Before it starts the next step, it re-reads the flow. The chain becomes
+  [its settled steps as they are] + [the flow's other steps, in the flow's order, with the flow's definitions]. Its
+  variables become the flow's, except those a step exported and the router's `HEAD_*`. The journal says what
+  changed: `flow v3: step edited: model … -> …`, `step added after g`, `step removed; it will not run`. Each attempt
+  records `flow_version`, `cause` (`first`, `retry`, `resume_from`), and `edited: true` when its step's definition
+  is not the one the chain was created with. A recheck is not a new attempt; it adds
+  `{"at", "flow_version", "cause": "recheck"}` to the attempt's `rechecks`.
+- **A flow that cannot be read.** The runner pauses and rings `WAKE runner · <pr>: the flow could not be read: <why>`.
+  The daemon rings once for each reason and goes on.
+- `resume --set` refuses a variable the flow sets, because the next re-read would replace it. Change it with an
+  apply.
+
+| Command | Prints |
+|---|---|
+| `$R flow apply <file> [--base <v>] [--by <who>] [--note "<text>"]` | `OK flow v<N>: <n> changes` and one line per change, then any PR it started; `OK flow v<N>: no change …` for the current version's file; or `NOT OK flow: <n> problem(s), nothing changed` and one line per problem (exit 1). |
+| `$R flow show` | `flow v<N> · slots <used>/<n> · start <auto\|manual>`, then one line per PR: id · part · title · after · state. The state is `not started · after <ids>`, `waiting for: <vars>`, `ready`, `running <step>`, `at a gate`, `paused`, `stopped`, `done`, or `removed in v<N>`. |
+| `$R flow start <pr>` | `OK started <pr> (v<N>), runner pid …`, or why it is not ready. |
+| `$R flow history [<n>]` | The last n versions (default 10): `v<N> · <when> · by <who> · <n> changes · <note>`, then the changes. |
+
+With a flow, `router.py chain <pr>` refuses the PRs the flow names (`the flow owns <pr>: router.py flow start <pr>`),
+`plan` is refused (`the flow is the plan`), and the progress view lists the flow's PRs in its order with `flow v<N>`
+in its header.
+
 ## Seeing progress
 
 This view is for the owner. The coordinator keeps to `status`, which is shorter.
 
 ```sh
-$R plan $SCRATCH/inner-prs.json        # once: the run's inner PRs in order, so those not started are listed too
+$R plan $SCRATCH/inner-prs.json        # once: the run's inner PRs in order, so those not started are listed too (a flow replaces it)
 open $SCRATCH/router/progress.html     # once: the page reloads itself every 15 s
 $R progress                            # the same view as text, from any terminal with SCRATCH or ROUTER_STATE set
 ```
@@ -251,6 +364,24 @@ Every script prints its header with `--help` and exits 2 on bad usage.
 
 ## Tested how
 
+2026-10-09, the flow file (M1a).
+
+- `cd plugins/flows && python3 tests/test_router.py`: 109 tests, green (76 before). The new ones are in the classes
+  `FlowValidation` (each refusal of the file, with its reason line; a PR missing a variable is accepted and waits),
+  `FlowVersions` (v1, a no-op apply, a stale `--base` that leaves the copy byte for byte, history and journal, the
+  change lines), `FlowScheduler` (after, slots, manual, a PR that waits for `WT`, three scheduler passes that race
+  start one PR once, a flow the daemon cannot read), `FlowReread` (an edited, an added and a removed pending step;
+  a running, a done and an about-to-start step refused with `state.json` and the copy unchanged byte for byte;
+  variables a settled step used; exports kept; the cause of each attempt; a flow the runner cannot read),
+  `FlowRemoval`, `FlowCompat` (`chain`, `plan` and `progress` with and without a flow), and one in `Templates`: a
+  definition that names a kit runs its `run`, `when`, `checks` and `show` lines from the kit.
+- 47 hand-made mutations of the new code, one at a time, each against the test written to catch it: 47 caught. One
+  survived the first pass, and it showed dead code: `retry` marked its step's cause `retry`, which a later attempt
+  already defaults to. The mark is gone; the mutation of the default is caught. A test written for the pass found one
+  bug, now fixed: when the flow also set a variable that a step exported, the re-read gave the flow's value back.
+- Not tested: a flow on real Orca, and two applies from two terminals at the same instant (they take turns under
+  `flow.lock`, which the race test covers for scheduler passes).
+
 2026-10-09, the move into this plugin.
 
 - `cd plugins/flows && python3 tests/test_router.py`: 76 tests, green. The 5 new ones: an `inner-pr.json` chain
@@ -302,6 +433,8 @@ The entries below predate the move: `chain-inner-pr.json` and `chain-smoke.json`
 
 ## Not tested, and limits
 
+- No flow has run on real Orca. A profile's content (M1b), the page that edits a flow (M2), creating the worktrees a
+  flow names, and the collector are not part of the flow file yet.
 - The progress page has never shown a real Orca run. The pilot PR is its first.
 - The view is local: a file and a command. Nothing is posted on the epic and nobody is notified.
 - `stop <pr>` does not end a script step: the runner finishes the script first (a CI wait can take 90 minutes),

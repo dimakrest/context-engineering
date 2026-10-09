@@ -647,20 +647,24 @@ class Collector:
         try:
             lockdir.mkdir()
         except FileExistsError:
-            since = lockdir.stat().st_mtime
-            if time.time() - since < LOCK_EXPIRY_S:
-                seen = lockdir / "reported"   # journaled once per lock, not on every collect that meets it
-                if not seen.exists():
-                    with contextlib.suppress(OSError):
-                        seen.write_text(now() + "\n")
-                        os.utime(lockdir, (since, since))   # the marker must not make the lock look younger
-                        journal(self.state, info["pr"], info["step"], info["task"], d,
-                                f"collector: {d}: locked by another collector since "
-                                f"{datetime.datetime.fromtimestamp(since, datetime.timezone.utc):%Y-%m-%dT%H:%M:%SZ}; "
-                                f"skipped (a lock older than {LOCK_EXPIRY_S // 3600} h is taken over)")
-                return LOCKED
-            shutil.rmtree(lockdir, ignore_errors=True)   # left by a collector that died
-            lockdir.mkdir()
+            try:
+                since = lockdir.stat().st_mtime
+            except FileNotFoundError:   # its owner removed it between our mkdir and the stat: one more try, then it is ours
+                lockdir.mkdir()
+            else:
+                if time.time() - since < LOCK_EXPIRY_S:
+                    seen = lockdir / "reported"   # journaled once per lock, not on every collect that meets it
+                    if not seen.exists():
+                        with contextlib.suppress(OSError):
+                            seen.write_text(now() + "\n")
+                            os.utime(lockdir, (since, since))   # the marker must not make the lock look younger
+                            journal(self.state, info["pr"], info["step"], info["task"], d,
+                                    f"collector: {d}: locked by another collector since "
+                                    f"{datetime.datetime.fromtimestamp(since, datetime.timezone.utc):%Y-%m-%dT%H:%M:%SZ}; "
+                                    f"skipped (a lock older than {LOCK_EXPIRY_S // 3600} h is taken over)")
+                    return LOCKED
+                shutil.rmtree(lockdir, ignore_errors=True)   # left by a collector that died
+                lockdir.mkdir()
         try:
             if (final / "meta.json").exists() and not self.force:
                 self.index(read_json(final / "meta.json") or {}, read_json(final / "tokens.json"))   # a row a crash lost

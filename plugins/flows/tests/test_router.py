@@ -1856,8 +1856,9 @@ class Collector(RouterCase):
         (self.state / "liveness").mkdir(exist_ok=True)
         (self.state / "liveness" / dispatch).write_text(f"{started}\timplementing\n")
 
-    def collect(self, *args):
-        p = subprocess.run([sys.executable, COLLECTOR, "collect", "--state", str(self.state), "--claude-projects",
+    def collect(self, *args, code=None):
+        """collector.py collect, or the same arguments to `code` (python -c, which runs collector.main itself)."""
+        p = subprocess.run([sys.executable] + (["-c", code] if code else [COLLECTOR]) + ["collect", "--state", str(self.state), "--claude-projects",
                             str(self.sessions / "claude"), "--codex-sessions", str(self.sessions / "codex"),
                             "--orca", str(TESTS / "fake-orca")] + list(args), capture_output=True, text=True, env=self.env, timeout=60)
         return p.returncode, p.stdout + p.stderr
@@ -2138,6 +2139,24 @@ class Collector(RouterCase):
         self.assertEqual(rc, 0, out)
         self.assertIn("OK collected 1 · skipped 0 · locked 0", out)
         self.assertFalse(lock.exists())
+
+    def test_a_lock_its_owner_removes_before_the_stat_is_taken_and_the_dispatch_is_collected(self):
+        self.seed("ctx_a")
+        lock = self.state / "logs" / ".locks" / "ctx_a"
+        lock.mkdir(parents=True)                                         # held when the mkdir fails, gone by the stat
+        code = (f"import shutil, sys\nsys.path.insert(0, {str(KIT)!r})\nimport collector\nstat, lock, fired = collector.Path.stat, "
+                f"collector.Path({str(lock)!r}), []\n"
+                "def raced(p, *a, **k):\n"
+                "    if p == lock and not fired:\n"
+                "        fired.append(p)\n        shutil.rmtree(p)\n        raise FileNotFoundError(2, 'No such file or directory', str(p))\n"
+                "    return stat(p, *a, **k)\n"
+                "collector.Path.stat = raced\nsys.exit(collector.main())\n")
+        rc, out = self.collect("--dispatch", "ctx_a", code=code)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("OK collected 1 · skipped 0 · locked 0 · not settled 0 · failed 0", out)
+        self.assertTrue((self.logs("ctx_a") / "meta.json").exists())
+        self.assertFalse(lock.exists())
+        self.assertNotIn("collector: ctx_a:", self.journal())
 
     def test_a_failed_collection_leaves_no_temporary_directory(self):
         self.seed("ctx_a")

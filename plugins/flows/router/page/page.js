@@ -187,8 +187,9 @@
     if (!t) return 'not a place for a step';
     var p = draftPr(t.pid);
     if (!p) return 'that PR is not in the flow';
-    if (t.locked) return 'step ' + t.sid + ' is ' + t.status + ': a settled step cannot move and no step can go before it';
+    // After the last settled step is the start of the pending steps, a place like any other, even when none is left.
     var k = fixedOf(t.pid);
+    if (t.index < k && t.locked) return 'step ' + t.sid + ' is ' + t.status + ': a settled step cannot move and no step can go before it';
     if (t.index < k) return 'the steps of ' + p.id + ' up to its last settled step are fixed';
     if (drag.kind === 'step') {
       if (lc(drag.pid) !== lc(t.pid)) return 'a step moves within its own PR';

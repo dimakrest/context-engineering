@@ -209,6 +209,22 @@ class Live(tr.FlowCase):
         self.assertEqual(self.apply_and_confirm(), ["A1: its own steps now", "A1: steps reordered: a, b, d, c"])
         self.assertEqual(self.flow()["version"], 3)
 
+    def test_a_step_dropped_after_the_last_settled_one_is_taken_even_with_no_pending_step_left(self):
+        self.edit()
+        self.drag('#pr-A1 [data-step="d"]', '#pr-A1 [data-step="b"]', x=0.9).up()   # onto the running step's right half
+        self.assertEqual(self.chips("A1"), ["a", "b", "d", "c"])
+        for sid in ("d", "c"):
+            self.page.click(f'#pr-A1 [data-step="{sid}"] button.x')
+        self.assertEqual(self.chips("A1"), ["a", "b"])                              # no pending step left
+        m = self.drag('#palette [data-name="review-claude"]', '#pr-A1 [data-step="b"]', x=0.9)
+        self.assertIn("drop-after", self.page.get_attribute('#pr-A1 [data-step="b"]', "class"))
+        m.up()
+        self.assertEqual(self.chips("A1"), ["a", "b", "review_claude"])
+        self.drag('#palette [data-name="review-claude"]', '#pr-A1 [data-step="b"]', x=0.1).up()   # before it: refused
+        self.assertIn("Not dropped: step b is running", self.page.inner_text("#notice"))
+        self.apply_and_confirm()
+        self.assertEqual([s["id"] for s in self.flow()["prs"][0]["steps"]], ["a", "b", "review_claude"])
+
     def test_a_refused_apply_shows_the_routers_problems_and_keeps_the_edits(self):
         self.edit()
         self.page.click("#pr-B1 >> text=+ PR after B1")

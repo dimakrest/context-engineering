@@ -1459,6 +1459,22 @@ class FlowCompat(FlowCase):
         self.assertIn("x1: its chain was started with router.py chain, so the flow cannot take it over",
                       self.refused(self.pr("A1"), self.pr("x1"), slots=2, start="manual")[0])
 
+    def test_a_flow_of_inner_prs_takes_its_variables_from_a_profile(self):
+        """inner-pr.json defaults no profile variable: the flow's "profile" field gives them all."""
+        self.env["SCRATCH"] = str(self.out)
+        pr = {"id": "A1", "part": "Part A", "title": "the first", "base": "dev", "template": "inner-pr",
+              "vars": {"WT": str(self.repo()), "ISSUE": "1", "TITLE": "A1: the first"}}
+        f = self.tmp / "flow.json"
+        f.write_text(json.dumps({"templates": {"inner-pr": str(TEMPLATES / "inner-pr.json")}, "prs": [pr]}))
+        self.R("flow", "apply", str(f), ok=True)
+        self.assertRegex(self.show(), r"A1 · Part A · the first · after - · waiting for: COMMIT_CMD, COPY_SETUP, .*TEST_CMD")
+        f.write_text(json.dumps({"templates": {"inner-pr": str(TEMPLATES / "inner-pr.json")}, "prs": [pr],
+                                 "profile": str(KIT / "profiles" / "python.json")}))
+        rc, out = self.R("flow", "apply", str(f))
+        self.assertIn("  - profile: vars.TEST_CMD set to python -m pytest -q\n", out)
+        self.assertIn("A1 · Part A · the first · after - · ready", self.show())
+        self.assertEqual(self.copy()["resolved"]["profile"]["name"], "python")
+
     def test_a_run_without_a_flow_is_as_it_was(self):
         self.scenario({"match": ".", "events": [self.done(0.1)], "repeat": True})
         self.R("init", ok=True)

@@ -32,7 +32,7 @@ Contents: [Parts](#parts) · [Try it](#try-it) · [The coordinator's loop](#the-
 | `router/templates/smoke.json`, `router/specs/smoke-*.md` | A harmless chain that proves the router against real Orca: two workers at once, a question, a failure with a retry, a script step, a gate. |
 | `router/checks/*` | Checks that print one line, `OK …` or `NOT OK …`, and exit 0 or 1. |
 | `router/draft-pr.sh` | Opens the inner PR as a draft, so that step needs no model. Refuses `main` as the base. |
-| `tests/` | `test_router.py` (120 tests) and `fake-orca`, a stand-in for the Orca CLI. |
+| `tests/` | `test_router.py` (121 tests) and `fake-orca`, a stand-in for the Orca CLI. |
 | `skills/flow-run`, `skills/flow-status` | The two skills. |
 
 State lives in `$ROUTER_STATE` (default `$SCRATCH/router`, where `SCRATCH` is the run directory). `router.py --help`
@@ -432,8 +432,10 @@ Every script prints its header with `--help` and exits 2 on bad usage.
 
 2026-10-09, the flow file (M1a).
 
-- `cd plugins/flows && python3 tests/test_router.py`: 109 tests on the M1a branch, green (76 before); 120 once
-  merged with the profiles' 11. The new ones are in the classes `FlowValidation` (each refusal of the file, with its reason line; a PR missing a
+- `cd plugins/flows && python3 tests/test_router.py`: 109 tests on the M1a branch, green (76 before); 121 once
+  merged with the profiles (their 11, and `FlowCompat.test_a_flow_of_inner_prs_takes_its_variables_from_a_profile`:
+  a flow of `inner-pr.json` PRs waits for the profile's variables until its `profile` field names `python.json`).
+  The new ones are in the classes `FlowValidation` (each refusal of the file, with its reason line; a PR missing a
   variable is accepted and waits), `FlowVersions` (v1, a no-op apply, a stale `--base` that leaves the copy byte for
   byte, history and journal, the change lines), `FlowScheduler` (after, slots, manual, a PR that waits for `WT`,
   three scheduler passes that race start one PR once, a flow the daemon cannot read), `FlowReread` (an edited, an
